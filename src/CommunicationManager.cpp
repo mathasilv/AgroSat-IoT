@@ -1,6 +1,6 @@
 /**
  * @file CommunicationManager.cpp
- * @brief Implementação do gerenciador de comunicação
+ * @brief Implementação do gerenciador de comunicação com JSON expandido
  */
 
 #include "CommunicationManager.h"
@@ -96,7 +96,7 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data) {
     String jsonPayload = _createTelemetryJSON(data);
     
     DEBUG_PRINTLN("[CommunicationManager] Enviando telemetria...");
-    DEBUG_PRINTLN(jsonPayload);
+    DEBUG_PRINTF("[CommunicationManager] JSON size: %d bytes\n", jsonPayload.length());
     
     // Tentar envio com retries
     for (uint8_t attempt = 0; attempt < WIFI_RETRY_ATTEMPTS; attempt++) {
@@ -157,9 +157,10 @@ bool CommunicationManager::testConnection() {
 // ============================================================================
 
 String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
-    // Criar documento JSON conforme especificação OBSAT
-    // Capacidade: JSON_MAX_SIZE bytes
+    // Criar documento JSON conforme especificação OBSAT + campos expandidos
     StaticJsonDocument<JSON_MAX_SIZE> doc;
+    
+    // ===== CAMPOS OBRIGATÓRIOS OBSAT =====
     
     // Identificação da equipe
     doc["team"] = TEAM_NAME;
@@ -176,11 +177,17 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
     doc["battery"]["percentage"] = serialized(String(data.batteryPercentage, 1));
     
     // Temperatura (obrigatório)
-    doc["temperature"] = serialized(String(data.temperature, 2));
+    if (!isnan(data.temperature)) {
+        doc["temperature"] = serialized(String(data.temperature, 2));
+    }
     
     // Pressão (obrigatório)
-    doc["pressure"] = serialized(String(data.pressure, 2));
-    doc["altitude"] = serialized(String(data.altitude, 1));
+    if (!isnan(data.pressure)) {
+        doc["pressure"] = serialized(String(data.pressure, 2));
+    }
+    if (!isnan(data.altitude)) {
+        doc["altitude"] = serialized(String(data.altitude, 1));
+    }
     
     // Giroscópio (obrigatório - 3 eixos em rad/s)
     JsonObject gyro = doc.createNestedObject("gyroscope");
@@ -194,6 +201,31 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
     accel["y"] = serialized(String(data.accelY, 4));
     accel["z"] = serialized(String(data.accelZ, 4));
     
+    // ===== CAMPOS EXPANDIDOS (OPCIONAIS) =====
+    
+    // Umidade (SHT20)
+    if (!isnan(data.humidity)) {
+        doc["humidity"] = serialized(String(data.humidity, 1));
+    }
+    
+    // CO2 e TVOC (CCS811)
+    if (!isnan(data.co2) && data.co2 > 0) {
+        doc["co2"] = serialized(String(data.co2, 0));
+    }
+    if (!isnan(data.tvoc) && data.tvoc > 0) {
+        doc["tvoc"] = serialized(String(data.tvoc, 0));
+    }
+    
+    // Magnetômetro (MPU9250 - 9º DOF)
+    if (!isnan(data.magX) && !isnan(data.magY) && !isnan(data.magZ)) {
+        JsonObject mag = doc.createNestedObject("magnetometer");
+        mag["x"] = serialized(String(data.magX, 2));
+        mag["y"] = serialized(String(data.magY, 2));
+        mag["z"] = serialized(String(data.magZ, 2));
+    }
+    
+    // ===== CAMPOS OBRIGATÓRIOS CONTINUAÇÃO =====
+    
     // Status do sistema
     doc["status"] = data.systemStatus;
     doc["errors"] = data.errorCount;
@@ -206,6 +238,11 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
     // Serializar JSON
     String output;
     serializeJson(doc, output);
+    
+    // Verificar tamanho
+    if (output.length() > JSON_MAX_SIZE - 50) {
+        DEBUG_PRINTF("[CommunicationManager] AVISO: JSON próximo do limite: %d bytes\n", output.length());
+    }
     
     return output;
 }
