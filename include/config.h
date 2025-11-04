@@ -1,7 +1,7 @@
 /**
  * @file config.h
  * @brief Configurações globais do CubeSat AgroSat-IoT - OBSAT Fase 2
- * @version 2.0.3
+ * @version 2.0.5
  * @date 2025-11-01
  */
 
@@ -16,7 +16,7 @@
 #define MISSION_NAME        "AgroSat-IoT"
 #define TEAM_NAME           "Orbitalis"
 #define TEAM_CATEGORY       "N3"
-#define FIRMWARE_VERSION    "2.0.3-FASE2"
+#define FIRMWARE_VERSION    "2.0.5-FASE2"
 #define BUILD_DATE          __DATE__
 #define BUILD_TIME          __TIME__
 
@@ -29,7 +29,7 @@
 #define OLED_SCL            22
 
 #ifndef OLED_RST
-#define OLED_RST            -1
+#define OLED_RST            16  // Correto para LoRa32 V2.1
 #endif
 
 #define OLED_ADDRESS        0x3C
@@ -39,7 +39,7 @@
 #define LORA_MISO           19
 #define LORA_MOSI           27
 #define LORA_CS             18
-#define LORA_RST            23
+#define LORA_RST            23  
 #define LORA_DIO0           26
 #define LORA_FREQUENCY      433E6  // 433 MHz (ajustar conforme região)
 
@@ -74,6 +74,9 @@
 // MPU6050 (Giroscópio e Acelerômetro)
 #define MPU6050_ADDRESS     0x68
 #define MPU6050_CALIBRATION_SAMPLES 100
+
+// Sensores customizados - removido conflitos BMP280 e FILTER_SIZE
+#define CUSTOM_FILTER_SIZE  5
 
 // Intervalos de leitura (ms)
 #define SENSOR_READ_INTERVAL    1000   // 1 segundo

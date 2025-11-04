@@ -1,7 +1,7 @@
 /**
  * @file SensorManager.h
  * @brief Gerenciamento de todos os sensores do CubeSat
- * @version 1.0.0
+ * @version 1.0.1
  * 
  * Responsável por:
  * - MPU6050 (Giroscópio e Acelerômetro)
@@ -98,6 +98,7 @@ public:
      */
     bool isMPU6050Online();
     bool isBMP280Online();
+    bool isCalibrated(); // ADICIONADO - método faltante
     
     /**
      * @brief Reinicia sensor com problema
@@ -136,11 +137,10 @@ private:
     // Controle de tempo
     uint32_t _lastReadTime;
     
-    // Filtros (média móvel simples)
-    static const uint8_t FILTER_SIZE = 5;
-    float _accelXBuffer[FILTER_SIZE];
-    float _accelYBuffer[FILTER_SIZE];
-    float _accelZBuffer[FILTER_SIZE];
+    // Filtros (média móvel simples) - usa constante do config.h
+    float _accelXBuffer[CUSTOM_FILTER_SIZE];
+    float _accelYBuffer[CUSTOM_FILTER_SIZE];
+    float _accelZBuffer[CUSTOM_FILTER_SIZE];
     uint8_t _filterIndex;
     
     /**

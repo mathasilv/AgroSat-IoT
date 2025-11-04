@@ -21,7 +21,7 @@ SensorManager::SensorManager() :
     _filterIndex(0)
 {
     // Inicializar buffers de filtro
-    for (uint8_t i = 0; i < FILTER_SIZE; i++) {
+    for (uint8_t i = 0; i < CUSTOM_FILTER_SIZE; i++) {
         _accelXBuffer[i] = 0.0;
         _accelYBuffer[i] = 0.0;
         _accelZBuffer[i] = 0.0;
@@ -34,6 +34,8 @@ bool SensorManager::begin() {
     // Inicializar I2C
     Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
     Wire.setClock(I2C_FREQUENCY);
+    
+    delay(100); // Aguardar estabilização I2C
     
     // Inicializar MPU6050
     if (_mpu.begin(MPU6050_ADDRESS, &Wire)) {
@@ -50,8 +52,9 @@ bool SensorManager::begin() {
         _mpuOnline = false;
     }
     
-    // Inicializar BMP280
-    if (_bmp.begin(BMP280_ADDRESS, BMP280_CHIPID)) {
+    // Inicializar BMP280 - usar endereço padrão da biblioteca
+    unsigned status = _bmp.begin();
+    if (status) {
         DEBUG_PRINTLN("[SensorManager] BMP280 OK");
         
         // Configurar BMP280 para máxima precisão
@@ -64,11 +67,12 @@ bool SensorManager::begin() {
         _bmpOnline = true;
     } else {
         DEBUG_PRINTLN("[SensorManager] ERRO: BMP280 não encontrado!");
+        DEBUG_PRINTF("[SensorManager] Status code: 0x%02X\n", status);
         _bmpOnline = false;
     }
     
     // Aguardar estabilização
-    delay(100);
+    delay(200);
     
     // Realizar calibração automática
     if (_mpuOnline) {
@@ -137,7 +141,13 @@ bool SensorManager::calibrateMPU6050() {
         sumAccelZ += accel.acceleration.z;
         
         delay(10);
+        
+        // Feedback visual a cada 10 amostras
+        if (i % 10 == 0) {
+            DEBUG_PRINTF(".");
+        }
     }
+    DEBUG_PRINTLN("");
     
     // Calcular offsets
     _gyroOffsetX = sumGyroX / MPU6050_CALIBRATION_SAMPLES;
@@ -175,6 +185,7 @@ float SensorManager::getAccelMagnitude() {
 
 bool SensorManager::isMPU6050Online() { return _mpuOnline; }
 bool SensorManager::isBMP280Online() { return _bmpOnline; }
+bool SensorManager::isCalibrated() { return _calibrated; }
 
 void SensorManager::resetMPU6050() {
     DEBUG_PRINTLN("[SensorManager] Reiniciando MPU6050...");
@@ -183,12 +194,27 @@ void SensorManager::resetMPU6050() {
         _mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
         _mpu.setGyroRange(MPU6050_RANGE_500_DEG);
         _mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+        DEBUG_PRINTLN("[SensorManager] MPU6050 reiniciado com sucesso");
+    } else {
+        DEBUG_PRINTLN("[SensorManager] Falha ao reiniciar MPU6050");
     }
 }
 
 void SensorManager::resetBMP280() {
     DEBUG_PRINTLN("[SensorManager] Reiniciando BMP280...");
-    _bmpOnline = _bmp.begin(BMP280_ADDRESS, BMP280_CHIPID);
+    unsigned status = _bmp.begin();
+    _bmpOnline = (status != 0);
+    
+    if (_bmpOnline) {
+        _bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     
+                        Adafruit_BMP280::SAMPLING_X16,     
+                        Adafruit_BMP280::SAMPLING_X16,     
+                        Adafruit_BMP280::FILTER_X16,       
+                        Adafruit_BMP280::STANDBY_MS_500);
+        DEBUG_PRINTLN("[SensorManager] BMP280 reiniciado com sucesso");
+    } else {
+        DEBUG_PRINTLN("[SensorManager] Falha ao reiniciar BMP280");
+    }
 }
 
 void SensorManager::getRawData(sensors_event_t& accel, sensors_event_t& gyro, sensors_event_t& temp) {
@@ -204,21 +230,23 @@ void SensorManager::getRawData(sensors_event_t& accel, sensors_event_t& gyro, se
 float SensorManager::_applyFilter(float newValue, float* buffer) {
     // Atualizar buffer circular
     buffer[_filterIndex] = newValue;
-    _filterIndex = (_filterIndex + 1) % FILTER_SIZE;
+    _filterIndex = (_filterIndex + 1) % CUSTOM_FILTER_SIZE;
     
-    // Calcular média
+    // Calcular média móvel
     float sum = 0.0;
-    for (uint8_t i = 0; i < FILTER_SIZE; i++) {
+    for (uint8_t i = 0; i < CUSTOM_FILTER_SIZE; i++) {
         sum += buffer[i];
     }
     
-    return sum / FILTER_SIZE;
+    return sum / CUSTOM_FILTER_SIZE;
 }
 
 float SensorManager::_calculateAltitude(float pressure) {
     // Fórmula barométrica internacional
     // h = 44330 * (1 - (P/P0)^(1/5.255))
     // onde P0 é a pressão ao nível do mar (1013.25 hPa)
+    
+    if (pressure <= 0.0) return 0.0; // Evitar divisão por zero
     
     float ratio = pressure / _seaLevelPressure;
     float altitude = 44330.0 * (1.0 - pow(ratio, 0.1903));

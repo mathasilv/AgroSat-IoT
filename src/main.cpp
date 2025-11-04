@@ -1,7 +1,7 @@
 /**
  * @file main.cpp
  * @brief Programa principal do CubeSat AgroSat-IoT - OBSAT Fase 2
- * @version 2.0.0
+ * @version 2.0.1
  * @date 2025-11-01
  * 
  * @author Equipe Orbitalis
@@ -23,7 +23,7 @@
 
 #include <Arduino.h>
 #include "config.h"
-#include <TelemetryManager.h> 
+#include "TelemetryManager.h"
 
 // ============================================================================
 // VARIÁVEIS GLOBAIS
@@ -75,11 +75,11 @@ void printBootInfo() {
     DEBUG_PRINTF("║ Firmware:    %-45s ║\n", FIRMWARE_VERSION);
     DEBUG_PRINTF("║ Build:       %-45s ║\n", BUILD_DATE " " BUILD_TIME);
     DEBUG_PRINTLN("╠════════════════════════════════════════════════════════════╣");
-    DEBUG_PRINTF("║ CPU:         ESP32 @ %d MHz                             ║\n", 
+    DEBUG_PRINTF("║ CPU:         ESP32 @ %lu MHz                             ║\n", 
                  getCpuFrequencyMhz());
-    DEBUG_PRINTF("║ RAM:         %d KB                                      ║\n", 
+    DEBUG_PRINTF("║ RAM:         %lu KB                                      ║\n", 
                  ESP.getFreeHeap() / 1024);
-    DEBUG_PRINTF("║ Flash:       %d MB                                      ║\n", 
+    DEBUG_PRINTF("║ Flash:       %lu MB                                      ║\n", 
                  ESP.getFlashChipSize() / (1024 * 1024));
     DEBUG_PRINTLN("╠════════════════════════════════════════════════════════════╣");
     DEBUG_PRINTLN("║ Hardware:    LoRa32 V2.1_1.6                              ║");
@@ -180,7 +180,7 @@ void printPeriodicStatus() {
         DEBUG_PRINTLN("========== STATUS DO SISTEMA ==========");
         DEBUG_PRINTF("Uptime: %lu s\n", currentTime / 1000);
         DEBUG_PRINTF("Modo: %d\n", telemetry.getMode());
-        DEBUG_PRINTF("Memória livre: %d KB\n", ESP.getFreeHeap() / 1024);
+        DEBUG_PRINTF("Memória livre: %lu KB\n", ESP.getFreeHeap() / 1024);
         DEBUG_PRINTLN("=======================================");
         DEBUG_PRINTLN("");
     }
