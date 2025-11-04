@@ -22,7 +22,7 @@
 #endif
 
 #ifdef USE_SHT20
-  #include <SHT2x.h>          // robtillaart/SHT2x
+  #include <SHT2x.h>
 #endif
 
 #ifdef USE_CCS811
@@ -52,11 +52,11 @@ public:
     
     // Getters expandidos
     float getHumidity();        // SHT20
-    float getCO2();            // CCS811
-    float getTVOC();           // CCS811
-    float getMagX();           // MPU9250
-    float getMagY();           // MPU9250
-    float getMagZ();           // MPU9250
+    float getCO2();             // CCS811
+    float getTVOC();            // CCS811
+    float getMagX();            // MPU9250
+    float getMagY();            // MPU9250
+    float getMagZ();            // MPU9250
     
     // Status dos sensores
     bool isMPU6050Online();
@@ -77,13 +77,13 @@ public:
     void getRawData(sensors_event_t& accel, sensors_event_t& gyro, sensors_event_t& temp);
 
 private:
-    // Objetos dos sensores obrigatórios
+    // Objetos obrigatórios
     Adafruit_MPU6050 _mpu6050;
     Adafruit_BMP280 _bmp280;
     
-    // Objetos dos sensores opcionais
+    // Objetos opcionais
 #ifdef USE_MPU9250
-    MPU9250_WE _mpu9250;
+    MPU9250_WE _mpu9250 = MPU9250_WE(MPU9250_ADDRESS);
 #endif
 #ifdef USE_SHT20
     SHT2x _sht20;
@@ -92,7 +92,7 @@ private:
     Adafruit_CCS811 _ccs811;
 #endif
     
-    // Dados dos sensores
+    // Dados
     float _temperature;
     float _pressure;
     float _altitude;
@@ -105,11 +105,11 @@ private:
     float _accelX, _accelY, _accelZ;
     float _magX, _magY, _magZ;
     
-    // Offsets de calibração
+    // Offsets
     float _gyroOffsetX, _gyroOffsetY, _gyroOffsetZ;
     float _accelOffsetX, _accelOffsetY, _accelOffsetZ;
     
-    // Status dos sensores
+    // Status
     bool _mpu6050Online;
     bool _mpu9250Online;
     bool _bmp280Online;
@@ -130,14 +130,14 @@ private:
     float _accelZBuffer[CUSTOM_FILTER_SIZE];
     uint8_t _filterIndex;
     
-    // Métodos privados de inicialização
+    // Inicializações
     bool _initMPU6050();
     bool _initMPU9250();
     bool _initBMP280();
     bool _initSHT20();
     bool _initCCS811();
     
-    // Métodos de validação
+    // Validações
     bool _validateMPUReadings(const sensors_event_t& accel, const sensors_event_t& gyro);
     bool _validateBMPReadings(float temperature, float pressure);
     bool _validateSHTReadings(float temperature, float humidity);
