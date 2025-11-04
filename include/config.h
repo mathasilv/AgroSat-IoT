@@ -60,8 +60,6 @@
 // ============================================================================
 // CONFIGURAÇÃO DE SENSORES (AUTO-DETECÇÃO + SELEÇÃO)
 // ============================================================================
-
-// Endereços I2C dos sensores
 #define MPU6050_ADDRESS     0x68
 #define MPU9250_ADDRESS     0x68
 #define BMP280_ADDR_1       0x76
@@ -70,14 +68,12 @@
 #define CCS811_ADDR_1       0x5A
 #define CCS811_ADDR_2       0x5B
 
-// Configurações de calibração e filtros
 #define MPU6050_CALIBRATION_SAMPLES 100
 #define CUSTOM_FILTER_SIZE          5
 
-// Intervalos de leitura
 #define SENSOR_READ_INTERVAL    1000
-#define CCS811_READ_INTERVAL    5000  // CCS811 é mais lento
-#define SHT20_READ_INTERVAL     2000  // SHT20 precisa tempo entre leituras
+#define CCS811_READ_INTERVAL    5000
+#define SHT20_READ_INTERVAL     2000
 
 // ============================================================================
 // REDE/HTTP/COMUNICAÇÃO
@@ -92,12 +88,11 @@
 #define HTTP_ENDPOINT       "/teste/post/envio.php"
 #define HTTP_TIMEOUT_MS     10000
 
-#define JSON_MAX_SIZE       768  // Aumentado para acomodar campos extras
+#define JSON_MAX_SIZE       768
 #define PAYLOAD_MAX_SIZE    90
 
-// Intervalos de operação
-#define TELEMETRY_SEND_INTERVAL 240000  // 4 minutos
-#define STORAGE_SAVE_INTERVAL   60000   // 1 minuto
+#define TELEMETRY_SEND_INTERVAL 240000
+#define STORAGE_SAVE_INTERVAL   60000
 
 // ============================================================================
 // ARMAZENAMENTO & SISTEMA
@@ -114,7 +109,7 @@
 
 #define DEEP_SLEEP_DURATION     3600
 
-#define MISSION_DURATION_MS     7200000  // 2 horas
+#define MISSION_DURATION_MS     7200000
 #define WATCHDOG_TIMEOUT        30
 #define SYSTEM_HEALTH_INTERVAL  10000
 
@@ -144,7 +139,6 @@
 // ============================================================================
 
 struct TelemetryData {
-    // CAMPOS OBRIGATÓRIOS (OBSAT)
     unsigned long timestamp;
     unsigned long missionTime;
     float batteryVoltage;
@@ -157,16 +151,14 @@ struct TelemetryData {
     uint8_t systemStatus;
     uint16_t errorCount;
     char payload[PAYLOAD_MAX_SIZE];
-    
-    // CAMPOS EXPANDIDOS (OPCIONAIS)
+    // Opcionais
     float humidity;     // SHT20
-    float co2;          // CCS811 (ppm)
-    float tvoc;         // CCS811 (ppb)
-    float magX, magY, magZ;  // MPU9250 magnetômetro (µT)
+    float co2;          // CCS811
+    float tvoc;         // CCS811
+    float magX, magY, magZ;  // MPU9250
 };
 
 struct MissionData {
-    // Dados da missão LoRa
     float soilMoisture;
     float ambientTemp;
     float humidity;
@@ -190,15 +182,11 @@ enum SystemStatus : uint8_t {
     STATUS_WATCHDOG     = 0x80
 };
 
-// ============================================================================
-// CONFIGURAÇÕES ESPECÍFICAS POR SENSOR
-// ============================================================================
-
-// Limites de validação para cada sensor
+// Limites de validação
 #define TEMP_MIN_VALID      -50.0
 #define TEMP_MAX_VALID      100.0
-#define PRESSURE_MIN_VALID  300.0  // hPa
-#define PRESSURE_MAX_VALID  1100.0 // hPa
+#define PRESSURE_MIN_VALID  300.0
+#define PRESSURE_MAX_VALID  1100.0
 #define HUMIDITY_MIN_VALID  0.0
 #define HUMIDITY_MAX_VALID  100.0
 #define CO2_MIN_VALID       350.0
@@ -208,6 +196,6 @@ enum SystemStatus : uint8_t {
 
 // Timeouts de inicialização
 #define SENSOR_INIT_TIMEOUT     2000
-#define CCS811_WARMUP_TIME      20000  // CCS811 precisa aquecer
+#define CCS811_WARMUP_TIME      20000
 
 #endif // CONFIG_H
