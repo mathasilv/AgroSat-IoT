@@ -1,7 +1,7 @@
 /**
  * @file TelemetryManager.h
- * @brief Gerenciador central de telemetria - Coordenação de todos subsistemas
- * @version 1.0.0
+ * @brief Gerenciador central de telemetria - Coordenação robusta de todos subsistemas
+ * @version 1.1.0
  * 
  * Responsável por:
  * - Coordenação de todos os subsistemas
@@ -9,6 +9,7 @@
  * - Agendamento de envios
  * - Display OLED com informações
  * - Modo de operação (pré-voo, voo, pós-voo)
+ * - Monitoramento de heap e robustez
  */
 
 #ifndef TELEMETRY_MANAGER_H
@@ -90,6 +91,10 @@ private:
     uint32_t _lastStorageSave;
     uint32_t _lastDisplayUpdate;
     
+    // Monitoramento de heap (NOVOS CAMPOS)
+    uint32_t _lastHeapCheck;
+    uint32_t _minHeapSeen;
+    
     /**
      * @brief Coleta dados de todos os sensores
      */
@@ -116,6 +121,12 @@ private:
     void _displayStatus();
     void _displayTelemetry();
     void _displayError(const String& error);
+    
+    /**
+     * @brief Métodos de monitoramento de heap (NOVOS MÉTODOS)
+     */
+    void _logHeapUsage(const String& component);
+    void _monitorHeap();
 };
 
 #endif // TELEMETRY_MANAGER_H

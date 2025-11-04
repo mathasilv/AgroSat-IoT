@@ -1,6 +1,6 @@
 /**
  * @file TelemetryManager.cpp
- * @brief Implementação do gerenciador central de telemetria
+ * @brief Implementação do gerenciador central de telemetria - Versão estável
  */
 
 #include "TelemetryManager.h"
@@ -10,7 +10,9 @@ TelemetryManager::TelemetryManager() :
     _mode(MODE_INIT),
     _lastTelemetrySend(0),
     _lastStorageSave(0),
-    _lastDisplayUpdate(0)
+    _lastDisplayUpdate(0),
+    _lastHeapCheck(0),
+    _minHeapSeen(UINT32_MAX)
 {
     // Inicializar estruturas
     memset(&_telemetryData, 0, sizeof(TelemetryData));
@@ -25,6 +27,11 @@ bool TelemetryManager::begin() {
     DEBUG_PRINTLN("  Firmware: " FIRMWARE_VERSION);
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
+    
+    // Log inicial de heap
+    uint32_t initialHeap = ESP.getFreeHeap();
+    _minHeapSeen = initialHeap;
+    DEBUG_PRINTF("[TelemetryManager] Heap inicial: %lu bytes\n", initialHeap);
     
     // Inicializar display OLED
     DEBUG_PRINTLN("[TelemetryManager] Inicializando display...");
@@ -47,6 +54,7 @@ bool TelemetryManager::begin() {
         DEBUG_PRINTLN("[TelemetryManager] ERRO: System Health falhou!");
         success = false;
     }
+    _logHeapUsage("System Health");
     
     // 2. Power Manager
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Power Manager...");
@@ -55,6 +63,7 @@ bool TelemetryManager::begin() {
         _health.reportError(STATUS_BATTERY_LOW, "Power Manager init failed");
         success = false;
     }
+    _logHeapUsage("Power Manager");
     
     // 3. Sensor Manager
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
@@ -63,6 +72,7 @@ bool TelemetryManager::begin() {
         _health.reportError(STATUS_SENSOR_ERROR, "Sensor Manager init failed");
         success = false;
     }
+    _logHeapUsage("Sensor Manager");
     
     // 4. Storage Manager
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Storage Manager...");
@@ -71,6 +81,7 @@ bool TelemetryManager::begin() {
         _health.reportError(STATUS_SD_ERROR, "Storage Manager init failed");
         // Não é crítico - continuar sem SD
     }
+    _logHeapUsage("Storage Manager");
     
     // 5. Payload Manager (LoRa)
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Payload Manager...");
@@ -79,6 +90,7 @@ bool TelemetryManager::begin() {
         _health.reportError(STATUS_LORA_ERROR, "Payload Manager init failed");
         // Não é crítico para telemetria
     }
+    _logHeapUsage("Payload Manager");
     
     // 6. Communication Manager (WiFi)
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication Manager...");
@@ -87,6 +99,7 @@ bool TelemetryManager::begin() {
         _health.reportError(STATUS_WIFI_ERROR, "Communication Manager init failed");
         // Tentará reconectar durante operação
     }
+    _logHeapUsage("Communication Manager");
     
     // Atualizar display
     _display.clear();
@@ -104,6 +117,7 @@ bool TelemetryManager::begin() {
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTF("  Status: %s\n", success ? "OK" : "ERRO");
+    DEBUG_PRINTF("  Heap final: %lu bytes\n", ESP.getFreeHeap());
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
     
@@ -111,6 +125,13 @@ bool TelemetryManager::begin() {
 }
 
 void TelemetryManager::loop() {
+    // Monitorar heap periodicamente (simplificado)
+    uint32_t currentTime = millis();
+    if (currentTime - _lastHeapCheck >= 60000) {
+        _lastHeapCheck = currentTime;
+        _monitorHeap();
+    }
+    
     // Atualizar subsistemas
     _health.update();
     _power.update();
@@ -123,8 +144,6 @@ void TelemetryManager::loop() {
     
     // Verificar condições operacionais
     _checkOperationalConditions();
-    
-    uint32_t currentTime = millis();
     
     // Enviar telemetria via WiFi (a cada 4 minutos)
     if (currentTime - _lastTelemetrySend >= TELEMETRY_SEND_INTERVAL) {
@@ -174,6 +193,10 @@ void TelemetryManager::stopMission() {
     _sendTelemetry();
     _saveToStorage();
     
+    // Log de heap final
+    uint32_t finalHeap = ESP.getFreeHeap();
+    DEBUG_PRINTF("[TelemetryManager] Heap final: %lu, mínimo: %lu\n", finalHeap, _minHeapSeen);
+    
     // Atualizar display
     _display.clear();
     _display.drawString(0, 0, "MISSAO COMPLETA");
@@ -198,7 +221,7 @@ void TelemetryManager::updateDisplay() {
 }
 
 // ============================================================================
-// MÉTODOS PRIVADOS
+// MÉTODOS PRIVADOS (mantidos originais + novos métodos de heap)
 // ============================================================================
 
 void TelemetryManager::_collectTelemetryData() {
@@ -294,6 +317,13 @@ void TelemetryManager::_checkOperationalConditions() {
     if (_mode == MODE_FLIGHT && !_health.isMissionActive()) {
         stopMission();
     }
+    
+    // Verificar heap crítico (NOVO)
+    uint32_t currentHeap = ESP.getFreeHeap();
+    if (currentHeap < 10000) {
+        DEBUG_PRINTF("[TelemetryManager] CRÍTICO: Heap baixo: %lu bytes\n", currentHeap);
+        _health.reportError(STATUS_WATCHDOG, "Critical low memory");
+    }
 }
 
 void TelemetryManager::_displayStatus() {
@@ -312,13 +342,14 @@ void TelemetryManager::_displayStatus() {
     String line3 = "Alt: " + String(_sensors.getAltitude(), 0) + "m";
     _display.drawString(0, 30, line3);
     
-    // Linha 4: Status WiFi e LoRa
+    // Linha 4: Status WiFi, LoRa, SD e heap
     String line4 = "";
     line4 += _comm.isConnected() ? "W+" : "W-";
     line4 += " ";
     line4 += _payload.isOnline() ? "L+" : "L-";
     line4 += " ";
     line4 += _storage.isAvailable() ? "S+" : "S-";
+    line4 += " " + String(ESP.getFreeHeap() / 1024) + "K";
     _display.drawString(0, 45, line4);
     
     _display.display();
@@ -343,8 +374,9 @@ void TelemetryManager::_displayTelemetry() {
     String line3 = "Temp: " + String(_sensors.getTemperature(), 1) + "C";
     _display.drawString(0, 30, line3);
     
-    // Linha 4: Pacotes LoRa
-    String line4 = "LoRa: " + String(_missionData.packetsReceived);
+    // Linha 4: Pacotes LoRa e heap
+    String line4 = "LoRa: " + String(_missionData.packetsReceived) +
+                   " " + String(ESP.getFreeHeap() / 1024) + "K";
     _display.drawString(0, 45, line4);
     
     _display.display();
@@ -354,5 +386,34 @@ void TelemetryManager::_displayError(const String& error) {
     _display.clear();
     _display.drawString(0, 0, "ERRO:");
     _display.drawString(0, 15, error);
+    
+    // Mostrar heap em caso de erro
+    String heapInfo = "Heap: " + String(ESP.getFreeHeap() / 1024) + "KB";
+    _display.drawString(0, 30, heapInfo);
+    
     _display.display();
+}
+
+// NOVOS MÉTODOS DE MONITORAMENTO
+void TelemetryManager::_logHeapUsage(const String& component) {
+    uint32_t currentHeap = ESP.getFreeHeap();
+    if (currentHeap < _minHeapSeen) {
+        _minHeapSeen = currentHeap;
+    }
+    DEBUG_PRINTF("[TelemetryManager] %s - Heap: %lu bytes\n", component.c_str(), currentHeap);
+}
+
+void TelemetryManager::_monitorHeap() {
+    uint32_t currentHeap = ESP.getFreeHeap();
+    
+    if (currentHeap < _minHeapSeen) {
+        _minHeapSeen = currentHeap;
+    }
+    
+    DEBUG_PRINTF("[TelemetryManager] Heap: %lu KB, Min: %lu KB\n", 
+                currentHeap / 1024, _minHeapSeen / 1024);
+    
+    if (currentHeap < 15000) {
+        DEBUG_PRINTLN("[TelemetryManager] AVISO: Heap baixo!");
+    }
 }

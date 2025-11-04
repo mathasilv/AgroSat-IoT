@@ -1,13 +1,14 @@
 /**
  * @file SensorManager.h
- * @brief Gerenciamento de todos os sensores do CubeSat
- * @version 1.0.1
+ * @brief Gerenciamento robusto de todos os sensores do CubeSat
+ * @version 1.1.0
  * 
  * Responsável por:
  * - MPU6050 (Giroscópio e Acelerômetro)
  * - BMP280 (Pressão e Temperatura)
  * - Calibração e filtragem de dados
  * - Detecção de falhas e redundância
+ * - Validação e recuperação automática
  */
 
 #ifndef SENSOR_MANAGER_H
@@ -98,7 +99,7 @@ public:
      */
     bool isMPU6050Online();
     bool isBMP280Online();
-    bool isCalibrated(); // ADICIONADO - método faltante
+    bool isCalibrated();
     
     /**
      * @brief Reinicia sensor com problema
@@ -129,19 +130,31 @@ private:
     float _gyroOffsetX, _gyroOffsetY, _gyroOffsetZ;
     float _accelOffsetX, _accelOffsetY, _accelOffsetZ;
     
-    // Status
+    // Status e robustez (CAMPOS ATUALIZADOS)
     bool _mpuOnline;
     bool _bmpOnline;
     bool _calibrated;
+    uint16_t _initRetries;
+    uint16_t _consecutiveFailures;
+    uint32_t _lastHealthCheck;
     
     // Controle de tempo
     uint32_t _lastReadTime;
     
-    // Filtros (média móvel simples) - usa constante do config.h
+    // Filtros (média móvel simples)
     float _accelXBuffer[CUSTOM_FILTER_SIZE];
     float _accelYBuffer[CUSTOM_FILTER_SIZE];
     float _accelZBuffer[CUSTOM_FILTER_SIZE];
     uint8_t _filterIndex;
+    
+    /**
+     * @brief Métodos privados de robustez (NOVOS MÉTODOS)
+     */
+    bool _testI2CBus();
+    bool _validateMPUReadings(const sensors_event_t& accel, const sensors_event_t& gyro);
+    bool _validateBMPReadings(float temperature, float pressure);
+    void _performHealthCheck();
+    void _attemptSensorRecovery();
     
     /**
      * @brief Aplica filtro de média móvel
