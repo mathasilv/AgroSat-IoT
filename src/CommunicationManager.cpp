@@ -159,8 +159,8 @@ bool CommunicationManager::testConnection() {
 String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
     // Criar documento JSON conforme especificação OBSAT
     // Capacidade: JSON_MAX_SIZE bytes
-    StaticJsonDocument<JSON_MAX_SIZE> doc; // mantém estático para controle de RAM
-
+    StaticJsonDocument<JSON_MAX_SIZE> doc;
+    
     // Identificação da equipe
     doc["team"] = TEAM_NAME;
     doc["category"] = TEAM_CATEGORY;
@@ -183,13 +183,13 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
     doc["altitude"] = serialized(String(data.altitude, 1));
     
     // Giroscópio (obrigatório - 3 eixos em rad/s)
-    JsonObject gyro = doc["gyroscope"].to<JsonObject>();
+    JsonObject gyro = doc.createNestedObject("gyroscope");
     gyro["x"] = serialized(String(data.gyroX, 4));
     gyro["y"] = serialized(String(data.gyroY, 4));
     gyro["z"] = serialized(String(data.gyroZ, 4));
     
     // Acelerômetro (obrigatório - 3 eixos em m/s²)
-    JsonObject accel = doc["accelerometer"].to<JsonObject>();
+    JsonObject accel = doc.createNestedObject("accelerometer");
     accel["x"] = serialized(String(data.accelX, 4));
     accel["y"] = serialized(String(data.accelY, 4));
     accel["z"] = serialized(String(data.accelZ, 4));
