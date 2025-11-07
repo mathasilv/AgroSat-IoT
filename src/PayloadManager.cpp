@@ -5,10 +5,12 @@
 
 #include "PayloadManager.h"
 
+SPIClass spiLoRa(VSPI);
+
 PayloadManager::PayloadManager() :
     _online(false),
     _lastPacketTime(0),
-    _packetTimeout(60000),  // 60 segundos
+    _packetTimeout(60000),
     _expectedSeqNum(0)
 {
     // Inicializar dados da missão
@@ -24,10 +26,13 @@ PayloadManager::PayloadManager() :
 }
 
 bool PayloadManager::begin() {
-    DEBUG_PRINTLN("[PayloadManager] Inicializando módulo LoRa...");
+    DEBUG_PRINTLN("[PayloadManager] Inicializando módulo LoRa no VSPI...");
     
-    // Configurar pinos LoRa
-    SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
+    // CRÍTICO: Inicializar VSPI com pinos do LoRa
+    spiLoRa.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
+    
+    // Configurar LoRa para usar SPIClass dedicado
+    LoRa.setSPI(spiLoRa);
     LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
     
     // Inicializar LoRa com frequência configurada

@@ -1,6 +1,6 @@
 /**
  * @file config.h
- * @brief Configurações globais do CubeSat AgroSat-IoT - OBSAT Fase 2 + Sensores Expandidos
+ * @brief Configurações globais do CubeSat AgroSat-IoT - OBSAT Fase 2
  * @version 2.1.0
  * @date 2025-11-04
  */
@@ -16,7 +16,7 @@
 #define MISSION_NAME        "AgroSat-IoT"
 #define TEAM_NAME           "Orbitalis"
 #define TEAM_CATEGORY       "N3"
-#define FIRMWARE_VERSION    "2.1.0-EXPANDIDO"
+#define FIRMWARE_VERSION    "2.1.0"
 #define BUILD_DATE          __DATE__
 #define BUILD_TIME          __TIME__
 
@@ -45,9 +45,9 @@
 
 #define SENSOR_I2C_SDA      21
 #define SENSOR_I2C_SCL      22
-#define I2C_FREQUENCY       400000
+#define I2C_FREQUENCY       100000
 
-#define BATTERY_PIN         35
+#define BATTERY_PIN         35 // preciso alterar depois esse pino por que vou usar a saida da placa de potencia
 #define BATTERY_SAMPLES     10
 #define BATTERY_VREF        3.3
 #define BATTERY_DIVIDER     2.0
@@ -78,14 +78,14 @@
 // ============================================================================
 // REDE/HTTP/COMUNICAÇÃO
 // ============================================================================
-#define WIFI_SSID           "OBSAT_BALLOON"
-#define WIFI_PASSWORD       "obsat2025"
+#define WIFI_SSID           "MATHEUS "
+#define WIFI_PASSWORD       "12213490"
 #define WIFI_TIMEOUT_MS     30000
 #define WIFI_RETRY_ATTEMPTS 5
 
-#define HTTP_SERVER         "obsat.org.br"
-#define HTTP_PORT           80
-#define HTTP_ENDPOINT       "/teste/post/envio.php"
+#define HTTP_SERVER         "http://192.168.1.106"
+#define HTTP_PORT           5000
+#define HTTP_ENDPOINT       "/api/telemetria"
 #define HTTP_TIMEOUT_MS     10000
 
 #define JSON_MAX_SIZE       768

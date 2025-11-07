@@ -5,6 +5,8 @@
 
 #include "StorageManager.h"
 
+SPIClass spiSD(HSPI);
+
 StorageManager::StorageManager() :
     _available(false)
 {
@@ -14,10 +16,10 @@ bool StorageManager::begin() {
     DEBUG_PRINTLN("[StorageManager] Inicializando SD Card...");
     
     // Configurar SPI para SD Card
-    SPI.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
+    spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
     
     // Inicializar SD Card
-    if (!SD.begin(SD_CS)) {
+    if (!SD.begin(SD_CS, spiSD)) {
         DEBUG_PRINTLN("[StorageManager] ERRO: Falha ao inicializar SD Card!");
         _available = false;
         return false;

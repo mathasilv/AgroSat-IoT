@@ -1,6 +1,6 @@
 /**
  * @file TelemetryManager.cpp
- * @brief Implementação do gerenciador central de telemetria com sensores expandidos
+ * @brief Implementação do gerenciador central de telemetria com sensores
  * @version 2.1.0
  */
 
@@ -32,7 +32,7 @@ bool TelemetryManager::begin() {
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("  AgroSat-IoT CubeSat - OBSAT Fase 2");
-    DEBUG_PRINTLN("  Equipe: Orbitalis - Sensores Expandidos");
+    DEBUG_PRINTLN("  Equipe: Orbitalis ");
     DEBUG_PRINTLN("  Firmware: " FIRMWARE_VERSION);
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
@@ -193,7 +193,7 @@ void TelemetryManager::loop() {
     _comm.update();
     _payload.update();
     
-    // Coletar dados de telemetria (EXPANDIDO)
+    // Coletar dados de telemetria 
     _collectTelemetryData();
     
     // Verificar condições operacionais
@@ -313,7 +313,7 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.accelY = _sensors.getAccelY();
     _telemetryData.accelZ = _sensors.getAccelZ();
     
-    // SENSORES EXPANDIDOS (OPCIONAIS)
+    // SENSORES (OPCIONAIS)
     // Apenas preenche se sensores estiverem online
     _telemetryData.humidity = NAN;
     _telemetryData.co2 = NAN;

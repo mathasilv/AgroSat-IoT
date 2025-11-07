@@ -1,6 +1,6 @@
 /**
  * @file CommunicationManager.cpp
- * @brief Implementação do gerenciador de comunicação com JSON expandido
+ * @brief Implementação do gerenciador de comunicação com JSON
  */
 
 #include "CommunicationManager.h"

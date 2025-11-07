@@ -16,7 +16,8 @@
 #include <Arduino.h>
 #include <LoRa.h>
 #include "config.h"
-
+#include <SPI.h>
+ 
 class PayloadManager {
 public:
     /**

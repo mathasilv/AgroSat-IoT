@@ -241,7 +241,7 @@ float SensorManager::getAccelMagnitude() {
     return sqrt(_accelX * _accelX + _accelY * _accelY + _accelZ * _accelZ);
 }
 
-// Getters expandidos
+// Getters 
 float SensorManager::getHumidity() { return _humidity; }
 float SensorManager::getCO2() { return _co2Level; }
 float SensorManager::getTVOC() { return _tvoc; }
