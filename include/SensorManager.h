@@ -1,44 +1,44 @@
 /**
  * @file SensorManager.h
- * @brief Gerenciador de sensores com auto-detecção e bibliotecas corrigidas
- * @version 2.1.0
+ * @brief Gerenciamento de sensores com auto-detecção - VERSÃO CORRIGIDA MPU6050_light
+ * @version 2.2.0
  */
 
-#ifndef SENSOR_MANAGER_H
-#define SENSOR_MANAGER_H
+#ifndef SENSORMANAGER_H
+#define SENSORMANAGER_H
 
 #include <Arduino.h>
 #include <Wire.h>
 #include "config.h"
 
-// Bibliotecas obrigatórias
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_BMP280.h>
-#include <Adafruit_Sensor.h>
+// === BIBLIOTECAS DE SENSORES ===
+// MPU6050 - BIBLIOTECA TROCADA
+#include <MPU6050_light.h>
 
-// Bibliotecas opcionais (condicionais)
+// BMP280
+#include <Adafruit_BMP280.h>
+
+// Opcionais (descomentar se necessário)
 #ifdef USE_MPU9250
-  #include <MPU9250_WE.h>
+    #include <MPU9250_WE.h>
 #endif
 
 #ifdef USE_SHT20
-  #include <SHT2x.h>
+    #include <SHT2x.h>
 #endif
 
 #ifdef USE_CCS811
-  #include <Adafruit_CCS811.h>
+    #include <Adafruit_CCS811.h>
 #endif
 
 class SensorManager {
 public:
     SensorManager();
+    
     bool begin();
     void update();
     
-    // Calibração
-    bool calibrateIMU();
-    
-    // Getters obrigatórios (compatibilidade OBSAT)
+    // Getters principais
     float getTemperature();
     float getPressure();
     float getAltitude();
@@ -51,14 +51,14 @@ public:
     float getAccelMagnitude();
     
     // Getters expandidos
-    float getHumidity();        // SHT20
-    float getCO2();             // CCS811
-    float getTVOC();            // CCS811
-    float getMagX();            // MPU9250
-    float getMagY();            // MPU9250
-    float getMagZ();            // MPU9250
+    float getHumidity();
+    float getCO2();
+    float getTVOC();
+    float getMagX();
+    float getMagY();
+    float getMagZ();
     
-    // Status dos sensores
+    // Status
     bool isMPU6050Online();
     bool isMPU9250Online();
     bool isBMP280Online();
@@ -66,55 +66,51 @@ public:
     bool isCCS811Online();
     bool isCalibrated();
     
-    // Recuperação
+    // Utilidades
+    void scanI2C();
+    void printSensorStatus();
+    bool calibrateIMU();
     void resetMPU6050();
     void resetBMP280();
     void resetAll();
     
-    // Debug
-    void printSensorStatus();
-    void scanI2C();
-    void getRawData(sensors_event_t& accel, sensors_event_t& gyro, sensors_event_t& temp);
+    // Compatibilidade
+    void getRawData(float& gx, float& gy, float& gz, 
+                   float& ax, float& ay, float& az);
 
 private:
-    // Objetos obrigatórios
-    Adafruit_MPU6050 _mpu6050;
+    // Instâncias dos sensores
+    MPU6050 _mpu6050;  // BIBLIOTECA NOVA - sem argumentos no construtor
     Adafruit_BMP280 _bmp280;
     
-    // Objetos opcionais
 #ifdef USE_MPU9250
-    MPU9250_WE _mpu9250 = MPU9250_WE(MPU9250_ADDRESS);
+    MPU9250_WE _mpu9250;
 #endif
+
 #ifdef USE_SHT20
     SHT2x _sht20;
 #endif
+
 #ifdef USE_CCS811
     Adafruit_CCS811 _ccs811;
 #endif
     
-    // Dados
-    float _temperature;
-    float _pressure;
-    float _altitude;
-    float _humidity;
-    float _co2Level;
-    float _tvoc;
+    // Dados dos sensores
+    float _temperature, _pressure, _altitude;
+    float _humidity, _co2Level, _tvoc;
     float _seaLevelPressure;
     
     float _gyroX, _gyroY, _gyroZ;
     float _accelX, _accelY, _accelZ;
     float _magX, _magY, _magZ;
     
-    // Offsets
+    // Offsets de calibração (não usado com MPU6050_light)
     float _gyroOffsetX, _gyroOffsetY, _gyroOffsetZ;
     float _accelOffsetX, _accelOffsetY, _accelOffsetZ;
     
     // Status
-    bool _mpu6050Online;
-    bool _mpu9250Online;
-    bool _bmp280Online;
-    bool _sht20Online;
-    bool _ccs811Online;
+    bool _mpu6050Online, _mpu9250Online;
+    bool _bmp280Online, _sht20Online, _ccs811Online;
     bool _calibrated;
     
     // Controle de timing
@@ -122,32 +118,39 @@ private:
     uint32_t _lastCCS811Read;
     uint32_t _lastSHT20Read;
     uint32_t _lastHealthCheck;
-    uint16_t _consecutiveFailures;
+    uint8_t _consecutiveFailures;
     
-    // Filtros
+    // Filtro de média móvel
     float _accelXBuffer[CUSTOM_FILTER_SIZE];
     float _accelYBuffer[CUSTOM_FILTER_SIZE];
     float _accelZBuffer[CUSTOM_FILTER_SIZE];
     uint8_t _filterIndex;
     
-    // Inicializações
+    // Métodos privados - Inicialização
     bool _initMPU6050();
-    bool _initMPU9250();
     bool _initBMP280();
+#ifdef USE_MPU9250
+    bool _initMPU9250();
+#endif
+#ifdef USE_SHT20
     bool _initSHT20();
+#endif
+#ifdef USE_CCS811
     bool _initCCS811();
+#endif
     
-    // Validações
-    bool _validateMPUReadings(const sensors_event_t& accel, const sensors_event_t& gyro);
+    // Métodos privados - Validação
+    bool _validateMPUReadings(float gx, float gy, float gz, 
+                             float ax, float ay, float az);
     bool _validateBMPReadings(float temperature, float pressure);
     bool _validateSHTReadings(float temperature, float humidity);
     bool _validateCCSReadings(float co2, float tvoc);
     
-    // Utilitários
+    // Métodos privados - Auxiliares
     void _performHealthCheck();
+    bool _calibrateMPU6050();
     float _applyFilter(float newValue, float* buffer);
     float _calculateAltitude(float pressure);
-    bool _calibrateMPU6050();
 };
 
-#endif // SENSOR_MANAGER_H
+#endif // SENSORMANAGER_H

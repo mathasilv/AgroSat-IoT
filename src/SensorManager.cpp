@@ -1,12 +1,13 @@
 /**
  * @file SensorManager.cpp
- * @brief Implementação com auto-detecção e bibliotecas corrigidas
- * @version 2.1.0
+ * @brief Implementação com MPU6050_light e suporte MPU6500/MPU6880 - VERSÃO 2.2.1
+ * @version 2.2.1
  */
 
 #include "SensorManager.h"
 
 SensorManager::SensorManager() :
+    _mpu6050(Wire),
     _temperature(NAN), _pressure(NAN), _altitude(NAN),
     _humidity(NAN), _co2Level(NAN), _tvoc(NAN),
     _seaLevelPressure(1013.25),
@@ -25,7 +26,6 @@ SensorManager::SensorManager() :
     , _mpu9250(MPU9250_ADDRESS)
 #endif
 {
-    // Inicializar buffers de filtro
     for (uint8_t i = 0; i < CUSTOM_FILTER_SIZE; i++) {
         _accelXBuffer[i] = 0.0;
         _accelYBuffer[i] = 0.0;
@@ -34,29 +34,31 @@ SensorManager::SensorManager() :
 }
 
 bool SensorManager::begin() {
-    DEBUG_PRINTLN("[SensorManager] Inicializando I2C e detectando sensores...");
+    static bool i2cInitialized = false;
     
-    // Configurar I2C
-    Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
-    Wire.setClock(I2C_FREQUENCY);
-    delay(200); // Estabilização crítica
+    DEBUG_PRINTLN("[SensorManager] Inicializando sensores...");
     
-    // Escanear barramento
+    if (!i2cInitialized) {
+        DEBUG_PRINTLN("[SensorManager] Inicializando I2C pela primeira vez...");
+        Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
+        Wire.setClock(I2C_FREQUENCY);
+        delay(200);
+        i2cInitialized = true;
+    } else {
+        DEBUG_PRINTLN("[SensorManager] I2C já inicializado (reutilizando)");
+    }
+    
     scanI2C();
     
     bool success = false;
     uint8_t sensorsFound = 0;
     
-    // === SENSORES OBRIGATÓRIOS ===
-    
-    // IMU: Tentar MPU6050 primeiro, depois MPU9250
     _mpu6050Online = _initMPU6050();
     if (_mpu6050Online) {
         sensorsFound++;
         success = true;
         DEBUG_PRINTLN("[SensorManager] ✓ MPU6050 (IMU 6-DOF) ONLINE");
     } else {
-        // Se MPU6050 falhou, tentar MPU9250
 #ifdef USE_MPU9250
         _mpu9250Online = _initMPU9250();
         if (_mpu9250Online) {
@@ -67,7 +69,6 @@ bool SensorManager::begin() {
 #endif
     }
     
-    // BMP280: Obrigatório para OBSAT
     _bmp280Online = _initBMP280();
     if (_bmp280Online) {
         sensorsFound++;
@@ -75,9 +76,6 @@ bool SensorManager::begin() {
         DEBUG_PRINTLN("[SensorManager] ✓ BMP280 (Pressão/Temp) ONLINE");
     }
     
-    // === SENSORES OPCIONAIS ===
-    
-    // SHT20: Temperatura/Umidade
 #ifdef USE_SHT20
     _sht20Online = _initSHT20();
     if (_sht20Online) {
@@ -86,7 +84,6 @@ bool SensorManager::begin() {
     }
 #endif
     
-    // CCS811: CO2/TVOC
 #ifdef USE_CCS811
     _ccs811Online = _initCCS811();
     if (_ccs811Online) {
@@ -95,7 +92,6 @@ bool SensorManager::begin() {
     }
 #endif
     
-    // Calibração do IMU disponível
     if (_mpu6050Online || _mpu9250Online) {
         DEBUG_PRINTLN("[SensorManager] Calibrando IMU...");
         calibrateIMU();
@@ -109,54 +105,49 @@ bool SensorManager::begin() {
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
     
-    return success; // Sucesso se pelo menos IMU ou BMP280 funcionar
+    return success;
 }
 
 void SensorManager::update() {
     uint32_t currentTime = millis();
     
-    // Health check periódico
     if (currentTime - _lastHealthCheck >= 30000) {
         _lastHealthCheck = currentTime;
         _performHealthCheck();
     }
     
-    // Leitura dos sensores principais
     if (currentTime - _lastReadTime >= SENSOR_READ_INTERVAL) {
         _lastReadTime = currentTime;
         
-        // MPU6050 (IMU 6-DOF)
         if (_mpu6050Online) {
-            sensors_event_t accel, gyro, temp;
-            if (_mpu6050.getEvent(&accel, &gyro, &temp)) {
-                if (_validateMPUReadings(accel, gyro)) {
-                    // Aplicar offsets de calibração
-                    _gyroX = gyro.gyro.x - _gyroOffsetX;
-                    _gyroY = gyro.gyro.y - _gyroOffsetY;
-                    _gyroZ = gyro.gyro.z - _gyroOffsetZ;
-                    
-                    // Aplicar filtro
-                    _accelX = _applyFilter(accel.acceleration.x - _accelOffsetX, _accelXBuffer);
-                    _accelY = _applyFilter(accel.acceleration.y - _accelOffsetY, _accelYBuffer);
-                    _accelZ = _applyFilter(accel.acceleration.z - _accelOffsetZ, _accelZBuffer);
-                    
-                    _consecutiveFailures = 0;
-                } else {
-                    _consecutiveFailures++;
-                }
+            _mpu6050.update();
+            
+            _gyroX = _mpu6050.getGyroX();
+            _gyroY = _mpu6050.getGyroY();
+            _gyroZ = _mpu6050.getGyroZ();
+            
+            float rawAccelX = _mpu6050.getAccX();
+            float rawAccelY = _mpu6050.getAccY();
+            float rawAccelZ = _mpu6050.getAccZ();
+            
+            if (_validateMPUReadings(_gyroX, _gyroY, _gyroZ, 
+                                     rawAccelX, rawAccelY, rawAccelZ)) {
+                _accelX = _applyFilter(rawAccelX, _accelXBuffer);
+                _accelY = _applyFilter(rawAccelY, _accelYBuffer);
+                _accelZ = _applyFilter(rawAccelZ, _accelZBuffer);
+                
+                _consecutiveFailures = 0;
             } else {
                 _consecutiveFailures++;
             }
         }
         
-        // MPU9250 (IMU 9-DOF)
 #ifdef USE_MPU9250
-        if (_mpu9250Online && !_mpu6050Online) {  // Usar só se 6050 não disponível
+        if (_mpu9250Online && !_mpu6050Online) {
             xyzFloat gValues = _mpu9250.getGValues();
             xyzFloat gyrValues = _mpu9250.getGyrValues();
             xyzFloat magValues = _mpu9250.getMagValues();
             
-            // IMU 6-DOF
             _accelX = _applyFilter(gValues.x - _accelOffsetX, _accelXBuffer);
             _accelY = _applyFilter(gValues.y - _accelOffsetY, _accelYBuffer);
             _accelZ = _applyFilter(gValues.z - _accelOffsetZ, _accelZBuffer);
@@ -165,27 +156,24 @@ void SensorManager::update() {
             _gyroY = gyrValues.y - _gyroOffsetY;
             _gyroZ = gyrValues.z - _gyroOffsetZ;
             
-            // Magnetômetro (9º DOF)
             _magX = magValues.x;
             _magY = magValues.y;
             _magZ = magValues.z;
         }
 #endif
         
-        // BMP280 (Pressão/Temperatura)
         if (_bmp280Online) {
             float temp = _bmp280.readTemperature();
             float press = _bmp280.readPressure();
             
             if (_validateBMPReadings(temp, press)) {
                 _temperature = temp;
-                _pressure = press / 100.0; // Pa -> hPa
+                _pressure = press / 100.0;
                 _altitude = _calculateAltitude(_pressure);
             }
         }
     }
     
-    // SHT20 (leitura mais lenta)
 #ifdef USE_SHT20
     if (_sht20Online && (currentTime - _lastSHT20Read >= SHT20_READ_INTERVAL)) {
         _lastSHT20Read = currentTime;
@@ -194,7 +182,6 @@ void SensorManager::update() {
         float hum = _sht20.getHumidity();
         
         if (_validateSHTReadings(temp, hum)) {
-            // Usar temperatura do SHT20 se BMP280 não disponível
             if (!_bmp280Online) {
                 _temperature = temp;
             }
@@ -203,7 +190,6 @@ void SensorManager::update() {
     }
 #endif
     
-    // CCS811 (leitura ainda mais lenta)
 #ifdef USE_CCS811
     if (_ccs811Online && (currentTime - _lastCCS811Read >= CCS811_READ_INTERVAL)) {
         _lastCCS811Read = currentTime;
@@ -223,10 +209,6 @@ void SensorManager::update() {
 #endif
 }
 
-// ============================================================================
-// GETTERS (COMPATIBILIDADE TOTAL)
-// ============================================================================
-
 float SensorManager::getTemperature() { return _temperature; }
 float SensorManager::getPressure() { return _pressure; }
 float SensorManager::getAltitude() { return _altitude; }
@@ -241,7 +223,6 @@ float SensorManager::getAccelMagnitude() {
     return sqrt(_accelX * _accelX + _accelY * _accelY + _accelZ * _accelZ);
 }
 
-// Getters 
 float SensorManager::getHumidity() { return _humidity; }
 float SensorManager::getCO2() { return _co2Level; }
 float SensorManager::getTVOC() { return _tvoc; }
@@ -249,7 +230,6 @@ float SensorManager::getMagX() { return _magX; }
 float SensorManager::getMagY() { return _magY; }
 float SensorManager::getMagZ() { return _magZ; }
 
-// Status
 bool SensorManager::isMPU6050Online() { return _mpu6050Online; }
 bool SensorManager::isMPU9250Online() { return _mpu9250Online; }
 bool SensorManager::isBMP280Online() { return _bmp280Online; }
@@ -333,38 +313,102 @@ void SensorManager::resetAll() {
     _consecutiveFailures = 0;
 }
 
-void SensorManager::getRawData(sensors_event_t& accel, sensors_event_t& gyro, sensors_event_t& temp) {
+void SensorManager::getRawData(float& gx, float& gy, float& gz, 
+                               float& ax, float& ay, float& az) {
     if (_mpu6050Online) {
-        _mpu6050.getEvent(&accel, &gyro, &temp);
+        gx = _gyroX;
+        gy = _gyroY;
+        gz = _gyroZ;
+        ax = _accelX;
+        ay = _accelY;
+        az = _accelZ;
+    } else {
+        gx = gy = gz = ax = ay = az = NAN;
     }
 }
 
 // ============================================================================
-// MÉTODOS PRIVADOS - INICIALIZAÇÃO DE CADA SENSOR
+// MÉTODOS PRIVADOS - INICIALIZAÇÃO
 // ============================================================================
 
 bool SensorManager::_initMPU6050() {
-    for (uint8_t attempt = 0; attempt < 3; attempt++) {
-        if (attempt > 0) {
-            delay(100);
-            DEBUG_PRINTF("[SensorManager] Retry MPU6050 %d/3\n", attempt + 1);
-        }
-        
-        if (_mpu6050.begin(MPU6050_ADDRESS, &Wire)) {
-            // Configurar ranges
-            _mpu6050.setAccelerometerRange(MPU6050_RANGE_8_G);
-            _mpu6050.setGyroRange(MPU6050_RANGE_500_DEG);
-            _mpu6050.setFilterBandwidth(MPU6050_BAND_21_HZ);
-            
-            // Teste de leitura
-            delay(50);
-            sensors_event_t accel, gyro, temp;
-            if (_mpu6050.getEvent(&accel, &gyro, &temp)) {
-                return true;
-            }
-        }
+    DEBUG_PRINTLN("[SensorManager] === TESTE DIRETO MPU6050/MPU6500 ===");
+    
+    Wire.beginTransmission(MPU6050_ADDRESS);
+    uint8_t error = Wire.endTransmission();
+    DEBUG_PRINTF("  Endereço 0x68: %s (erro=%d)\n", error == 0 ? "ACK" : "NACK", error);
+    
+    if (error != 0) {
+        DEBUG_PRINTLN("  FALHA: Sensor não responde");
+        return false;
     }
-    return false;
+    
+    // Reset via PWR_MGMT_1
+    Wire.beginTransmission(MPU6050_ADDRESS);
+    Wire.write(0x6B);
+    Wire.write(0x80);
+    Wire.endTransmission();
+    delay(100);
+    
+    // Wake up
+    Wire.beginTransmission(MPU6050_ADDRESS);
+    Wire.write(0x6B);
+    Wire.write(0x00);
+    Wire.endTransmission();
+    delay(50);
+    
+    // Ler WHO_AM_I
+    Wire.beginTransmission(MPU6050_ADDRESS);
+    Wire.write(0x75);
+    Wire.endTransmission(false);
+    
+    uint8_t bytesReceived = Wire.requestFrom((uint8_t)MPU6050_ADDRESS, (uint8_t)1);
+    DEBUG_PRINTF("  Bytes recebidos: %d\n", bytesReceived);
+    
+    if (bytesReceived == 1) {
+        uint8_t whoami = Wire.read();
+        DEBUG_PRINTF("  WHO_AM_I = 0x%02X ", whoami);
+        
+        // ACEITAR CLONES MPU6500/MPU6880 (0x71) e MPU9250 (0x73)
+        if (whoami == 0x68) {
+            DEBUG_PRINTLN("(MPU6050 genuíno)");
+        } else if (whoami == 0x70) {
+            DEBUG_PRINTLN("(MPU6500)");
+        } else if (whoami == 0x71) {
+            DEBUG_PRINTLN("(MPU6500/MPU6880 clone)");
+        } else if (whoami == 0x73) {
+            DEBUG_PRINTLN("(MPU9250)");
+        } else if (whoami == 0x98) {
+            DEBUG_PRINTLN("(MPU6050 variante)");
+        } else {
+            DEBUG_PRINTF("(DESCONHECIDO)\n");
+            DEBUG_PRINTLN("  FALHA: WHO_AM_I inválido");
+            return false;
+        }
+    } else {
+        DEBUG_PRINTLN("  FALHA: Não recebeu dados do WHO_AM_I");
+        return false;
+    }
+    
+    DEBUG_PRINTLN("  ✓ Comunicação I2C OK");
+    DEBUG_PRINTLN("[SensorManager] === Tentando MPU6050_light.begin() ===");
+    
+    byte status = _mpu6050.begin();
+    DEBUG_PRINTF("  begin() retornou: %d (0=OK)\n", status);
+    
+    if (status == 0) {
+        DEBUG_PRINTLN("  Calculando offsets (mantenha imóvel 3s)...");
+        _mpu6050.calcOffsets(true, true);
+        
+        delay(100);
+        _mpu6050.update();
+        
+        DEBUG_PRINTLN("  ✓ MPU6050_light OK");
+        return true;
+    } else {
+        DEBUG_PRINTF("  FALHA: begin() erro=%d\n", status);
+        return false;
+    }
 }
 
 bool SensorManager::_initBMP280() {
@@ -372,14 +416,12 @@ bool SensorManager::_initBMP280() {
     
     for (uint8_t i = 0; i < 2; i++) {
         if (_bmp280.begin(addresses[i])) {
-            // Configurar para máxima precisão
             _bmp280.setSampling(Adafruit_BMP280::MODE_NORMAL,
                               Adafruit_BMP280::SAMPLING_X16,
                               Adafruit_BMP280::SAMPLING_X16,
                               Adafruit_BMP280::FILTER_X16,
                               Adafruit_BMP280::STANDBY_MS_500);
             
-            // Teste de leitura
             delay(100);
             float testTemp = _bmp280.readTemperature();
             if (!isnan(testTemp) && testTemp > TEMP_MIN_VALID && testTemp < TEMP_MAX_VALID) {
@@ -394,13 +436,11 @@ bool SensorManager::_initBMP280() {
 #ifdef USE_MPU9250
 bool SensorManager::_initMPU9250() {
     if (_mpu9250.init()) {
-        // Configurar ranges
         _mpu9250.setAccRange(MPU9250_ACC_RANGE_8G);
         _mpu9250.setGyrRange(MPU9250_GYRO_RANGE_500);
         _mpu9250.enableGyrDLPF();
         _mpu9250.setGyrDLPF(MPU9250_DLPF_6);
         
-        // Teste de leitura
         delay(100);
         xyzFloat gValues = _mpu9250.getGValues();
         if (!isnan(gValues.x)) {
@@ -413,15 +453,11 @@ bool SensorManager::_initMPU9250() {
 
 #ifdef USE_SHT20
 bool SensorManager::_initSHT20() {
-    // Verificar se SHT20 está presente
     Wire.beginTransmission(SHT20_ADDRESS);
     if (Wire.endTransmission() == 0) {
         _sht20.begin();
-        
-        // Aguardar estabilização
         delay(500);
         
-        // Teste de leitura
         float testTemp = _sht20.getTemperature();
         float testHum = _sht20.getHumidity();
         
@@ -439,7 +475,6 @@ bool SensorManager::_initCCS811() {
     
     for (uint8_t i = 0; i < 2; i++) {
         if (_ccs811.begin(addresses[i])) {
-            // Aguardar sensor ficar disponível
             uint32_t startTime = millis();
             while (!_ccs811.available() && (millis() - startTime < 3000)) {
                 delay(100);
@@ -456,22 +491,21 @@ bool SensorManager::_initCCS811() {
 #endif
 
 // ============================================================================
-// MÉTODOS DE VALIDAÇÃO
+// VALIDAÇÃO
 // ============================================================================
 
-bool SensorManager::_validateMPUReadings(const sensors_event_t& accel, const sensors_event_t& gyro) {
-    // Verificar NaN
-    if (isnan(accel.acceleration.x) || isnan(accel.acceleration.y) || isnan(accel.acceleration.z) ||
-        isnan(gyro.gyro.x) || isnan(gyro.gyro.y) || isnan(gyro.gyro.z)) {
+bool SensorManager::_validateMPUReadings(float gx, float gy, float gz,
+                                        float ax, float ay, float az) {
+    if (isnan(ax) || isnan(ay) || isnan(az) ||
+        isnan(gx) || isnan(gy) || isnan(gz)) {
         return false;
     }
     
-    // Verificar ranges razoáveis (±8G = ±78.4 m/s², ±500°/s = ±8.7 rad/s)
-    if (abs(accel.acceleration.x) > 80 || abs(accel.acceleration.y) > 80 || abs(accel.acceleration.z) > 80) {
+    if (abs(ax) > 10 || abs(ay) > 10 || abs(az) > 10) {
         return false;
     }
     
-    if (abs(gyro.gyro.x) > 10 || abs(gyro.gyro.y) > 10 || abs(gyro.gyro.z) > 10) {
+    if (abs(gx) > 600 || abs(gy) > 600 || abs(gz) > 600) {
         return false;
     }
     
@@ -508,7 +542,7 @@ bool SensorManager::_validateCCSReadings(float co2, float tvoc) {
 }
 
 // ============================================================================
-// MÉTODOS AUXILIARES
+// AUXILIARES
 // ============================================================================
 
 void SensorManager::_performHealthCheck() {
@@ -526,53 +560,8 @@ void SensorManager::_performHealthCheck() {
 bool SensorManager::_calibrateMPU6050() {
     if (!_mpu6050Online) return false;
     
-    DEBUG_PRINTLN("[SensorManager] Calibrando MPU6050 (mantenha imóvel)...");
-    
-    float sumGyroX = 0, sumGyroY = 0, sumGyroZ = 0;
-    float sumAccelX = 0, sumAccelY = 0, sumAccelZ = 0;
-    uint16_t validSamples = 0;
-    
-    for (int i = 0; i < MPU6050_CALIBRATION_SAMPLES; i++) {
-        sensors_event_t accel, gyro, temp;
-        
-        if (_mpu6050.getEvent(&accel, &gyro, &temp) && 
-            _validateMPUReadings(accel, gyro)) {
-            
-            sumGyroX += gyro.gyro.x;
-            sumGyroY += gyro.gyro.y;
-            sumGyroZ += gyro.gyro.z;
-            
-            sumAccelX += accel.acceleration.x;
-            sumAccelY += accel.acceleration.y;
-            sumAccelZ += accel.acceleration.z;
-            
-            validSamples++;
-        }
-        
-        delay(10);
-        if (i % 20 == 0) DEBUG_PRINT(".");
-    }
-    DEBUG_PRINTLN("");
-    
-    if (validSamples < (MPU6050_CALIBRATION_SAMPLES * 0.8)) {
-        DEBUG_PRINTF("[SensorManager] Calibração falhou: %d/%d amostras\n", 
-                    validSamples, MPU6050_CALIBRATION_SAMPLES);
-        return false;
-    }
-    
-    // Calcular offsets
-    _gyroOffsetX = sumGyroX / validSamples;
-    _gyroOffsetY = sumGyroY / validSamples;
-    _gyroOffsetZ = sumGyroZ / validSamples;
-    
-    _accelOffsetX = sumAccelX / validSamples;
-    _accelOffsetY = sumAccelY / validSamples;
-    _accelOffsetZ = (sumAccelZ / validSamples) - 9.81; // Subtrair gravidade
-    
-    DEBUG_PRINTF("[SensorManager] Calibração OK (%d amostras)\n", validSamples);
-    DEBUG_PRINTF("  Gyro offsets: [%.4f, %.4f, %.4f]\n", _gyroOffsetX, _gyroOffsetY, _gyroOffsetZ);
-    DEBUG_PRINTF("  Accel offsets: [%.4f, %.4f, %.4f]\n", _accelOffsetX, _accelOffsetY, _accelOffsetZ);
-    
+    DEBUG_PRINTLN("[SensorManager] MPU6050_light já calibrado automaticamente");
+    _calibrated = true;
     return true;
 }
 
