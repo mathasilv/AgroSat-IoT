@@ -1,8 +1,7 @@
 /**
  * @file main.cpp
- * @brief Programa principal robusto do CubeSat AgroSat-IoT - OBSAT Fase 2
- * @version 2.1.0
- * @date 2025-11-01
+ * @brief Programa principal com controle via Serial (SEM botão físico)
+ * @version 2.2.0
  */
 
 #include <Arduino.h>
@@ -15,42 +14,17 @@
 
 TelemetryManager telemetry;
 
-// Flags de controle
 bool missionStarted = false;
 bool bootComplete = false;
-
-// Botão de controle
-volatile bool buttonPressed = false;
-unsigned long lastButtonPress = 0;
 
 // Monitoramento de sistema
 unsigned long lastHeapLog = 0;
 uint32_t minHeapSeen = UINT32_MAX;
 
 // ============================================================================
-// INTERRUPÇÕES
-// ============================================================================
-
-/**
- * @brief ISR do botão (Boot button) - Mantido leve e seguro
- */
-void IRAM_ATTR buttonISR() {
-    unsigned long currentTime = millis();
-    
-    // Debounce (200ms)
-    if (currentTime - lastButtonPress > 200) {
-        buttonPressed = true;
-        lastButtonPress = currentTime;
-    }
-}
-
-// ============================================================================
 // FUNÇÕES AUXILIARES
 // ============================================================================
 
-/**
- * @brief Exibe informações detalhadas de boot
- */
 void printBootInfo() {
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("╔════════════════════════════════════════════════════════════╗");
@@ -72,7 +46,6 @@ void printBootInfo() {
     DEBUG_PRINTF("║ Flash:       %lu MB                                      ║\n", 
                  ESP.getFlashChipSize() / (1024 * 1024));
     
-    // Log inicial de heap para monitoramento
     minHeapSeen = freeHeap;
     
     DEBUG_PRINTLN("╠════════════════════════════════════════════════════════════╣");
@@ -84,9 +57,6 @@ void printBootInfo() {
     DEBUG_PRINTLN("");
 }
 
-/**
- * @brief Informações da missão e requisitos
- */
 void printMissionInfo() {
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("╔════════════════════════════════════════════════════════════╗");
@@ -104,23 +74,20 @@ void printMissionInfo() {
     DEBUG_PRINTLN("║   ✓ Payload customizado: Dados LoRa (máx 90 bytes)       ║");
     DEBUG_PRINTLN("║   ✓ Armazenamento em SD Card                              ║");
     DEBUG_PRINTLN("╠════════════════════════════════════════════════════════════╣");
-    DEBUG_PRINTLN("║ Controles:                                                 ║");
-    DEBUG_PRINTLN("║   - Pressione BOOT button para iniciar/parar missão       ║");
-    DEBUG_PRINTLN("║   - Sistema monitora heap e detecta problemas             ║");
+    DEBUG_PRINTLN("║ Controles VIA SERIAL:                                      ║");
+    DEBUG_PRINTLN("║   - Digite 'START' para iniciar missão                    ║");
+    DEBUG_PRINTLN("║   - Digite 'STOP' para parar missão                       ║");
+    DEBUG_PRINTLN("║   - Digite 'HELP' para lista completa                     ║");
     DEBUG_PRINTLN("╚════════════════════════════════════════════════════════════╝");
     DEBUG_PRINTLN("");
 }
 
-/**
- * @brief Aguarda boot com verificações de sistema
- */
 void waitForBoot() {
     DEBUG_PRINTLN("[Main] Aguardando estabilização dos subsistemas...");
     
     for (int i = 3; i > 0; i--) {
         DEBUG_PRINTF("[Main] Iniciando em %d...\n", i);
         
-        // Verificar heap durante boot
         uint32_t currentHeap = ESP.getFreeHeap();
         if (currentHeap < minHeapSeen) {
             minHeapSeen = currentHeap;
@@ -133,62 +100,95 @@ void waitForBoot() {
     DEBUG_PRINTLN("");
 }
 
-/**
- * @brief Processa comando do botão com validações
- */
-void processButton() {
-    if (!buttonPressed) return;
+// ============================================================================
+// CONTROLE VIA SERIAL (SUBSTITUI BOTÃO)
+// ============================================================================
+
+void processSerialCommands() {
+    if (!Serial.available()) return;
     
-    buttonPressed = false;
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    cmd.toUpperCase();
     
-    DEBUG_PRINTLN("[Main] Botão pressionado!");
+    if (cmd.length() == 0) return;
     
-    // Log de heap no momento do comando
-    uint32_t heapAtButton = ESP.getFreeHeap();
-    DEBUG_PRINTF("[Main] Heap no comando: %lu bytes\n", heapAtButton);
+    DEBUG_PRINTLN("");
+    DEBUG_PRINTF("[Main] ┌─ Comando recebido: '%s'\n", cmd.c_str());
     
-    // Verificar modo atual
-    OperationMode mode = telemetry.getMode();
+    OperationMode currentMode = telemetry.getMode();
     
-    switch (mode) {
-        case MODE_PREFLIGHT:
-            DEBUG_PRINTLN("[Main] >>> INICIANDO MISSÃO <<<");
+    if (cmd == "START" || cmd == "S" || cmd == "1") {
+        if (currentMode == MODE_PREFLIGHT) {
+            DEBUG_PRINTLN("[Main] │");
+            DEBUG_PRINTLN("[Main] └─► INICIANDO MISSÃO");
             telemetry.startMission();
             missionStarted = true;
-            break;
-            
-        case MODE_FLIGHT:
-            DEBUG_PRINTLN("[Main] >>> PARANDO MISSÃO <<<");
+        } else {
+            DEBUG_PRINTF("[Main] └─✗ Erro: Sistema não está em PRE-FLIGHT (modo atual: %d)\n", currentMode);
+        }
+        
+    } else if (cmd == "STOP" || cmd == "P" || cmd == "0") {
+        if (currentMode == MODE_FLIGHT) {
+            DEBUG_PRINTLN("[Main] │");
+            DEBUG_PRINTLN("[Main] └─► PARANDO MISSÃO");
             telemetry.stopMission();
             missionStarted = false;
-            break;
-            
-        case MODE_POSTFLIGHT:
-            DEBUG_PRINTLN("[Main] >>> REINICIANDO SISTEMA <<<");
-            DEBUG_PRINTF("[Main] Heap final antes do restart: %lu bytes\n", ESP.getFreeHeap());
-            delay(1000);
-            ESP.restart();
-            break;
-            
-        case MODE_ERROR:
-            DEBUG_PRINTLN("[Main] Sistema em erro - tentando restart");
-            delay(1000);
-            ESP.restart();
-            break;
-            
-        default:
-            DEBUG_PRINTF("[Main] Modo desconhecido: %d\n", mode);
-            break;
+        } else {
+            DEBUG_PRINTF("[Main] └─✗ Erro: Sistema não está em FLIGHT (modo atual: %d)\n", currentMode);
+        }
+        
+    } else if (cmd == "RESTART" || cmd == "R") {
+        DEBUG_PRINTLN("[Main] │");
+        DEBUG_PRINTLN("[Main] └─► REINICIANDO SISTEMA");
+        DEBUG_PRINTF("[Main]    Heap final: %lu bytes\n", ESP.getFreeHeap());
+        delay(1000);
+        ESP.restart();
+        
+    } else if (cmd == "STATUS" || cmd == "?" || cmd == "INFO") {
+        DEBUG_PRINTLN("[Main] │");
+        DEBUG_PRINTLN("[Main] ╔════════════════════════════════════════╗");
+        DEBUG_PRINTLN("[Main] ║        STATUS DO SISTEMA               ║");
+        DEBUG_PRINTLN("[Main] ╠════════════════════════════════════════╣");
+        
+        String modeStr;
+        switch(currentMode) {
+            case MODE_PREFLIGHT: modeStr = "PRE-FLIGHT"; break;
+            case MODE_FLIGHT: modeStr = "FLIGHT"; break;
+            case MODE_POSTFLIGHT: modeStr = "POST-FLIGHT"; break;
+            case MODE_ERROR: modeStr = "ERRO"; break;
+            default: modeStr = "DESCONHECIDO"; break;
+        }
+        
+        DEBUG_PRINTF("[Main] ║ Modo:    %-29s ║\n", modeStr.c_str());
+        DEBUG_PRINTF("[Main] ║ Uptime:  %lu segundos%-16s║\n", millis()/1000, "");
+        DEBUG_PRINTF("[Main] ║ Heap:    %lu KB%-22s║\n", ESP.getFreeHeap()/1024, "");
+        DEBUG_PRINTF("[Main] ║ WiFi:    %-29s ║\n", WiFi.isConnected() ? "Conectado" : "Desconectado");
+        DEBUG_PRINTLN("[Main] ╚════════════════════════════════════════╝");
+        
+    } else if (cmd == "HELP" || cmd == "H" || cmd == "AJUDA") {
+        DEBUG_PRINTLN("[Main] │");
+        DEBUG_PRINTLN("[Main] ╔════════════════════════════════════════╗");
+        DEBUG_PRINTLN("[Main] ║      COMANDOS DISPONÍVEIS              ║");
+        DEBUG_PRINTLN("[Main] ╠════════════════════════════════════════╣");
+        DEBUG_PRINTLN("[Main] ║ START / S / 1  - Iniciar missão        ║");
+        DEBUG_PRINTLN("[Main] ║ STOP  / P / 0  - Parar missão          ║");
+        DEBUG_PRINTLN("[Main] ║ STATUS / ?     - Mostrar status        ║");
+        DEBUG_PRINTLN("[Main] ║ RESTART / R    - Reiniciar ESP32       ║");
+        DEBUG_PRINTLN("[Main] ║ HELP  / H      - Esta mensagem         ║");
+        DEBUG_PRINTLN("[Main] ╚════════════════════════════════════════╝");
+        
+    } else {
+        DEBUG_PRINTF("[Main] └─✗ Comando desconhecido: '%s'\n", cmd.c_str());
+        DEBUG_PRINTLN("[Main]    Digite 'HELP' para lista de comandos");
     }
+    
+    DEBUG_PRINTLN("");
 }
 
-/**
- * @brief Status periódico com monitoramento robusto
- */
 void printPeriodicStatus() {
     unsigned long currentTime = millis();
     
-    // A cada 30 segundos
     if (currentTime - lastHeapLog >= 30000) {
         lastHeapLog = currentTime;
         
@@ -204,7 +204,6 @@ void printPeriodicStatus() {
         DEBUG_PRINTF("Heap atual: %lu KB\n", currentHeap / 1024);
         DEBUG_PRINTF("Heap mínimo: %lu KB\n", minHeapSeen / 1024);
         
-        // Alertas de heap
         if (currentHeap < 15000) {
             DEBUG_PRINTLN("ALERTA: Heap baixo!");
         }
@@ -223,15 +222,12 @@ void printPeriodicStatus() {
 // ============================================================================
 
 void setup() {
-    // Inicializar Serial para debug
     Serial.begin(DEBUG_BAUDRATE);
-    delay(500);  // Aguardar estabilização Serial
+    delay(500);
     
-    // Log de heap inicial do sistema
     uint32_t bootHeap = ESP.getFreeHeap();
     minHeapSeen = bootHeap;
     
-    // Exibir informações de boot
     printBootInfo();
     printMissionInfo();
     
@@ -239,25 +235,20 @@ void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, LOW);
     
-    // Configurar botão com interrupção
-    pinMode(BUTTON_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), buttonISR, FALLING);
+    // NÃO configurar botão (não existe na placa)
     
     DEBUG_PRINTLN("[Main] ========================================");
     DEBUG_PRINTLN("[Main] INICIALIZANDO SISTEMA DE TELEMETRIA");
     DEBUG_PRINTLN("[Main] ========================================");
     DEBUG_PRINTLN("");
     
-    // Verificar heap antes da inicialização crítica
     DEBUG_PRINTF("[Main] Heap antes da init: %lu bytes\n", ESP.getFreeHeap());
     
-    // Inicializar gerenciador de telemetria
     if (!telemetry.begin()) {
         DEBUG_PRINTLN("[Main] ERRO CRÍTICO: Falha na inicialização!");
         DEBUG_PRINTLN("[Main] Sistema entrará em modo de erro.");
         DEBUG_PRINTF("[Main] Heap no erro: %lu bytes\n", ESP.getFreeHeap());
         
-        // Piscar LED rapidamente indicando erro
         while (true) {
             digitalWrite(LED_BUILTIN, HIGH);
             delay(100);
@@ -266,7 +257,6 @@ void setup() {
         }
     }
     
-    // Verificar heap após inicialização
     uint32_t postInitHeap = ESP.getFreeHeap();
     DEBUG_PRINTF("[Main] Heap após init: %lu bytes (usado: %lu bytes)\n", 
                 postInitHeap, bootHeap - postInitHeap);
@@ -275,7 +265,6 @@ void setup() {
         minHeapSeen = postInitHeap;
     }
     
-    // Aguardar estabilização
     waitForBoot();
     
     bootComplete = true;
@@ -283,12 +272,11 @@ void setup() {
     DEBUG_PRINTLN("[Main] ========================================");
     DEBUG_PRINTLN("[Main] SISTEMA OPERACIONAL");
     DEBUG_PRINTLN("[Main] Modo: PRE-FLIGHT");
-    DEBUG_PRINTLN("[Main] Aguardando comando para iniciar missão");
-    DEBUG_PRINTF("[Main] Heap estabilizado: %lu bytes\n", ESP.getFreeHeap());
     DEBUG_PRINTLN("[Main] ========================================");
     DEBUG_PRINTLN("");
+    DEBUG_PRINTLN("[Main] >>> DIGITE 'HELP' PARA LISTA DE COMANDOS <<<");
+    DEBUG_PRINTLN("");
     
-    // LED aceso indicando sistema pronto
     digitalWrite(LED_BUILTIN, HIGH);
 }
 
@@ -297,13 +285,11 @@ void setup() {
 // ============================================================================
 
 void loop() {
-    // Verificar heap no início do loop (detecção precoce de problemas)
     uint32_t loopHeap = ESP.getFreeHeap();
     if (loopHeap < minHeapSeen) {
         minHeapSeen = loopHeap;
     }
     
-    // Detectar heap criticamente baixo
     if (loopHeap < 5000) {
         DEBUG_PRINTF("[Main] CRÍTICO: Heap muito baixo no loop: %lu bytes\n", loopHeap);
         DEBUG_PRINTLN("[Main] Reiniciando sistema para evitar crash...");
@@ -311,13 +297,11 @@ void loop() {
         ESP.restart();
     }
     
-    // Executar loop de telemetria
     telemetry.loop();
     
-    // Processar botão
-    processButton();
+    // SUBSTITUIR processButton() por processSerialCommands()
+    processSerialCommands();
     
-    // Exibir status periódico
     printPeriodicStatus();
     
     // Controle de LED baseado no modo
@@ -331,18 +315,14 @@ void loop() {
         
         switch (currentMode) {
             case MODE_PREFLIGHT:
-                // LED aceso em pré-voo
                 digitalWrite(LED_BUILTIN, HIGH);
                 break;
                 
             case MODE_FLIGHT:
-                // Piscar rápido durante voo
                 digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
                 break;
                 
             case MODE_POSTFLIGHT:
-                // Piscar lento após voo
-                static bool slowBlink = false;
                 if (currentTime % 2000 < 1000) {
                     digitalWrite(LED_BUILTIN, HIGH);
                 } else {
@@ -351,7 +331,6 @@ void loop() {
                 break;
                 
             case MODE_ERROR:
-                // Piscar muito rápido em erro
                 if (currentTime % 200 < 100) {
                     digitalWrite(LED_BUILTIN, HIGH);
                 } else {

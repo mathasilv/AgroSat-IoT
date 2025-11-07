@@ -1,6 +1,6 @@
 /**
  * @file CommunicationManager.cpp
- * @brief Implementação do gerenciador de comunicação com JSON
+ * @brief Implementação do gerenciador de comunicação com JSON + DEBUG
  */
 
 #include "CommunicationManager.h"
@@ -19,17 +19,14 @@ CommunicationManager::CommunicationManager() :
 bool CommunicationManager::begin() {
     DEBUG_PRINTLN("[CommunicationManager] Inicializando WiFi...");
     
-    // Configurar modo WiFi
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
     WiFi.setAutoConnect(false);
     
-    // Tentar conexão inicial
     return connectWiFi();
 }
 
 void CommunicationManager::update() {
-    // Atualizar status da conexão
     if (WiFi.status() == WL_CONNECTED) {
         if (!_connected) {
             _connected = true;
@@ -38,8 +35,6 @@ void CommunicationManager::update() {
             DEBUG_PRINTF("[CommunicationManager] WiFi conectado! IP: %s, RSSI: %d dBm\n", 
                         _ipAddress.c_str(), _rssi);
         }
-        
-        // Atualizar RSSI
         _rssi = WiFi.RSSI();
     } else {
         if (_connected) {
@@ -52,10 +47,9 @@ void CommunicationManager::update() {
 bool CommunicationManager::connectWiFi() {
     if (_connected) return true;
     
-    // Verificar intervalo mínimo entre tentativas
     uint32_t currentTime = millis();
     if (currentTime - _lastConnectionAttempt < 5000) {
-        return false;  // Aguardar 5 segundos entre tentativas
+        return false;
     }
     
     _lastConnectionAttempt = currentTime;
@@ -64,7 +58,6 @@ bool CommunicationManager::connectWiFi() {
     
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     
-    // Aguardar conexão com timeout
     if (_waitForConnection(WIFI_TIMEOUT_MS)) {
         _connected = true;
         _rssi = WiFi.RSSI();
@@ -92,19 +85,30 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data) {
         return false;
     }
     
-    // Criar JSON de telemetria
     String jsonPayload = _createTelemetryJSON(data);
     
     DEBUG_PRINTLN("[CommunicationManager] Enviando telemetria...");
     DEBUG_PRINTF("[CommunicationManager] JSON size: %d bytes\n", jsonPayload.length());
     
-    // Tentar envio com retries
+    // === ADICIONAR DEBUG DA URL ===
+    DEBUG_PRINTLN("[CommunicationManager] ========== DEBUG HTTP ==========");
+    DEBUG_PRINTF("[CommunicationManager] HTTP_SERVER: %s\n", HTTP_SERVER);
+    DEBUG_PRINTF("[CommunicationManager] HTTP_PORT: %d\n", HTTP_PORT);
+    DEBUG_PRINTF("[CommunicationManager] HTTP_ENDPOINT: %s\n", HTTP_ENDPOINT);
+    String debugUrl = String("http://") + HTTP_SERVER;
+    if (HTTP_PORT != 80) {
+        debugUrl += ":" + String(HTTP_PORT);
+    }
+    debugUrl += HTTP_ENDPOINT;
+    DEBUG_PRINTF("[CommunicationManager] URL Completa: %s\n", debugUrl.c_str());
+    DEBUG_PRINTLN("[CommunicationManager] ================================");
+    
     for (uint8_t attempt = 0; attempt < WIFI_RETRY_ATTEMPTS; attempt++) {
         if (attempt > 0) {
             _totalRetries++;
             DEBUG_PRINTF("[CommunicationManager] Tentativa %d/%d...\n", 
                         attempt + 1, WIFI_RETRY_ATTEMPTS);
-            delay(1000);  // Aguardar entre tentativas
+            delay(1000);
         }
         
         if (_sendHTTPPost(jsonPayload)) {
@@ -157,12 +161,9 @@ bool CommunicationManager::testConnection() {
 // ============================================================================
 
 String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
-    // Criar documento JSON conforme especificação OBSAT + campos expandidos
     StaticJsonDocument<JSON_MAX_SIZE> doc;
     
-    // ===== CAMPOS OBRIGATÓRIOS OBSAT =====
-    
-    // Identificação da equipe
+    // Identificação
     doc["team"] = TEAM_NAME;
     doc["category"] = TEAM_CATEGORY;
     doc["mission"] = MISSION_NAME;
@@ -172,16 +173,16 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
     doc["timestamp"] = data.timestamp;
     doc["missionTime"] = data.missionTime;
     
-    // Bateria (obrigatório)
-    doc["battery"]["voltage"] = serialized(String(data.batteryVoltage, 2));
-    doc["battery"]["percentage"] = serialized(String(data.batteryPercentage, 1));
+    // Bateria
+    doc["batteryVoltage"] = serialized(String(data.batteryVoltage, 2));
+    doc["batteryPercentage"] = serialized(String(data.batteryPercentage, 1));
     
-    // Temperatura (obrigatório)
+    // Temperatura
     if (!isnan(data.temperature)) {
         doc["temperature"] = serialized(String(data.temperature, 2));
     }
     
-    // Pressão (obrigatório)
+    // Pressão
     if (!isnan(data.pressure)) {
         doc["pressure"] = serialized(String(data.pressure, 2));
     }
@@ -189,26 +190,21 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
         doc["altitude"] = serialized(String(data.altitude, 1));
     }
     
-    // Giroscópio (obrigatório - 3 eixos em rad/s)
-    JsonObject gyro = doc.createNestedObject("gyroscope");
-    gyro["x"] = serialized(String(data.gyroX, 4));
-    gyro["y"] = serialized(String(data.gyroY, 4));
-    gyro["z"] = serialized(String(data.gyroZ, 4));
+    // Giroscópio
+    doc["gyroX"] = serialized(String(data.gyroX, 4));
+    doc["gyroY"] = serialized(String(data.gyroY, 4));
+    doc["gyroZ"] = serialized(String(data.gyroZ, 4));
     
-    // Acelerômetro (obrigatório - 3 eixos em m/s²)
-    JsonObject accel = doc.createNestedObject("accelerometer");
-    accel["x"] = serialized(String(data.accelX, 4));
-    accel["y"] = serialized(String(data.accelY, 4));
-    accel["z"] = serialized(String(data.accelZ, 4));
+    // Acelerômetro
+    doc["accelX"] = serialized(String(data.accelX, 4));
+    doc["accelY"] = serialized(String(data.accelY, 4));
+    doc["accelZ"] = serialized(String(data.accelZ, 4));
     
-    // ===== CAMPOS EXPANDIDOS (OPCIONAIS) =====
-    
-    // Umidade (SHT20)
+    // Opcionais
     if (!isnan(data.humidity)) {
         doc["humidity"] = serialized(String(data.humidity, 1));
     }
     
-    // CO2 e TVOC (CCS811)
     if (!isnan(data.co2) && data.co2 > 0) {
         doc["co2"] = serialized(String(data.co2, 0));
     }
@@ -216,30 +212,24 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
         doc["tvoc"] = serialized(String(data.tvoc, 0));
     }
     
-    // Magnetômetro (MPU9250 - 9º DOF)
     if (!isnan(data.magX) && !isnan(data.magY) && !isnan(data.magZ)) {
-        JsonObject mag = doc.createNestedObject("magnetometer");
-        mag["x"] = serialized(String(data.magX, 2));
-        mag["y"] = serialized(String(data.magY, 2));
-        mag["z"] = serialized(String(data.magZ, 2));
+        doc["magX"] = serialized(String(data.magX, 2));
+        doc["magY"] = serialized(String(data.magY, 2));
+        doc["magZ"] = serialized(String(data.magZ, 2));
     }
     
-    // ===== CAMPOS OBRIGATÓRIOS CONTINUAÇÃO =====
+    // Status
+    doc["systemStatus"] = data.systemStatus;
+    doc["errorCount"] = data.errorCount;
     
-    // Status do sistema
-    doc["status"] = data.systemStatus;
-    doc["errors"] = data.errorCount;
-    
-    // Payload customizado (máximo 90 bytes)
+    // Payload
     if (strlen(data.payload) > 0) {
         doc["payload"] = data.payload;
     }
     
-    // Serializar JSON
     String output;
     serializeJson(doc, output);
     
-    // Verificar tamanho
     if (output.length() > JSON_MAX_SIZE - 50) {
         DEBUG_PRINTF("[CommunicationManager] AVISO: JSON próximo do limite: %d bytes\n", output.length());
     }
@@ -250,23 +240,26 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
 bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
     HTTPClient http;
     
-    // Construir URL completa
-    String url = String("http://") + HTTP_SERVER + HTTP_ENDPOINT;
+    // Construir URL com porta
+    String url = String("http://") + HTTP_SERVER;
+    if (HTTP_PORT != 80) {
+        url += ":" + String(HTTP_PORT);
+    }
+    url += HTTP_ENDPOINT;
     
     http.begin(url);
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
     
-    // Enviar POST
     int httpCode = http.POST(jsonPayload);
     
     bool success = false;
     if (httpCode > 0) {
-        DEBUG_PRINTF("[CommunicationManager] HTTP Response: %d\n", httpCode);
+        DEBUG_PRINTF("[CommunicationManager] HTTP Code: %d\n", httpCode);
         
         if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
             String response = http.getString();
-            DEBUG_PRINTF("[CommunicationManager] Response: %s\n", response.c_str());
+            DEBUG_PRINTF("[CommunicationManager] Resposta: %s\n", response.c_str());
             success = true;
         }
     } else {
@@ -283,7 +276,7 @@ bool CommunicationManager::_waitForConnection(uint32_t timeoutMs) {
     
     while (WiFi.status() != WL_CONNECTED) {
         if (millis() - startTime > timeoutMs) {
-            return false;  // Timeout
+            return false;
         }
         delay(100);
     }

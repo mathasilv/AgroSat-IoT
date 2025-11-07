@@ -83,15 +83,15 @@
 #define WIFI_TIMEOUT_MS     30000
 #define WIFI_RETRY_ATTEMPTS 5
 
-#define HTTP_SERVER         "http://192.168.1.106"
+#define HTTP_SERVER "192.168.1.105"
 #define HTTP_PORT           5000
 #define HTTP_ENDPOINT       "/api/telemetria"
-#define HTTP_TIMEOUT_MS     10000
+#define HTTP_TIMEOUT_MS     3000
 
 #define JSON_MAX_SIZE       768
 #define PAYLOAD_MAX_SIZE    90
 
-#define TELEMETRY_SEND_INTERVAL 240000
+#define TELEMETRY_SEND_INTERVAL 30000
 #define STORAGE_SAVE_INTERVAL   60000
 
 // ============================================================================
@@ -110,7 +110,7 @@
 #define DEEP_SLEEP_DURATION     3600
 
 #define MISSION_DURATION_MS     7200000
-#define WATCHDOG_TIMEOUT        30
+#define WATCHDOG_TIMEOUT        60
 #define SYSTEM_HEALTH_INTERVAL  10000
 
 #define MAX_ALTITUDE            30000

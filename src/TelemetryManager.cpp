@@ -1,13 +1,13 @@
 /**
  * @file TelemetryManager.cpp
- * @brief Implementação do gerenciador central de telemetria com sensores
- * @version 2.1.0
+ * @brief VERSÃO CORRIGIDA - I2C centralizado, sem race conditions
+ * @version 2.2.0
  */
 
 #include "TelemetryManager.h"
 
 TelemetryManager::TelemetryManager() :
-    _display(OLED_ADDRESS, OLED_SDA, OLED_SCL),
+    _display(OLED_ADDRESS),  // SEM SDA/SCL - usa Wire padrão já inicializado
     _mode(MODE_INIT),
     _lastTelemetrySend(0),
     _lastStorageSave(0),
@@ -15,17 +15,31 @@ TelemetryManager::TelemetryManager() :
     _lastHeapCheck(0),
     _minHeapSeen(UINT32_MAX)
 {
-    // Inicializar estruturas
     memset(&_telemetryData, 0, sizeof(TelemetryData));
     memset(&_missionData, 0, sizeof(MissionData));
     
-    // Inicializar campos opcionais como NaN
     _telemetryData.humidity = NAN;
     _telemetryData.co2 = NAN;
     _telemetryData.tvoc = NAN;
     _telemetryData.magX = NAN;
     _telemetryData.magY = NAN;
     _telemetryData.magZ = NAN;
+}
+
+bool TelemetryManager::_initI2CBus() {
+    static bool i2cInitialized = false;
+    
+    if (!i2cInitialized) {
+        DEBUG_PRINTLN("[TelemetryManager] === INICIALIZANDO I2C GLOBAL ===");
+        Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
+        Wire.setClock(100000);  // 100kHz para máxima estabilidade
+        Wire.setTimeout(500);   // Timeout de 500ms
+        delay(300);             // Aguardar estabilização COMPLETA
+        i2cInitialized = true;
+        DEBUG_PRINTLN("[TelemetryManager] I2C inicializado em 100kHz");
+    }
+    
+    return true;
 }
 
 bool TelemetryManager::begin() {
@@ -37,39 +51,39 @@ bool TelemetryManager::begin() {
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
     
-    // Log inicial de heap
     uint32_t initialHeap = ESP.getFreeHeap();
     _minHeapSeen = initialHeap;
     DEBUG_PRINTF("[TelemetryManager] Heap inicial: %lu bytes\n", initialHeap);
     
-    // Inicializar display OLED
+    // === PASSO CRÍTICO: Inicializar I2C ANTES de tudo ===
+    _initI2CBus();
+    
+    // === Inicializar display DEPOIS do I2C ===
     DEBUG_PRINTLN("[TelemetryManager] Inicializando display...");
     bool displayOk = false;
-    for (uint8_t attempt = 0; attempt < 3; attempt++) {
-        if (_display.init()) {
-            _display.flipScreenVertically();
-            _display.setFont(ArialMT_Plain_10);
-            _display.clear();
-            _display.drawString(0, 0, "AgroSat-IoT");
-            _display.drawString(0, 15, "Auto-detecting...");
-            _display.display();
-            displayOk = true;
-            break;
-        }
-        delay(100);
+    
+    delay(100);  // Aguardar I2C estabilizar
+    
+    if (_display.init()) {
+        _display.flipScreenVertically();
+        _display.setFont(ArialMT_Plain_10);
+        _display.clear();
+        _display.drawString(0, 0, "AgroSat-IoT");
+        _display.drawString(0, 15, "Initializing...");
+        _display.display();
+        displayOk = true;
+        DEBUG_PRINTLN("[TelemetryManager] Display OK");
+    } else {
+        DEBUG_PRINTLN("[TelemetryManager] AVISO: Display falhou");
     }
     
-    if (!displayOk) {
-        DEBUG_PRINTLN("[TelemetryManager] AVISO: Display não inicializou");
-    }
+    delay(500);  // Aguardar display processar
     
-    delay(1000);
-    
-    // Inicializar subsistemas
+    // Inicializar subsistemas COM delays entre cada um
     bool success = true;
     uint8_t subsystemsOk = 0;
     
-    // 1. System Health (watchdog)
+    // 1. System Health
     DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
     if (_health.begin()) {
         subsystemsOk++;
@@ -79,6 +93,7 @@ bool TelemetryManager::begin() {
         success = false;
     }
     _logHeapUsage("System Health");
+    delay(100);  // Delay entre subsistemas
     
     // 2. Power Manager
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Power Manager...");
@@ -91,14 +106,14 @@ bool TelemetryManager::begin() {
         success = false;
     }
     _logHeapUsage("Power Manager");
+    delay(100);
     
-    // 3. Sensor Manager (com auto-detecção)
+    // 3. Sensor Manager
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
     if (_sensors.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Sensor Manager OK");
         
-        // Log dos sensores detectados
         DEBUG_PRINTLN("");
         DEBUG_PRINTLN("========== SENSORES DETECTADOS ==========");
         if (_sensors.isMPU6050Online()) DEBUG_PRINTLN("✓ MPU6050 (IMU 6-DOF)");
@@ -115,6 +130,7 @@ bool TelemetryManager::begin() {
         success = false;
     }
     _logHeapUsage("Sensor Manager");
+    delay(200);  // Delay maior após sensores
     
     // 4. Storage Manager
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Storage Manager...");
@@ -126,6 +142,7 @@ bool TelemetryManager::begin() {
         _health.reportError(STATUS_SD_ERROR, "Storage Manager init failed");
     }
     _logHeapUsage("Storage Manager");
+    delay(100);
     
     // 5. Payload Manager (LoRa)
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Payload Manager...");
@@ -137,6 +154,7 @@ bool TelemetryManager::begin() {
         _health.reportError(STATUS_LORA_ERROR, "Payload Manager init failed");
     }
     _logHeapUsage("Payload Manager");
+    delay(100);
     
     // 6. Communication Manager (WiFi)
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication Manager...");
@@ -179,47 +197,63 @@ bool TelemetryManager::begin() {
 }
 
 void TelemetryManager::loop() {
-    // Monitorar heap periodicamente
     uint32_t currentTime = millis();
+    
+    // Monitorar heap
     if (currentTime - _lastHeapCheck >= 60000) {
         _lastHeapCheck = currentTime;
         _monitorHeap();
     }
     
-    // Atualizar subsistemas
+    // Atualizar subsistemas COM delays (evitar race condition I2C)
     _health.update();
-    _power.update();
-    _sensors.update();
-    _comm.update();
-    _payload.update();
+    delay(5);  // Pequeno delay entre cada update
     
-    // Coletar dados de telemetria 
+    _power.update();
+    delay(5);
+    
+    _sensors.update();
+    delay(10);  // Delay maior após sensors (usa I2C pesado)
+    
+    _comm.update();
+    delay(5);
+    
+    _payload.update();
+    delay(5);
+    
+    // Coletar dados
     _collectTelemetryData();
     
-    // Verificar condições operacionais
+    // Verificar condições
     _checkOperationalConditions();
     
-    // Enviar telemetria via WiFi (a cada 4 minutos)
+    // Enviar telemetria
     if (currentTime - _lastTelemetrySend >= TELEMETRY_SEND_INTERVAL) {
         _lastTelemetrySend = currentTime;
         _sendTelemetry();
     }
     
-    // Salvar no SD Card (a cada 1 minuto)
+    // Salvar no SD
     if (currentTime - _lastStorageSave >= STORAGE_SAVE_INTERVAL) {
         _lastStorageSave = currentTime;
         _saveToStorage();
     }
     
-    // Atualizar display (a cada 2 segundos)
+    // Atualizar display
     if (currentTime - _lastDisplayUpdate >= 2000) {
         _lastDisplayUpdate = currentTime;
         updateDisplay();
     }
     
-    // Delay para preservar CPU
-    delay(10);
+    // Delay total do loop: ~50ms
+    delay(20);
 }
+
+// ... (resto dos métodos IGUAIS ao código anterior)
+// startMission(), stopMission(), getMode(), updateDisplay(), etc.
+// _collectTelemetryData(), _sendTelemetry(), _saveToStorage()
+// _checkOperationalConditions(), _displayStatus(), _displayTelemetry()
+// _displayError(), _logHeapUsage(), _monitorHeap()
 
 void TelemetryManager::startMission() {
     DEBUG_PRINTLN("[TelemetryManager] INICIANDO MISSÃO!");
@@ -227,11 +261,9 @@ void TelemetryManager::startMission() {
     _mode = MODE_FLIGHT;
     _health.startMission();
     
-    // Reset contadores
     _lastTelemetrySend = millis();
     _lastStorageSave = millis();
     
-    // Log de sensores ativos na missão
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========== SENSORES ATIVOS NA MISSÃO ==========");
     if (_sensors.isMPU6050Online()) DEBUG_PRINTLN("✓ MPU6050: Giroscópio + Acelerômetro");
@@ -242,7 +274,6 @@ void TelemetryManager::startMission() {
     DEBUG_PRINTLN("==============================================");
     DEBUG_PRINTLN("");
     
-    // Atualizar display
     _display.clear();
     _display.drawString(0, 0, "MISSAO INICIADA");
     _display.drawString(0, 20, "Modo: FLIGHT");
@@ -254,15 +285,12 @@ void TelemetryManager::stopMission() {
     
     _mode = MODE_POSTFLIGHT;
     
-    // Última telemetria e salvamento
     _sendTelemetry();
     _saveToStorage();
     
-    // Log de heap final
     uint32_t finalHeap = ESP.getFreeHeap();
     DEBUG_PRINTF("[TelemetryManager] Heap final: %lu, mínimo: %lu\n", finalHeap, _minHeapSeen);
     
-    // Atualizar display
     _display.clear();
     _display.drawString(0, 0, "MISSAO COMPLETA");
     String heapInfo = "MIN: " + String(_minHeapSeen / 1024) + "KB";
@@ -287,25 +315,17 @@ void TelemetryManager::updateDisplay() {
     }
 }
 
-// ============================================================================
-// MÉTODOS PRIVADOS - COLETA DE DADOS EXPANDIDA
-// ============================================================================
-
 void TelemetryManager::_collectTelemetryData() {
-    // Timestamp
     _telemetryData.timestamp = millis();
     _telemetryData.missionTime = _health.getMissionTime();
     
-    // Bateria
     _telemetryData.batteryVoltage = _power.getVoltage();
     _telemetryData.batteryPercentage = _power.getPercentage();
     
-    // Sensores ambientais (OBRIGATÓRIOS OBSAT)
     _telemetryData.temperature = _sensors.getTemperature();
     _telemetryData.pressure = _sensors.getPressure();
     _telemetryData.altitude = _sensors.getAltitude();
     
-    // IMU (OBRIGATÓRIO OBSAT)
     _telemetryData.gyroX = _sensors.getGyroX();
     _telemetryData.gyroY = _sensors.getGyroY();
     _telemetryData.gyroZ = _sensors.getGyroZ();
@@ -313,8 +333,6 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.accelY = _sensors.getAccelY();
     _telemetryData.accelZ = _sensors.getAccelZ();
     
-    // SENSORES (OPCIONAIS)
-    // Apenas preenche se sensores estiverem online
     _telemetryData.humidity = NAN;
     _telemetryData.co2 = NAN;
     _telemetryData.tvoc = NAN;
@@ -322,7 +340,6 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.magY = NAN;
     _telemetryData.magZ = NAN;
     
-    // SHT20 - Umidade relativa
     if (_sensors.isSHT20Online()) {
         float hum = _sensors.getHumidity();
         if (!isnan(hum)) {
@@ -330,7 +347,6 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
-    // CCS811 - CO2 e TVOC
     if (_sensors.isCCS811Online()) {
         float co2 = _sensors.getCO2();
         float tvoc = _sensors.getTVOC();
@@ -342,7 +358,6 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
-    // MPU9250 - Magnetômetro (9º DOF)
     if (_sensors.isMPU9250Online()) {
         float magX = _sensors.getMagX();
         float magY = _sensors.getMagY();
@@ -354,23 +369,19 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
-    // Status do sistema
     _telemetryData.systemStatus = _health.getSystemStatus();
     _telemetryData.errorCount = _health.getErrorCount();
     
-    // Payload (missão LoRa)
     String payloadStr = _payload.generatePayload();
     strncpy(_telemetryData.payload, payloadStr.c_str(), PAYLOAD_MAX_SIZE - 1);
     _telemetryData.payload[PAYLOAD_MAX_SIZE - 1] = '\0';
     
-    // Dados da missão
     _missionData = _payload.getMissionData();
 }
 
 void TelemetryManager::_sendTelemetry() {
     DEBUG_PRINTLN("[TelemetryManager] Enviando telemetria...");
     
-    // Log dos dados sendo enviados
     DEBUG_PRINTF("  Temp: %.2f°C, Pressão: %.2f hPa, Alt: %.1f m\n", 
                 _telemetryData.temperature, _telemetryData.pressure, _telemetryData.altitude);
     DEBUG_PRINTF("  Gyro: [%.4f, %.4f, %.4f] rad/s\n", 
@@ -378,7 +389,6 @@ void TelemetryManager::_sendTelemetry() {
     DEBUG_PRINTF("  Accel: [%.4f, %.4f, %.4f] m/s²\n", 
                 _telemetryData.accelX, _telemetryData.accelY, _telemetryData.accelZ);
     
-    // Log campos opcionais
     if (!isnan(_telemetryData.humidity)) {
         DEBUG_PRINTF("  Umidade: %.1f%%\n", _telemetryData.humidity);
     }
@@ -390,13 +400,11 @@ void TelemetryManager::_sendTelemetry() {
                     _telemetryData.magX, _telemetryData.magY, _telemetryData.magZ);
     }
     
-    // Verificar conexão WiFi
     if (!_comm.isConnected()) {
         DEBUG_PRINTLN("[TelemetryManager] Tentando reconectar WiFi...");
         _comm.connectWiFi();
     }
     
-    // Enviar telemetria
     if (_comm.sendTelemetry(_telemetryData)) {
         DEBUG_PRINTLN("[TelemetryManager] Telemetria enviada com sucesso!");
     } else {
@@ -410,19 +418,16 @@ void TelemetryManager::_saveToStorage() {
     
     DEBUG_PRINTLN("[TelemetryManager] Salvando dados no SD...");
     
-    // Salvar telemetria
     if (_storage.saveTelemetry(_telemetryData)) {
         DEBUG_PRINTLN("[TelemetryManager] Telemetria salva no SD");
     }
     
-    // Salvar dados da missão
     if (_storage.saveMissionData(_missionData)) {
         DEBUG_PRINTLN("[TelemetryManager] Dados da missão salvos no SD");
     }
 }
 
 void TelemetryManager::_checkOperationalConditions() {
-    // Verificar bateria crítica
     if (_power.isCritical()) {
         _health.reportError(STATUS_BATTERY_CRIT, "Critical battery level");
         _power.enablePowerSave();
@@ -430,7 +435,6 @@ void TelemetryManager::_checkOperationalConditions() {
         _health.reportError(STATUS_BATTERY_LOW, "Low battery level");
     }
     
-    // Verificar sensores obrigatórios offline
     if (!_sensors.isMPU6050Online() && !_sensors.isMPU9250Online()) {
         _health.reportError(STATUS_SENSOR_ERROR, "IMU offline");
         _sensors.resetAll();
@@ -441,12 +445,10 @@ void TelemetryManager::_checkOperationalConditions() {
         _sensors.resetAll();
     }
     
-    // Verificar duração da missão
     if (_mode == MODE_FLIGHT && !_health.isMissionActive()) {
         stopMission();
     }
     
-    // Verificar heap crítico
     uint32_t currentHeap = ESP.getFreeHeap();
     if (currentHeap < 10000) {
         DEBUG_PRINTF("[TelemetryManager] CRÍTICO: Heap baixo: %lu bytes\n", currentHeap);
@@ -457,11 +459,9 @@ void TelemetryManager::_checkOperationalConditions() {
 void TelemetryManager::_displayStatus() {
     _display.clear();
     
-    // Linha 1: Modo e bateria
     String line1 = "PRE " + String(_power.getPercentage(), 0) + "%";
     _display.drawString(0, 0, line1);
     
-    // Linha 2: Temperatura e pressão (ou umidade se SHT20 disponível)
     String line2;
     if (_sensors.isSHT20Online() && !isnan(_sensors.getHumidity())) {
         line2 = String(_sensors.getTemperature(), 1) + "C " + 
@@ -472,7 +472,6 @@ void TelemetryManager::_displayStatus() {
     }
     _display.drawString(0, 15, line2);
     
-    // Linha 3: Altitude ou CO2 (se disponível)
     String line3;
     if (_sensors.isCCS811Online() && !isnan(_sensors.getCO2())) {
         line3 = "CO2: " + String(_sensors.getCO2(), 0) + "ppm";
@@ -481,7 +480,6 @@ void TelemetryManager::_displayStatus() {
     }
     _display.drawString(0, 30, line3);
     
-    // Linha 4: Status dos subsistemas + heap
     String line4 = "";
     line4 += _comm.isConnected() ? "W+" : "W-";
     line4 += " ";
@@ -490,7 +488,6 @@ void TelemetryManager::_displayStatus() {
     line4 += _storage.isAvailable() ? "S+" : "S-";
     line4 += " ";
     
-    // Indicadores de sensores extras
     if (_sensors.isSHT20Online()) line4 += "H+";
     if (_sensors.isCCS811Online()) line4 += "C+";
     if (_sensors.isMPU9250Online()) line4 += "9+";
@@ -504,7 +501,6 @@ void TelemetryManager::_displayStatus() {
 void TelemetryManager::_displayTelemetry() {
     _display.clear();
     
-    // Linha 1: Tempo de missão e bateria
     unsigned long missionTimeSec = _telemetryData.missionTime / 1000;
     unsigned long minutes = missionTimeSec / 60;
     unsigned long seconds = missionTimeSec % 60;
@@ -512,11 +508,9 @@ void TelemetryManager::_displayTelemetry() {
                    String(_power.getPercentage(), 0) + "%";
     _display.drawString(0, 0, line1);
     
-    // Linha 2: Altitude
     String line2 = "Alt: " + String(_sensors.getAltitude(), 0) + "m";
     _display.drawString(0, 15, line2);
     
-    // Linha 3: Temperatura ou CO2
     String line3;
     if (_sensors.isCCS811Online() && !isnan(_sensors.getCO2())) {
         line3 = "CO2: " + String(_sensors.getCO2(), 0) + "ppm";
@@ -525,10 +519,8 @@ void TelemetryManager::_displayTelemetry() {
     }
     _display.drawString(0, 30, line3);
     
-    // Linha 4: LoRa, sensores extras e heap
     String line4 = "LoRa:" + String(_missionData.packetsReceived);
     
-    // Adicionar indicadores de sensores extras
     if (_sensors.isSHT20Online()) line4 += " H";
     if (_sensors.isCCS811Online()) line4 += " C";
     if (_sensors.isMPU9250Online()) line4 += " 9";
@@ -544,11 +536,9 @@ void TelemetryManager::_displayError(const String& error) {
     _display.drawString(0, 0, "ERRO:");
     _display.drawString(0, 15, error);
     
-    // Mostrar heap e sensores
     String heapInfo = "Heap: " + String(ESP.getFreeHeap() / 1024) + "KB";
     _display.drawString(0, 30, heapInfo);
     
-    // Status dos sensores críticos
     String sensorStatus = "";
     sensorStatus += _sensors.isBMP280Online() ? "B+" : "B-";
     sensorStatus += _sensors.isMPU6050Online() || _sensors.isMPU9250Online() ? " I+" : " I-";
@@ -557,7 +547,6 @@ void TelemetryManager::_displayError(const String& error) {
     _display.display();
 }
 
-// MÉTODOS DE MONITORAMENTO DE HEAP
 void TelemetryManager::_logHeapUsage(const String& component) {
     uint32_t currentHeap = ESP.getFreeHeap();
     if (currentHeap < _minHeapSeen) {
@@ -576,7 +565,6 @@ void TelemetryManager::_monitorHeap() {
     DEBUG_PRINTF("[TelemetryManager] Heap: %lu KB, Min: %lu KB\n", 
                 currentHeap / 1024, _minHeapSeen / 1024);
     
-    // Log resumo de sensores ativos
     uint8_t sensorsActive = 0;
     if (_sensors.isMPU6050Online()) sensorsActive++;
     if (_sensors.isMPU9250Online()) sensorsActive++;
