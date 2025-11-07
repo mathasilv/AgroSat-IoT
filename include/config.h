@@ -1,8 +1,13 @@
 /**
  * @file config.h
  * @brief Configurações globais do CubeSat AgroSat-IoT - OBSAT Fase 2
- * @version 2.1.0
- * @date 2025-11-04
+ * @version 2.2.0
+ * @date 2025-11-07
+ * 
+ * CHANGELOG v2.2.0:
+ * - Adicionado sistema dual-mode (PREFLIGHT verbose / FLIGHT lean)
+ * - Macros condicionais LOG_PREFLIGHT / LOG_FLIGHT / LOG_ERROR
+ * - Controle de display e logging por modo de operação
  */
 
 #ifndef CONFIG_H
@@ -16,7 +21,7 @@
 #define MISSION_NAME        "AgroSat-IoT"
 #define TEAM_NAME           "Orbitalis"
 #define TEAM_CATEGORY       "N3"
-#define FIRMWARE_VERSION    "2.1.0"
+#define FIRMWARE_VERSION    "2.2.0"
 #define BUILD_DATE          __DATE__
 #define BUILD_TIME          __TIME__
 
@@ -118,17 +123,47 @@
 #define MAX_TEMPERATURE         85
 
 // ============================================================================
-// DEBUG
+// DUAL-MODE OPERATION (PREFLIGHT verbose / FLIGHT lean)
+// ============================================================================
+
+// Flag global de modo (declarada em TelemetryManager.cpp)
+extern bool g_isFlightMode;
+
+// Display OLED
+#define PREFLIGHT_ENABLE_DISPLAY    true
+#define FLIGHT_ENABLE_DISPLAY       false  // Desliga display em voo (economiza ~15mA)
+
+// Heap Monitoring
+#define PREFLIGHT_HEAP_CHECK_MS     10000  // A cada 10s
+#define FLIGHT_HEAP_CHECK_MS        60000  // A cada 1min
+
+// Display Update Rate
+#define PREFLIGHT_DISPLAY_UPDATE_MS 2000   // A cada 2s
+#define FLIGHT_DISPLAY_UPDATE_MS    0      // Display desligado
+
+// ============================================================================
+// DEBUG & LOGGING SYSTEM
 // ============================================================================
 #define DEBUG_SERIAL        Serial
 #define DEBUG_BAUDRATE      115200
 #define DEBUG_ENABLED       true
 
 #if DEBUG_ENABLED
+  // Macros condicionais por modo de operação
+  #define LOG_PREFLIGHT(...)  if (!g_isFlightMode) { DEBUG_SERIAL.printf(__VA_ARGS__); }
+  #define LOG_FLIGHT(...)     if (g_isFlightMode) { DEBUG_SERIAL.printf(__VA_ARGS__); }
+  #define LOG_ALWAYS(...)     DEBUG_SERIAL.printf(__VA_ARGS__)
+  #define LOG_ERROR(...)      DEBUG_SERIAL.printf("[ERROR] " __VA_ARGS__)
+  
+  // Macros legadas (mantidas para compatibilidade)
   #define DEBUG_PRINT(x)      DEBUG_SERIAL.print(x)
   #define DEBUG_PRINTLN(x)    DEBUG_SERIAL.println(x)
   #define DEBUG_PRINTF(...)   DEBUG_SERIAL.printf(__VA_ARGS__)
 #else
+  #define LOG_PREFLIGHT(...)
+  #define LOG_FLIGHT(...)
+  #define LOG_ALWAYS(...)
+  #define LOG_ERROR(...)
   #define DEBUG_PRINT(x)
   #define DEBUG_PRINTLN(x)
   #define DEBUG_PRINTF(...)
