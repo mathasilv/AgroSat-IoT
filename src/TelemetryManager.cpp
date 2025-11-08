@@ -43,14 +43,26 @@ bool TelemetryManager::_initI2CBus() {
     }
     return true;
 }
-
 void TelemetryManager::applyModeConfig(OperationMode mode) {
     switch(mode) {
-        case MODE_PREFLIGHT: activeModeConfig = &PREFLIGHT_CONFIG; break;
-        case MODE_FLIGHT: activeModeConfig = &FLIGHT_CONFIG; break;
-        default: activeModeConfig = &PREFLIGHT_CONFIG; break;
+        case MODE_PREFLIGHT: 
+            activeModeConfig = &PREFLIGHT_CONFIG; 
+            break;
+        case MODE_FLIGHT: 
+            activeModeConfig = &FLIGHT_CONFIG; 
+            break;
+        default: 
+            activeModeConfig = &PREFLIGHT_CONFIG; 
+            break;
     }
     currentSerialLogsEnabled = activeModeConfig->serialLogsEnabled;
+    
+    // Se o display estiver desativado no modo FLIGHT, desligar
+    if (!activeModeConfig->displayEnabled) {
+        _display.displayOff();
+    } else {
+        _display.displayOn();
+    }
 }
 
 bool TelemetryManager::begin() {
@@ -139,9 +151,11 @@ void TelemetryManager::startMission() {
         _display.drawString(0, 0, "MISSAO INICIADA");
         _display.drawString(0, 20, "Modo: FLIGHT");
         _display.display();
-        delay(1500);  // Aguarda 1.5 segundos para ver a mensagem
+        delay(1500);  // Mensagem visível por 1.5 segundos
+        _display.displayOff();  // Desliga display para economia
     }
 }
+
 
 
 void TelemetryManager::stopMission() {
@@ -164,9 +178,19 @@ OperationMode TelemetryManager::getMode() {
 }
 
 void TelemetryManager::updateDisplay() {
-    if (!activeModeConfig->displayEnabled) return;
-    if (_mode == MODE_ERROR) { _displayError("Sistema com erro"); return; }
-    if (_mode == MODE_PREFLIGHT) { _displayStatus(); } else { _displayTelemetry(); }
+    if (!activeModeConfig->displayEnabled) {
+        _display.displayOff(); // Garante que o display fique desligado
+        return;
+    }
+    if (_mode == MODE_ERROR) {
+        _displayError("Sistema com erro");
+        return;
+    }
+    if (_mode == MODE_PREFLIGHT) {
+        _displayStatus();
+    } else {
+        _displayTelemetry();
+    }
 }
 
 // === IMPLEMENTAÇÃO COMPLETA DOS PRIVADOS ===
