@@ -6,9 +6,11 @@
  */
 #include "TelemetryManager.h"
 #include "config.h"
+
 // Flag global para logs de debug serial
 bool currentSerialLogsEnabled = PREFLIGHT_CONFIG.serialLogsEnabled;
 const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
+
 TelemetryManager::TelemetryManager() :
     _display(OLED_ADDRESS),
     _mode(MODE_INIT),
@@ -27,6 +29,7 @@ TelemetryManager::TelemetryManager() :
     _telemetryData.magY = NAN;
     _telemetryData.magZ = NAN;
 }
+
 bool TelemetryManager::_initI2CBus() {
     static bool i2cInitialized = false;
     if (!i2cInitialized) {
@@ -40,6 +43,7 @@ bool TelemetryManager::_initI2CBus() {
     }
     return true;
 }
+
 void TelemetryManager::applyModeConfig(OperationMode mode) {
     switch(mode) {
         case MODE_PREFLIGHT: activeModeConfig = &PREFLIGHT_CONFIG; break;
@@ -48,6 +52,7 @@ void TelemetryManager::applyModeConfig(OperationMode mode) {
     }
     currentSerialLogsEnabled = activeModeConfig->serialLogsEnabled;
 }
+
 bool TelemetryManager::begin() {
     applyModeConfig(MODE_PREFLIGHT);
     DEBUG_PRINTLN("");
@@ -95,6 +100,7 @@ bool TelemetryManager::begin() {
     _mode = MODE_PREFLIGHT;
     return success;
 }
+
 void TelemetryManager::loop() {
     applyModeConfig(_mode);
     uint32_t currentTime = millis();
@@ -119,6 +125,7 @@ void TelemetryManager::loop() {
     }
     delay(20);
 }
+
 void TelemetryManager::startMission() {
     DEBUG_PRINTLN("[TelemetryManager] INICIANDO MISSÃO!");
     _mode = MODE_FLIGHT;
@@ -126,13 +133,17 @@ void TelemetryManager::startMission() {
     _health.startMission();
     _lastTelemetrySend = millis();
     _lastStorageSave = millis();
+
     if (activeModeConfig->displayEnabled) {
         _display.clear();
         _display.drawString(0, 0, "MISSAO INICIADA");
         _display.drawString(0, 20, "Modo: FLIGHT");
         _display.display();
+        delay(1500);  // Aguarda 1.5 segundos para ver a mensagem
     }
 }
+
+
 void TelemetryManager::stopMission() {
     DEBUG_PRINTLN("[TelemetryManager] MISSÃO FINALIZADA!");
     _mode = MODE_POSTFLIGHT;
@@ -147,15 +158,19 @@ void TelemetryManager::stopMission() {
         _display.display();
     }
 }
+
 OperationMode TelemetryManager::getMode() {
     return _mode;
 }
+
 void TelemetryManager::updateDisplay() {
     if (!activeModeConfig->displayEnabled) return;
     if (_mode == MODE_ERROR) { _displayError("Sistema com erro"); return; }
     if (_mode == MODE_PREFLIGHT) { _displayStatus(); } else { _displayTelemetry(); }
 }
+
 // === IMPLEMENTAÇÃO COMPLETA DOS PRIVADOS ===
+
 void TelemetryManager::_collectTelemetryData() {
     _telemetryData.timestamp = millis();
     _telemetryData.missionTime = _health.getMissionTime();
@@ -203,6 +218,7 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.payload[PAYLOAD_MAX_SIZE - 1] = '\0';
     _missionData = _payload.getMissionData();
 }
+
 void TelemetryManager::_sendTelemetry() {
     DEBUG_PRINTLN("[TelemetryManager] Enviando telemetria...");
     DEBUG_PRINTF("  Temp: %.2f°C, Pressão: %.2f hPa, Alt: %.1f m\n",
@@ -217,12 +233,14 @@ void TelemetryManager::_sendTelemetry() {
     if (!_comm.isConnected()) { DEBUG_PRINTLN("[TelemetryManager] Tentando reconectar WiFi..."); _comm.connectWiFi(); }
     if (_comm.sendTelemetry(_telemetryData)) { DEBUG_PRINTLN("[TelemetryManager] Telemetria enviada com sucesso!"); } else { DEBUG_PRINTLN("[TelemetryManager] Falha ao enviar telemetria"); _health.reportError(STATUS_WIFI_ERROR, "Telemetry send failed"); }
 }
+
 void TelemetryManager::_saveToStorage() {
     if (!_storage.isAvailable()) return;
     DEBUG_PRINTLN("[TelemetryManager] Salvando dados no SD...");
     if (_storage.saveTelemetry(_telemetryData)) { DEBUG_PRINTLN("[TelemetryManager] Telemetria salva no SD"); }
     if (_storage.saveMissionData(_missionData)) { DEBUG_PRINTLN("[TelemetryManager] Dados da missão salvos no SD"); }
 }
+
 void TelemetryManager::_checkOperationalConditions() {
     if (_power.isCritical()) { _health.reportError(STATUS_BATTERY_CRIT, "Critical battery level"); _power.enablePowerSave(); }
     else if (_power.isLow()) { _health.reportError(STATUS_BATTERY_LOW, "Low battery level"); }
@@ -232,64 +250,78 @@ void TelemetryManager::_checkOperationalConditions() {
     uint32_t currentHeap = ESP.getFreeHeap();
     if (currentHeap < 10000) { DEBUG_PRINTF("[TelemetryManager] CRÍTICO: Heap baixo: %lu bytes\n", currentHeap); _health.reportError(STATUS_WATCHDOG, "Critical low memory"); }
 }
+
+// Display implementation with enhanced data and visuals
+
 void TelemetryManager::_displayStatus() {
     _display.clear();
-    String line1 = "PRE " + String(_power.getPercentage(), 0) + "%";
+    _display.setFont(ArialMT_Plain_10);
+    String line1 = "PRE-FLIGHT MODE";
     _display.drawString(0, 0, line1);
-    String line2;
+
+    String batteryStr = "Bat: " + String(_power.getPercentage(), 0) + "% (" + String(_power.getVoltage(), 2) + "V)";
+    _display.drawString(0, 12, batteryStr);
+
+    String tempHumStr;
     if (_sensors.isSHT20Online() && !isnan(_sensors.getHumidity())) {
-        line2 = String(_sensors.getTemperature(), 1) + "C " + String(_sensors.getHumidity(), 0) + "%RH";
+        tempHumStr = "Temp: " + String(_sensors.getTemperature(), 1) + "C Hum: " + String(_sensors.getHumidity(), 0) + "%";
     } else {
-        line2 = String(_sensors.getTemperature(), 1) + "C " + String(_sensors.getPressure(), 0) + "hPa";
+        tempHumStr = "Temp: " + String(_sensors.getTemperature(), 1) + "C Press: " + String(_sensors.getPressure(), 0) + "hPa";
     }
-    _display.drawString(0, 15, line2);
-    String line3;
+    _display.drawString(0, 24, tempHumStr);
+
+    String co2Str;
     if (_sensors.isCCS811Online() && !isnan(_sensors.getCO2())) {
-        line3 = "CO2: " + String(_sensors.getCO2(), 0) + "ppm";
+        co2Str = "CO2: " + String(_sensors.getCO2(), 0) + "ppm TVOC: " + String(_sensors.getTVOC(), 0) + "ppb";
     } else {
-        line3 = "Alt: " + String(_sensors.getAltitude(), 0) + "m";
+        co2Str = "Altitude: " + String(_sensors.getAltitude(), 0) + "m";
     }
-    _display.drawString(0, 30, line3);
-    String line4 = "";
-    line4 += _comm.isConnected() ? "W+" : "W-";
-    line4 += " ";
-    line4 += _payload.isOnline() ? "L+" : "L-";
-    line4 += " ";
-    line4 += _storage.isAvailable() ? "S+" : "S-";
-    line4 += " ";
-    if (_sensors.isSHT20Online()) line4 += "H+";
-    if (_sensors.isCCS811Online()) line4 += "C+";
-    if (_sensors.isMPU9250Online()) line4 += "9+";
-    line4 += " " + String(ESP.getFreeHeap() / 1024) + "K";
-    _display.drawString(0, 45, line4);
+    _display.drawString(0, 36, co2Str);
+
+    String statusStr = "";
+    statusStr += _comm.isConnected() ? "[WiFi]" : "[NoWiFi]";
+    statusStr += _payload.isOnline() ? "[Payload]" : "[NoPayload]";
+    statusStr += _storage.isAvailable() ? "[SD]" : "[NoSD]";
+    _display.drawString(0, 48, statusStr);
+
     _display.display();
 }
+
 void TelemetryManager::_displayTelemetry() {
     _display.clear();
+    _display.setFont(ArialMT_Plain_10);
+
     unsigned long missionTimeSec = _telemetryData.missionTime / 1000;
     unsigned long minutes = missionTimeSec / 60;
     unsigned long seconds = missionTimeSec % 60;
-    String line1 = String(minutes) + ":" + String(seconds) + " " + String(_power.getPercentage(), 0) + "%";
-    _display.drawString(0, 0, line1);
-    String line2 = "Alt: " + String(_sensors.getAltitude(), 0) + "m";
-    _display.drawString(0, 15, line2);
-    String line3;
+    String timeStr = String(minutes) + ":" + (seconds < 10 ? "0" + String(seconds) : String(seconds));
+    _display.drawString(0, 0, "Mission: " + timeStr);
+
+    String batStr = "Bat: " + String(_power.getPercentage(), 0) + "% (" + String(_power.getVoltage(), 2) + "V)";
+    _display.drawString(0, 12, batStr);
+
+    String altStr = "Alt: " + String(_sensors.getAltitude(), 0) + " m";
+    _display.drawString(0, 24, altStr);
+
+    String tempStr = "Temp: " + String(_sensors.getTemperature(), 1) + " C";
+    _display.drawString(0, 36, tempStr);
+
+    String co2Str = "";
     if (_sensors.isCCS811Online() && !isnan(_sensors.getCO2())) {
-        line3 = "CO2: " + String(_sensors.getCO2(), 0) + "ppm";
-    } else {
-        line3 = "Temp: " + String(_sensors.getTemperature(), 1) + "C";
+        co2Str = "CO2: " + String(_sensors.getCO2(), 0) + " ppm TVOC: " + String(_sensors.getTVOC(), 0) + " ppb";
+        _display.drawString(0, 48, co2Str);
     }
-    _display.drawString(0, 30, line3);
-    String line4 = "LoRa:" + String(_missionData.packetsReceived);
-    if (_sensors.isSHT20Online()) line4 += " H";
-    if (_sensors.isCCS811Online()) line4 += " C";
-    if (_sensors.isMPU9250Online()) line4 += " 9";
-    line4 += " " + String(ESP.getFreeHeap() / 1024) + "K";
-    _display.drawString(0, 45, line4);
+
+    // Display packets received and heap
+    String bottomLine = "LoRa pkts: " + String(_missionData.packetsReceived) + "  Heap: " + String(ESP.getFreeHeap() / 1024) + "K";
+    _display.drawString(0, 56, bottomLine);
+
     _display.display();
 }
+
 void TelemetryManager::_displayError(const String& error) {
     _display.clear();
+    _display.setFont(ArialMT_Plain_10);
     _display.drawString(0, 0, "ERRO:");
     _display.drawString(0, 15, error);
     String heapInfo = "Heap: " + String(ESP.getFreeHeap() / 1024) + "KB";
@@ -300,6 +332,8 @@ void TelemetryManager::_displayError(const String& error) {
     _display.drawString(0, 45, sensorStatus);
     _display.display();
 }
+
+
 void TelemetryManager::_logHeapUsage(const String& component) {
     uint32_t currentHeap = ESP.getFreeHeap();
     if (currentHeap < _minHeapSeen) { _minHeapSeen = currentHeap; }
