@@ -111,7 +111,7 @@ const ModeConfig FLIGHT_CONFIG = {
 // =========================================================================
 #define WIFI_SSID "MATHEUS "
 #define WIFI_PASSWORD "12213490"
-#define WIFI_TIMEOUT_MS 30000
+#define WIFI_TIMEOUT_MS 60000
 #define WIFI_RETRY_ATTEMPTS 5
 #define HTTP_SERVER "192.168.1.105"
 #define HTTP_PORT 5000

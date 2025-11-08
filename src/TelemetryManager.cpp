@@ -74,10 +74,13 @@ bool TelemetryManager::begin() {
     DEBUG_PRINTLN("  Firmware: " FIRMWARE_VERSION);
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
+
     uint32_t initialHeap = ESP.getFreeHeap();
     _minHeapSeen = initialHeap;
     DEBUG_PRINTF("[TelemetryManager] Heap inicial: %lu bytes\n", initialHeap);
+
     _initI2CBus();
+
     bool displayOk = false;
     if (activeModeConfig->displayEnabled) {
         DEBUG_PRINTLN("[TelemetryManager] Inicializando display...");
@@ -94,13 +97,64 @@ bool TelemetryManager::begin() {
         }
         delay(500);
     }
-    bool success = true; uint8_t subsystemsOk = 0;
-    if (_health.begin()) subsystemsOk++;
-    if (_power.begin()) subsystemsOk++;
-    if (_sensors.begin()) subsystemsOk++;
-    if (_storage.begin()) subsystemsOk++;
-    if (_payload.begin()) subsystemsOk++;
-    if (_comm.begin()) subsystemsOk++;
+
+    bool success = true;
+    uint8_t subsystemsOk = 0;
+
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
+    if (_health.begin()) {
+        subsystemsOk++;
+        DEBUG_PRINTLN("[TelemetryManager] ✓ System Health OK");
+    } else {
+        success = false;
+        DEBUG_PRINTLN("[TelemetryManager] ! System Health FAILED");
+    }
+
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando Power Manager...");
+    if (_power.begin()) {
+        subsystemsOk++;
+        DEBUG_PRINTLN("[TelemetryManager] ✓ Power Manager OK");
+    } else {
+        success = false;
+        DEBUG_PRINTLN("[TelemetryManager] ! Power Manager FAILED");
+    }
+
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
+    if (_sensors.begin()) {
+        subsystemsOk++;
+        DEBUG_PRINTLN("[TelemetryManager] ✓ Sensor Manager OK");
+    } else {
+        success = false;
+        DEBUG_PRINTLN("[TelemetryManager] ! Sensor Manager FAILED");
+    }
+
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando Storage Manager...");
+    if (_storage.begin()) {
+        subsystemsOk++;
+        DEBUG_PRINTLN("[TelemetryManager] ✓ Storage Manager OK");
+    } else {
+        success = false;
+        DEBUG_PRINTLN("[TelemetryManager] ! Storage Manager FAILED");
+    }
+
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando Payload Manager...");
+    if (_payload.begin()) {
+        subsystemsOk++;
+        DEBUG_PRINTLN("[TelemetryManager] ✓ Payload Manager OK");
+    } else {
+        success = false;
+        DEBUG_PRINTLN("[TelemetryManager] ! Payload Manager FAILED");
+    }
+
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication Manager...");
+    if (_comm.begin()) {
+        subsystemsOk++;
+        DEBUG_PRINTLN("[TelemetryManager] ✓ Communication Manager OK");
+    } else {
+        success = false;
+        DEBUG_PRINTLN("[TelemetryManager] ! Communication Manager FAILED");
+    }
+
     if (displayOk) {
         _display.clear();
         _display.drawString(0, 0, success ? "Sistema OK!" : "ERRO Sistema!");
@@ -109,9 +163,11 @@ bool TelemetryManager::begin() {
         _display.drawString(0, 30, subsysInfo);
         _display.display();
     }
+
     _mode = MODE_PREFLIGHT;
     return success;
 }
+
 
 void TelemetryManager::loop() {
     applyModeConfig(_mode);

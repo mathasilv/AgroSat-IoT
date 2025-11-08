@@ -78,6 +78,7 @@ public:
     void getRawData(float& gx, float& gy, float& gz, 
                    float& ax, float& ay, float& az);
 
+
 private:
     // Instâncias dos sensores
     MPU6050 _mpu6050;  // BIBLIOTECA NOVA - sem argumentos no construtor
@@ -125,6 +126,11 @@ private:
     float _accelYBuffer[CUSTOM_FILTER_SIZE];
     float _accelZBuffer[CUSTOM_FILTER_SIZE];
     uint8_t _filterIndex;
+
+    // Somas parciais para filtro incremental
+    float _sumAccelX;
+    float _sumAccelY;
+    float _sumAccelZ;
     
     // Métodos privados - Inicialização
     bool _initMPU6050();
@@ -149,8 +155,14 @@ private:
     // Métodos privados - Auxiliares
     void _performHealthCheck();
     bool _calibrateMPU6050();
-    float _applyFilter(float newValue, float* buffer);
+    float _applyFilter(float newValue, float* buffer, float& sum);
     float _calculateAltitude(float pressure);
+
+    // Métodos privados auxiliares para update modular
+    void _updateIMU();
+    void _updateBMP280();
+    void _updateSHT20();
+    void _updateCCS811();
 };
 
 #endif // SENSORMANAGER_H
