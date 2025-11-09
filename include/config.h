@@ -113,9 +113,9 @@ const ModeConfig FLIGHT_CONFIG = {
 #define WIFI_PASSWORD "12213490"
 #define WIFI_TIMEOUT_MS 60000
 #define WIFI_RETRY_ATTEMPTS 5
-#define HTTP_SERVER "192.168.1.105"
-#define HTTP_PORT 5000
-#define HTTP_ENDPOINT "/api/telemetria"
+#define HTTP_SERVER "obsat.org.br"
+#define HTTP_PORT 443
+#define HTTP_ENDPOINT "/teste_post/envio.php"
 #define HTTP_TIMEOUT_MS 3000
 #define JSON_MAX_SIZE 768
 #define PAYLOAD_MAX_SIZE 90

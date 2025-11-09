@@ -16,6 +16,7 @@ CommunicationManager::CommunicationManager() :
 {
 }
 
+
 bool CommunicationManager::begin() {
     DEBUG_PRINTLN("[CommunicationManager] Inicializando WiFi...");
     
@@ -27,24 +28,15 @@ bool CommunicationManager::begin() {
 }
 
 void CommunicationManager::update() {
-    wl_status_t wifiStatus = WiFi.status();
-
-    if (wifiStatus == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED) {
         if (!_connected) {
             _connected = true;
             _rssi = WiFi.RSSI();
             _ipAddress = WiFi.localIP().toString();
             DEBUG_PRINTF("[CommunicationManager] WiFi conectado! IP: %s, RSSI: %d dBm\n", 
                         _ipAddress.c_str(), _rssi);
-        } else {
-            // Atualiza RSSI só se conectado e passa maior intervalo para evitar chamadas contínuas
-            static uint32_t lastRssiUpdate = 0;
-            uint32_t currentTime = millis();
-            if (currentTime - lastRssiUpdate > 10000) { // A cada 10s
-                _rssi = WiFi.RSSI();
-                lastRssiUpdate = currentTime;
-            }
         }
+        _rssi = WiFi.RSSI();
     } else {
         if (_connected) {
             _connected = false;
@@ -69,17 +61,23 @@ bool CommunicationManager::connectWiFi() {
     DEBUG_PRINTF("[CommunicationManager] Tentando conectar ao WiFi '%s'...\n", WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-    if (!_waitForConnection(WIFI_TIMEOUT_MS)) {
-        DEBUG_PRINTLN("[CommunicationManager] Timeout de conexão WiFi");
-        return false;
+    uint32_t startTime = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+        if (millis() - startTime > WIFI_TIMEOUT_MS) {
+            DEBUG_PRINTLN("[CommunicationManager] Timeout de conexão WiFi");
+            return false;
+        }
+        DEBUG_PRINTF(".");
+        delay(500);
     }
 
     _connected = true;
     _rssi = WiFi.RSSI();
     _ipAddress = WiFi.localIP().toString();
-    DEBUG_PRINTF("[CommunicationManager] Conectado! IP: %s, RSSI: %d dBm\n", _ipAddress.c_str(), _rssi);
+    DEBUG_PRINTF("\n[CommunicationManager] Conectado! IP: %s, RSSI: %d dBm\n", _ipAddress.c_str(), _rssi);
     return true;
 }
+
 
 void CommunicationManager::disconnectWiFi() {
     WiFi.disconnect();
@@ -93,41 +91,29 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data) {
         _packetsFailed++;
         return false;
     }
-    
+
     String jsonPayload = _createTelemetryJSON(data);
-    
     DEBUG_PRINTLN("[CommunicationManager] Enviando telemetria...");
     DEBUG_PRINTF("[CommunicationManager] JSON size: %d bytes\n", jsonPayload.length());
-    
-    DEBUG_PRINTLN("[CommunicationManager] ========== DEBUG HTTP ==========");
-    DEBUG_PRINTF("[CommunicationManager] HTTP_SERVER: %s\n", HTTP_SERVER);
-    DEBUG_PRINTF("[CommunicationManager] HTTP_PORT: %d\n", HTTP_PORT);
-    DEBUG_PRINTF("[CommunicationManager] HTTP_ENDPOINT: %s\n", HTTP_ENDPOINT);
-    String debugUrl = String("http://") + HTTP_SERVER;
-    if (HTTP_PORT != 80) {
-        debugUrl += ":" + String(HTTP_PORT);
-    }
-    debugUrl += HTTP_ENDPOINT;
-    DEBUG_PRINTF("[CommunicationManager] URL Completa: %s\n", debugUrl.c_str());
-    DEBUG_PRINTLN("[CommunicationManager] ================================");
-    
+
+    // Montar URL HTTPS globalmente (definida em header ou em const), usar lá dentro de _sendHTTPPost
+    // Vou assumir existe uma constante URL_HTTP definida adequadamente
+   
     for (uint8_t attempt = 0; attempt < WIFI_RETRY_ATTEMPTS; attempt++) {
         if (attempt > 0) {
             _totalRetries++;
-            DEBUG_PRINTF("[CommunicationManager] Tentativa %d/%d...\n", 
-                          attempt + 1, WIFI_RETRY_ATTEMPTS);
+            DEBUG_PRINTF("[CommunicationManager] Tentativa %d/%d...\n", attempt + 1, WIFI_RETRY_ATTEMPTS);
             delay(1000);
         }
-        
+
         if (_sendHTTPPost(jsonPayload)) {
             _packetsSent++;
             DEBUG_PRINTLN("[CommunicationManager] Telemetria enviada com sucesso!");
             return true;
         }
     }
-    
+
     _packetsFailed++;
-    DEBUG_PRINTLN("[CommunicationManager] Falha ao enviar telemetria após retries");
     return false;
 }
 
@@ -153,7 +139,7 @@ bool CommunicationManager::testConnection() {
     if (!_connected) return false;
     
     HTTPClient http;
-    String url = String("http://") + HTTP_SERVER + "/";
+    String url = String("https://") + HTTP_SERVER + "/";
     
     http.begin(url);
     http.setTimeout(5000);
@@ -169,62 +155,53 @@ bool CommunicationManager::testConnection() {
 // ============================================================================
 
 String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
-    StaticJsonDocument<JSON_MAX_SIZE> doc;
-    
-    doc["team"] = TEAM_NAME;
-    doc["category"] = TEAM_CATEGORY;
-    doc["mission"] = MISSION_NAME;
-    doc["firmware"] = FIRMWARE_VERSION;
-    doc["timestamp"] = data.timestamp;
-    doc["missionTime"] = data.missionTime;
-    doc["batteryVoltage"] = serialized(String(data.batteryVoltage, 2));
-    doc["batteryPercentage"] = serialized(String(data.batteryPercentage, 1));
-    if (!isnan(data.temperature))        doc["temperature"] = serialized(String(data.temperature, 2));
-    if (!isnan(data.pressure))           doc["pressure"] = serialized(String(data.pressure, 2));
-    if (!isnan(data.altitude))           doc["altitude"] = serialized(String(data.altitude, 1));
-    doc["gyroX"] = serialized(String(data.gyroX, 4));
-    doc["gyroY"] = serialized(String(data.gyroY, 4));
-    doc["gyroZ"] = serialized(String(data.gyroZ, 4));
-    doc["accelX"] = serialized(String(data.accelX, 4));
-    doc["accelY"] = serialized(String(data.accelY, 4));
-    doc["accelZ"] = serialized(String(data.accelZ, 4));
-    if (!isnan(data.humidity))           doc["humidity"] = serialized(String(data.humidity, 1));
-    if (!isnan(data.co2) && data.co2 > 0) doc["co2"] = serialized(String(data.co2, 0));
-    if (!isnan(data.tvoc) && data.tvoc > 0) doc["tvoc"] = serialized(String(data.tvoc, 0));
-    if (!isnan(data.magX) && !isnan(data.magY) && !isnan(data.magZ)) {
-        doc["magX"] = serialized(String(data.magX, 2));
-        doc["magY"] = serialized(String(data.magY, 2));
-        doc["magZ"] = serialized(String(data.magZ, 2));
+    StaticJsonDocument<512> doc;
+
+    doc["equipe"] = TEAM_NAME;
+
+    doc["bateria"] = data.batteryPercentage;  // Valor numérico puro
+
+    doc["temperatura"] = isnan(data.temperature) ? 0.0 : data.temperature;
+
+    doc["pressao"] = isnan(data.pressure) ? 0.0 : data.pressure;
+
+    JsonObject giroscopio = doc.createNestedObject("giroscopio");
+    giroscopio["x"] = isnan(data.gyroX) ? 0.0 : data.gyroX;
+    giroscopio["y"] = isnan(data.gyroY) ? 0.0 : data.gyroY;
+    giroscopio["z"] = isnan(data.gyroZ) ? 0.0 : data.gyroZ;
+
+    JsonObject acelerometro = doc.createNestedObject("acelerometro");
+    acelerometro["x"] = isnan(data.accelX) ? 0.0 : data.accelX;
+    acelerometro["y"] = isnan(data.accelY) ? 0.0 : data.accelY;
+    acelerometro["z"] = isnan(data.accelZ) ? 0.0 : data.accelZ;
+
+    String payloadStr = String(data.payload);
+    if (payloadStr.length() > 90) {
+        payloadStr = payloadStr.substring(0, 90);
     }
-    doc["systemStatus"] = data.systemStatus;
-    doc["errorCount"] = data.errorCount;
-    if (strlen(data.payload) > 0)         doc["payload"] = data.payload;
+    doc["payload"] = payloadStr;
 
     String output;
     serializeJson(doc, output);
-
-    if (output.length() > JSON_MAX_SIZE - 50) {
-        DEBUG_PRINTF("[CommunicationManager] AVISO: JSON próximo do limite: %d bytes\n", output.length());
-    }
-
     return output;
 }
 
 bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
     HTTPClient http;
-
-    String url = String("http://") + HTTP_SERVER;
-    if (HTTP_PORT != 80) {
+    
+    // Construir URL da comunicação aqui
+    String url = String("https://") + HTTP_SERVER;
+    if (HTTP_PORT != 80 && HTTP_PORT != 443) {
         url += ":" + String(HTTP_PORT);
     }
     url += HTTP_ENDPOINT;
-
+    
     http.begin(url);
     http.setTimeout(HTTP_TIMEOUT_MS);
+    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
     http.addHeader("Content-Type", "application/json");
-
+    
     int httpCode = http.POST(jsonPayload);
-
     bool success = false;
     if (httpCode > 0) {
         DEBUG_PRINTF("[CommunicationManager] HTTP Code: %d\n", httpCode);
@@ -232,22 +209,28 @@ bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
             String response = http.getString();
             DEBUG_PRINTF("[CommunicationManager] Resposta: %s\n", response.c_str());
             success = true;
+        } else if (httpCode == HTTP_CODE_MOVED_PERMANENTLY || httpCode == HTTP_CODE_FOUND) {
+            String location = http.getLocation();
+            DEBUG_PRINTF("[CommunicationManager] Redirect detectado para: %s\n", location.c_str());
+            DEBUG_PRINTLN("[CommunicationManager] ERRO: URL incorreta, ajuste para HTTPS");
+        } else {
+            DEBUG_PRINTF("[CommunicationManager] HTTP Error: %d\n", httpCode);
         }
     } else {
         DEBUG_PRINTF("[CommunicationManager] HTTP Error: %s\n", http.errorToString(httpCode).c_str());
     }
-
     http.end();
     return success;
 }
-
 bool CommunicationManager::_waitForConnection(uint32_t timeoutMs) {
     uint32_t startTime = millis();
+    
     while (WiFi.status() != WL_CONNECTED) {
         if (millis() - startTime > timeoutMs) {
             return false;
         }
         delay(100);
     }
+    
     return true;
 }
