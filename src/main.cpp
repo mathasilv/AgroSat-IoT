@@ -14,58 +14,6 @@ bool bootComplete = false;
 unsigned long lastHeapLog = 0;
 uint32_t minHeapSeen = UINT32_MAX;
 
-void printBootInfo() {
-    DEBUG_PRINTLN("");
-    DEBUG_PRINTLN("╔════════════════════════════════════════════════════════════╗");
-    DEBUG_PRINTLN("║           AgroSat-IoT CubeSat - OBSAT Fase 2              ║");
-    DEBUG_PRINTLN("╠════════════════════════════════════════════════════════════╣");
-    DEBUG_PRINTF("║ Equipe:      %-45s ║\n", TEAM_NAME);
-    DEBUG_PRINTF("║ Categoria:   %-45s ║\n", TEAM_CATEGORY);
-    DEBUG_PRINTF("║ Missão:      %-45s ║\n", MISSION_NAME);
-    DEBUG_PRINTF("║ Firmware:    %-45s ║\n", FIRMWARE_VERSION);
-    DEBUG_PRINTF("║ Build:       %-45s ║\n", BUILD_DATE " " BUILD_TIME);
-    DEBUG_PRINTLN("╠════════════════════════════════════════════════════════════╣");
-    DEBUG_PRINTF("║ CPU:         ESP32 @ %lu MHz                             ║\n", getCpuFrequencyMhz());
-    uint32_t freeHeap = ESP.getFreeHeap();
-    uint32_t totalHeap = ESP.getHeapSize();
-    DEBUG_PRINTF("║ RAM:         %lu KB livre / %lu KB total              ║\n", freeHeap / 1024, totalHeap / 1024);
-    DEBUG_PRINTF("║ Flash:       %lu MB                                      ║\n", ESP.getFlashChipSize() / (1024 * 1024));
-    minHeapSeen = freeHeap;
-    DEBUG_PRINTLN("╠════════════════════════════════════════════════════════════╣");
-    DEBUG_PRINTLN("║ Hardware:    LoRa32 V2.1_1.6                              ║");
-    DEBUG_PRINTLN("║ Sensores:    MPU6050 (IMU), BMP280 (Pressão/Temp)        ║");
-    DEBUG_PRINTLN("║ Comunicação: WiFi (HTTP), LoRa 433MHz                     ║");
-    DEBUG_PRINTLN("║ Armazenamento: SD Card                                    ║");
-    DEBUG_PRINTLN("╚════════════════════════════════════════════════════════════╝");
-    DEBUG_PRINTLN("");
-}
-
-void printMissionInfo() {
-    DEBUG_PRINTLN("");
-    DEBUG_PRINTLN("╔════════════════════════════════════════════════════════════╗");
-    DEBUG_PRINTLN("║                    INFORMAÇÕES DA MISSÃO                   ║");
-    DEBUG_PRINTLN("╠════════════════════════════════════════════════════════════╣");
-    DEBUG_PRINTLN("║ Objetivo:                                                  ║");
-    DEBUG_PRINTLN("║   Monitoramento remoto de cultivos agrícolas via          ║");
-    DEBUG_PRINTLN("║   CubeSat com comunicação LoRa IoT                         ║");
-    DEBUG_PRINTLN("╠════════════════════════════════════════════════════════════╣");
-    DEBUG_PRINTLN("║ Requisitos OBSAT Fase 2:                                  ║");
-    DEBUG_PRINTLN("║   ✓ Telemetria via WiFi HTTP POST (JSON)                  ║");
-    DEBUG_PRINTLN("║   ✓ Intervalo: 4 minutos                                  ║");
-    DEBUG_PRINTLN("║   ✓ Duração: 2 horas                                      ║");
-    DEBUG_PRINTLN("║   ✓ Dados: Bateria, Temp, Pressão, IMU (6 eixos)         ║");
-    DEBUG_PRINTLN("║   ✓ Payload customizado: Dados LoRa (máx 90 bytes)       ║");
-    DEBUG_PRINTLN("║   ✓ Armazenamento em SD Card                              ║");
-    DEBUG_PRINTLN("╠════════════════════════════════════════════════════════════╣");
-    DEBUG_PRINTLN("║ Controles VIA SERIAL:                                      ║");
-    DEBUG_PRINTLN("║   - Digite 'START' para iniciar missão                    ║");
-    DEBUG_PRINTLN("║   - Digite 'STOP' para parar missão                       ║");
-    DEBUG_PRINTLN("║   - Digite 'MODE FLIGHT' / 'MODE PREFLIGHT' para trocar   ║");
-    DEBUG_PRINTLN("║   - Digite 'HELP' para lista completa                     ║");
-    DEBUG_PRINTLN("╚════════════════════════════════════════════════════════════╝");
-    DEBUG_PRINTLN("");
-}
-
 void waitForBoot() {
     DEBUG_PRINTLN("[Main] Aguardando estabilização dos subsistemas...");
     for (int i = 3; i > 0; i--) {
@@ -181,7 +129,6 @@ void printPeriodicStatus() {
 void setup() {
     Serial.begin(DEBUG_BAUDRATE); delay(500);
     uint32_t bootHeap = ESP.getFreeHeap(); minHeapSeen = bootHeap;
-    printBootInfo(); printMissionInfo();
     pinMode(LED_BUILTIN, OUTPUT); digitalWrite(LED_BUILTIN, LOW);
     DEBUG_PRINTLN("[Main] ========================================");
     DEBUG_PRINTLN("[Main] INICIALIZANDO SISTEMA DE TELEMETRIA");
