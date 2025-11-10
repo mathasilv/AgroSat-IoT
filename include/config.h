@@ -36,7 +36,7 @@
 #define LORA_CS 18
 #define LORA_RST 23
 #define LORA_DIO0 26
-#define LORA_FREQUENCY 433E6
+#define LORA_FREQUENCY 915E6  // 915 MHz (Brasil - Plano AU915-928)
 
 #define SD_CS 13
 #define SD_MOSI 15
