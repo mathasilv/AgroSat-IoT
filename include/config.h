@@ -1,7 +1,7 @@
 /**
  * @file config.h
  * @brief Configurações globais do CubeSat AgroSat-IoT - OBSAT Fase 2
- * @version 2.3.0 (OBSAT compliant)
+ * @version 3.0.0 (SENSORES PION REAIS)
  * @date 2025-11-09
  */
 
@@ -15,7 +15,7 @@
 // ============================================================================
 #define MISSION_NAME "AgroSat-IoT"
 #define TEAM_CATEGORY "N3"
-#define FIRMWARE_VERSION "2.3.0"
+#define FIRMWARE_VERSION "3.0.0"
 #define BUILD_DATE __DATE__
 #define BUILD_TIME __TIME__
 #define TEAM_ID 666
@@ -45,7 +45,7 @@
 
 #define SENSOR_I2C_SDA 21
 #define SENSOR_I2C_SCL 22
-#define I2C_FREQUENCY 100000
+#define I2C_FREQUENCY 50000
 
 #define BATTERY_PIN 35
 #define BATTERY_SAMPLES 10
@@ -74,43 +74,89 @@ struct ModeConfig {
     bool sdLogsVerbose;
     uint32_t telemetrySendInterval;
     uint32_t storageSaveInterval;
-    uint8_t wifiDutyCycle; // 0-100%
+    uint8_t wifiDutyCycle;
 };
 
-// Configurações para cada modo
 const ModeConfig PREFLIGHT_CONFIG = {
     true,   // displayEnabled
     true,   // serialLogsEnabled
     true,   // sdLogsVerbose
-    30000,  // telemetrySendInterval (30s para testes)
+    30000,  // telemetrySendInterval (30s)
     60000,  // storageSaveInterval (1min)
     100     // wifiDutyCycle (sempre ligado)
 };
 
 const ModeConfig FLIGHT_CONFIG = {
-    false,   // displayEnabled (economia de energia)
-    false,   // serialLogsEnabled (economia de energia)
-    false,   // sdLogsVerbose (economia de energia)
-    240000,  // telemetrySendInterval (4min - requisito OBSAT)
+    false,   // displayEnabled
+    false,   // serialLogsEnabled
+    false,   // sdLogsVerbose
+    240000,  // telemetrySendInterval (4min - OBSAT)
     240000,  // storageSaveInterval (4min)
-    5        // wifiDutyCycle (5% - liga só para enviar)
+    5        // wifiDutyCycle (5%)
 };
 
 // ============================================================================
-// CONFIGURAÇÃO DE SENSORES (AUTO-DETECÇÃO + SELEÇÃO)
+// CONFIGURAÇÃO DE SENSORES - PLACA PION REAL
 // ============================================================================
-#define MPU6050_ADDRESS 0x68
+
+// Sensores ativos
+#define USE_MPU9250     // IMU 9-axis
+#define USE_BMP280      // Pressão + Temperatura
+#define USE_SI7021      // Umidade (temperatura do BMP280)
+#define USE_CCS811      // CO2 + VOC
+
+// Endereços I2C
 #define MPU9250_ADDRESS 0x68
 #define BMP280_ADDR_1 0x76
 #define BMP280_ADDR_2 0x77
-#define SHT20_ADDRESS 0x40
+#define SI7021_ADDRESS 0x40
 #define CCS811_ADDR_1 0x5A
 #define CCS811_ADDR_2 0x5B
-#define MPU6050_CALIBRATION_SAMPLES 100
+
+// Intervalos de leitura
 #define CUSTOM_FILTER_SIZE 5
 #define SENSOR_READ_INTERVAL 1000
 #define CCS811_READ_INTERVAL 5000
-#define SHT20_READ_INTERVAL 2000
+#define SI7021_READ_INTERVAL 2000
+#define MPU9250_CALIBRATION_SAMPLES 100
+
+// ============================================================================
+// LIMITES DE VALIDAÇÃO DE SENSORES
+// ============================================================================
+
+// Temperatura (múltiplas fontes)
+#define TEMP_MIN_VALID -50.0
+#define TEMP_MAX_VALID 100.0
+
+// Pressão atmosférica (BMP280)
+#define PRESSURE_MIN_VALID 300.0
+#define PRESSURE_MAX_VALID 1100.0
+
+// Umidade relativa (SI7021)
+#define HUMIDITY_MIN_VALID 0.0
+#define HUMIDITY_MAX_VALID 100.0
+
+// Qualidade do ar (CCS811)
+#define CO2_MIN_VALID 350.0
+#define CO2_MAX_VALID 5000.0
+#define TVOC_MIN_VALID 0.0
+#define TVOC_MAX_VALID 1000.0
+
+// Magnetômetro (MPU9250)
+#define MAG_MIN_VALID -4800.0
+#define MAG_MAX_VALID 4800.0
+
+// Acelerômetro e giroscópio (MPU9250)
+#define ACCEL_MIN_VALID -16.0
+#define ACCEL_MAX_VALID 16.0
+#define GYRO_MIN_VALID -2000.0
+#define GYRO_MAX_VALID 2000.0
+
+// ============================================================================
+// TIMEOUTS DE INICIALIZAÇÃO
+// ============================================================================
+#define SENSOR_INIT_TIMEOUT 2000
+#define CCS811_WARMUP_TIME 20000
 
 // ============================================================================
 // REDE/HTTP/COMUNICAÇÃO - OBSAT
@@ -127,8 +173,8 @@ const ModeConfig FLIGHT_CONFIG = {
 #define HTTP_TIMEOUT_MS 10000
 
 // Limites de tamanho JSON (OBSAT)
-#define JSON_MAX_SIZE 512      // Tamanho total do JSON (servidor aceita até ~500 bytes)
-#define PAYLOAD_MAX_SIZE 90    // Limite OBSAT para campo payload
+#define JSON_MAX_SIZE 512
+#define PAYLOAD_MAX_SIZE 90
 
 // Intervalos de envio (seguem modo operacional)
 #define TELEMETRY_SEND_INTERVAL PREFLIGHT_CONFIG.telemetrySendInterval
@@ -144,11 +190,11 @@ const ModeConfig FLIGHT_CONFIG = {
 
 #define BATTERY_MIN_VOLTAGE 3.3
 #define BATTERY_MAX_VOLTAGE 4.2
-#define BATTERY_CRITICAL 3.5
-#define BATTERY_LOW 3.7
+#define BATTERY_CRITICAL 3.3
+#define BATTERY_LOW 3.5
 
 #define DEEP_SLEEP_DURATION 3600
-#define MISSION_DURATION_MS 7200000  // 2 horas (requisito OBSAT)
+#define MISSION_DURATION_MS 7200000
 #define WATCHDOG_TIMEOUT 60
 #define SYSTEM_HEALTH_INTERVAL 10000
 
@@ -157,7 +203,7 @@ const ModeConfig FLIGHT_CONFIG = {
 #define MAX_TEMPERATURE 85
 
 // ============================================================================
-// DEBUG (segue valor do modo operacional)
+// DEBUG (segue modo operacional)
 // ============================================================================
 #define DEBUG_SERIAL Serial
 #define DEBUG_BAUDRATE 115200
@@ -172,51 +218,43 @@ extern bool currentSerialLogsEnabled;
 
 /**
  * @brief Estrutura de telemetria compatível com servidor OBSAT
- * @note Campos obrigatórios OBSAT:
- *       - equipe (número) - TEAM_ID
- *       - bateria (número) - batteryPercentage
- *       - temperatura (número) - temperature
- *       - pressao (número) - pressure
- *       - giroscopio (array [x,y,z]) - gyroX, gyroY, gyroZ
- *       - acelerometro (array [x,y,z]) - accelX, accelY, accelZ
- *       - payload (string JSON, máx 90 bytes) - montado dinamicamente
  */
 struct TelemetryData {
-    // Campos de sistema
+    // Sistema
     unsigned long timestamp;
     unsigned long missionTime;
     
     // Campos obrigatórios OBSAT
     float batteryVoltage;
-    float batteryPercentage;  // Enviado como "bateria"
-    float temperature;        // Enviado como "temperatura"
-    float pressure;           // Enviado como "pressao"
+    float batteryPercentage;
+    float temperature;      // Fonte primária: SI7021, fallback: BMP280
+    float pressure;         // Fonte: BMP280
     
-    // Giroscópio (convertido para array [x,y,z] no JSON)
+    // Giroscópio (MPU9250)
     float gyroX, gyroY, gyroZ;
     
-    // Acelerômetro (convertido para array [x,y,z] no JSON)
+    // Acelerômetro (MPU9250)
     float accelX, accelY, accelZ;
     
-    // Dados adicionais para payload customizado
-    float altitude;
-    float humidity;
-    float co2;
-    float tvoc;
+    // Dados extras para payload customizado
+    float altitude;         // Calculado de pressure
+    float humidity;         // Fonte: SI7021
+    float co2;              // Fonte: CCS811
+    float tvoc;             // Fonte: CCS811
     
-    // Magnetômetro (opcional, para payload)
+    // Magnetômetro (MPU9250) - novo, não estava disponível antes
     float magX, magY, magZ;
     
-    // Status do sistema
+    // Status
     uint8_t systemStatus;
     uint16_t errorCount;
     
-    // Payload legado (compatibilidade, não usado para OBSAT)
+    // Payload legado (compatibilidade)
     char payload[PAYLOAD_MAX_SIZE];
 };
 
 /**
- * @brief Dados de missão específicos (LoRa, sensores de solo, etc)
+ * @brief Dados de missão específicos (LoRa, etc)
  */
 struct MissionData {
     float soilMoisture;
@@ -244,25 +282,5 @@ enum SystemStatus : uint8_t {
     STATUS_TEMP_ALARM = 0x40,
     STATUS_WATCHDOG = 0x80
 };
-
-// ============================================================================
-// LIMITES DE VALIDAÇÃO DE SENSORES
-// ============================================================================
-#define TEMP_MIN_VALID -50.0
-#define TEMP_MAX_VALID 100.0
-#define PRESSURE_MIN_VALID 300.0
-#define PRESSURE_MAX_VALID 1100.0
-#define HUMIDITY_MIN_VALID 0.0
-#define HUMIDITY_MAX_VALID 100.0
-#define CO2_MIN_VALID 350.0
-#define CO2_MAX_VALID 5000.0
-#define TVOC_MIN_VALID 0.0
-#define TVOC_MAX_VALID 1000.0
-
-// ============================================================================
-// TIMEOUTS DE INICIALIZAÇÃO
-// ============================================================================
-#define SENSOR_INIT_TIMEOUT 2000
-#define CCS811_WARMUP_TIME 20000
 
 #endif // CONFIG_H

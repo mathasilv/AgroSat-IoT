@@ -162,63 +162,101 @@ bool CommunicationManager::testConnection() {
 String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
     StaticJsonDocument<JSON_MAX_SIZE> doc;
 
-    // Campo "equipe" como NÚMERO
+    // ========== CAMPOS OBRIGATÓRIOS OBSAT ==========
     doc["equipe"] = TEAM_ID;
-
-    // Campo "bateria" como número
     doc["bateria"] = (int)data.batteryPercentage;
-
-    // Campo "temperatura" (validação)
+    
     float temp = isnan(data.temperature) ? 0.0 : data.temperature;
     if (temp < TEMP_MIN_VALID || temp > TEMP_MAX_VALID) temp = 0.0;
     doc["temperatura"] = temp;
-
-    // Campo "pressao" (validação)
+    
     float press = isnan(data.pressure) ? 0.0 : data.pressure;
     if (press < PRESSURE_MIN_VALID || press > PRESSURE_MAX_VALID) press = 0.0;
     doc["pressao"] = press;
 
-    // "giroscopio" como ARRAY [x, y, z]
     JsonArray giroscopio = doc.createNestedArray("giroscopio");
     giroscopio.add(isnan(data.gyroX) ? 0.0 : data.gyroX);
     giroscopio.add(isnan(data.gyroY) ? 0.0 : data.gyroY);
     giroscopio.add(isnan(data.gyroZ) ? 0.0 : data.gyroZ);
 
-    // "acelerometro" como ARRAY [x, y, z]
     JsonArray acelerometro = doc.createNestedArray("acelerometro");
     acelerometro.add(isnan(data.accelX) ? 0.0 : data.accelX);
     acelerometro.add(isnan(data.accelY) ? 0.0 : data.accelY);
     acelerometro.add(isnan(data.accelZ) ? 0.0 : data.accelZ);
 
-    // "payload" como OBJETO JSON (formato oficial OBSAT)
+    // ========== PAYLOAD COM DEBUG ==========
     JsonObject payload = doc.createNestedObject("payload");
     
-    // Adicionar apenas campos com dados válidos
-    if (!isnan(data.altitude) && data.altitude > 0) {
-        payload["alt"] = (int)data.altitude;
+    // DEBUG: Mostrar TODOS os valores recebidos
+    DEBUG_PRINTLN("[CommunicationManager] === DEBUG SENSORES ===");
+    DEBUG_PRINTF("  Altitude: %.2f (isNaN: %d)\n", data.altitude, isnan(data.altitude));
+    DEBUG_PRINTF("  Humidity: %.2f (isNaN: %d)\n", data.humidity, isnan(data.humidity));
+    DEBUG_PRINTF("  CO2: %.2f (isNaN: %d)\n", data.co2, isnan(data.co2));
+    DEBUG_PRINTF("  TVOC: %.2f (isNaN: %d)\n", data.tvoc, isnan(data.tvoc));
+    DEBUG_PRINTF("  MagX: %.2f (isNaN: %d)\n", data.magX, isnan(data.magX));
+    DEBUG_PRINTF("  MagY: %.2f (isNaN: %d)\n", data.magY, isnan(data.magY));
+    DEBUG_PRINTF("  MagZ: %.2f (isNaN: %d)\n", data.magZ, isnan(data.magZ));
+    DEBUG_PRINTLN("[CommunicationManager] ========================");
+    
+    // Altitude
+    if (!isnan(data.altitude) && data.altitude >= 0) {
+        payload["alt"] = round(data.altitude * 10) / 10;
+        DEBUG_PRINTLN("  ✓ Altitude adicionada ao payload");
+    } else {
+        DEBUG_PRINTLN("  ✗ Altitude NÃO adicionada (NaN ou inválida)");
     }
     
-    if (!isnan(data.humidity) && data.humidity >= 0 && data.humidity <= 100) {
+    // Umidade
+    if (!isnan(data.humidity) && data.humidity >= HUMIDITY_MIN_VALID && data.humidity <= HUMIDITY_MAX_VALID) {
         payload["hum"] = (int)data.humidity;
+        DEBUG_PRINTLN("  ✓ Umidade adicionada ao payload");
+    } else {
+        DEBUG_PRINTLN("  ✗ Umidade NÃO adicionada (NaN ou fora do range)");
     }
     
-    if (!isnan(data.co2) && data.co2 > 0 && data.co2 < 5000) {
+    // CO2
+    if (!isnan(data.co2) && data.co2 >= CO2_MIN_VALID && data.co2 <= CO2_MAX_VALID) {
         payload["co2"] = (int)data.co2;
+        DEBUG_PRINTLN("  ✓ CO2 adicionado ao payload");
+    } else {
+        DEBUG_PRINTLN("  ✗ CO2 NÃO adicionado (NaN ou fora do range)");
     }
     
-    if (!isnan(data.tvoc) && data.tvoc > 0) {
+    // TVOC
+    if (!isnan(data.tvoc) && data.tvoc >= TVOC_MIN_VALID && data.tvoc <= TVOC_MAX_VALID) {
         payload["tvoc"] = (int)data.tvoc;
+        DEBUG_PRINTLN("  ✓ TVOC adicionado ao payload");
+    } else {
+        DEBUG_PRINTLN("  ✗ TVOC NÃO adicionado (NaN ou fora do range)");
     }
     
-    // Status do sistema
+    // Magnetômetro
+    if (!isnan(data.magX) && !isnan(data.magY) && !isnan(data.magZ)) {
+        if (data.magX != 0.0 || data.magY != 0.0 || data.magZ != 0.0) {
+            payload["magX"] = round(data.magX * 100) / 100;
+            payload["magY"] = round(data.magY * 100) / 100;
+            payload["magZ"] = round(data.magZ * 100) / 100;
+            DEBUG_PRINTLN("  ✓ Magnetômetro adicionado ao payload");
+        } else {
+            DEBUG_PRINTLN("  ✗ Magnetômetro todos zero (sensor não conectado?)");
+        }
+    } else {
+        DEBUG_PRINTLN("  ✗ Magnetômetro NÃO adicionado (NaN)");
+    }
+    
+    // Status e tempo
     payload["stat"] = (data.systemStatus == STATUS_OK) ? "ok" : "err";
+    payload["time"] = data.missionTime / 1000;
 
     // Serializar
     String output;
     serializeJson(doc, output);
     
+    DEBUG_PRINTF("[CommunicationManager] Payload size: %d bytes\n", measureJson(payload));
+    
     return output;
 }
+
 
 bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
     HTTPClient http;

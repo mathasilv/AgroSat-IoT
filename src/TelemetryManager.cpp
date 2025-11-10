@@ -1,8 +1,8 @@
 /**
  * @file TelemetryManager.cpp
- * @brief VERSÃO DUAL MODE: FLIGHT/PREFLIGHT + todas funções completas
- * @version 2.2.1
- * @date 2025-11-08
+ * @brief VERSÃO DUAL MODE: FLIGHT/PREFLIGHT + SENSORES PION REAIS
+ * @version 3.0.0
+ * @date 2025-11-09
  */
 #include "TelemetryManager.h"
 #include "config.h"
@@ -33,16 +33,17 @@ TelemetryManager::TelemetryManager() :
 bool TelemetryManager::_initI2CBus() {
     static bool i2cInitialized = false;
     if (!i2cInitialized) {
-        DEBUG_PRINTLN("[TelemetryManager] === INICIALIZANDO I2C GLOBAL ===");
         Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
-        Wire.setClock(100000);
-        Wire.setTimeout(500);
+        Wire.setClock(50000);  // 50kHz para SI7021
+        Wire.setTimeout(5000);
         delay(300);
         i2cInitialized = true;
-        DEBUG_PRINTLN("[TelemetryManager] I2C inicializado em 100kHz");
+        DEBUG_PRINTLN("[TelemetryManager] I2C inicializado");
     }
     return true;
 }
+
+
 void TelemetryManager::applyModeConfig(OperationMode mode) {
     switch(mode) {
         case MODE_PREFLIGHT: 
@@ -57,7 +58,6 @@ void TelemetryManager::applyModeConfig(OperationMode mode) {
     }
     currentSerialLogsEnabled = activeModeConfig->serialLogsEnabled;
     
-    // Se o display estiver desativado no modo FLIGHT, desligar
     if (!activeModeConfig->displayEnabled) {
         _display.displayOff();
     } else {
@@ -168,7 +168,6 @@ bool TelemetryManager::begin() {
     return success;
 }
 
-
 void TelemetryManager::loop() {
     applyModeConfig(_mode);
     uint32_t currentTime = millis();
@@ -207,12 +206,10 @@ void TelemetryManager::startMission() {
         _display.drawString(0, 0, "MISSAO INICIADA");
         _display.drawString(0, 20, "Modo: FLIGHT");
         _display.display();
-        delay(1500);  // Mensagem visível por 1.5 segundos
-        _display.displayOff();  // Desliga display para economia
+        delay(1500);
+        _display.displayOff();
     }
 }
-
-
 
 void TelemetryManager::stopMission() {
     DEBUG_PRINTLN("[TelemetryManager] MISSÃO FINALIZADA!");
@@ -235,7 +232,7 @@ OperationMode TelemetryManager::getMode() {
 
 void TelemetryManager::updateDisplay() {
     if (!activeModeConfig->displayEnabled) {
-        _display.displayOff(); // Garante que o display fique desligado
+        _display.displayOff();
         return;
     }
     if (_mode == MODE_ERROR) {
@@ -248,8 +245,6 @@ void TelemetryManager::updateDisplay() {
         _displayTelemetry();
     }
 }
-
-// === IMPLEMENTAÇÃO COMPLETA DOS PRIVADOS ===
 
 void TelemetryManager::_collectTelemetryData() {
     _telemetryData.timestamp = millis();
@@ -265,22 +260,27 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.accelX = _sensors.getAccelX();
     _telemetryData.accelY = _sensors.getAccelY();
     _telemetryData.accelZ = _sensors.getAccelZ();
+    
+    // Inicializar opcionais como NAN
     _telemetryData.humidity = NAN;
     _telemetryData.co2 = NAN;
     _telemetryData.tvoc = NAN;
     _telemetryData.magX = NAN;
     _telemetryData.magY = NAN;
     _telemetryData.magZ = NAN;
-    if (_sensors.isSHT20Online()) {
+    
+    if (_sensors.isSI7021Online()) {
         float hum = _sensors.getHumidity();
         if (!isnan(hum)) { _telemetryData.humidity = hum; }
     }
+    
     if (_sensors.isCCS811Online()) {
         float co2 = _sensors.getCO2();
         float tvoc = _sensors.getTVOC();
         if (!isnan(co2) && co2 > 0) { _telemetryData.co2 = co2; }
         if (!isnan(tvoc) && tvoc > 0) { _telemetryData.tvoc = tvoc; }
     }
+    
     if (_sensors.isMPU9250Online()) {
         float magX = _sensors.getMagX();
         float magY = _sensors.getMagY();
@@ -291,11 +291,14 @@ void TelemetryManager::_collectTelemetryData() {
             _telemetryData.magZ = magZ;
         }
     }
+    
     _telemetryData.systemStatus = _health.getSystemStatus();
     _telemetryData.errorCount = _health.getErrorCount();
+    
     String payloadStr = _payload.generatePayload();
     strncpy(_telemetryData.payload, payloadStr.c_str(), PAYLOAD_MAX_SIZE - 1);
     _telemetryData.payload[PAYLOAD_MAX_SIZE - 1] = '\0';
+    
     _missionData = _payload.getMissionData();
 }
 
@@ -310,32 +313,64 @@ void TelemetryManager::_sendTelemetry() {
     if (!isnan(_telemetryData.humidity)) { DEBUG_PRINTF("  Umidade: %.1f%%\n", _telemetryData.humidity); }
     if (!isnan(_telemetryData.co2)) { DEBUG_PRINTF("  CO2: %.0f ppm, TVOC: %.0f ppb\n", _telemetryData.co2, _telemetryData.tvoc); }
     if (!isnan(_telemetryData.magX)) { DEBUG_PRINTF("  Mag: [%.2f, %.2f, %.2f] µT\n", _telemetryData.magX, _telemetryData.magY, _telemetryData.magZ); }
-    if (!_comm.isConnected()) { DEBUG_PRINTLN("[TelemetryManager] Tentando reconectar WiFi..."); _comm.connectWiFi(); }
-    if (_comm.sendTelemetry(_telemetryData)) { DEBUG_PRINTLN("[TelemetryManager] Telemetria enviada com sucesso!"); } else { DEBUG_PRINTLN("[TelemetryManager] Falha ao enviar telemetria"); _health.reportError(STATUS_WIFI_ERROR, "Telemetry send failed"); }
+    
+    if (!_comm.isConnected()) { 
+        DEBUG_PRINTLN("[TelemetryManager] Tentando reconectar WiFi..."); 
+        _comm.connectWiFi(); 
+    }
+    
+    if (_comm.sendTelemetry(_telemetryData)) { 
+        DEBUG_PRINTLN("[TelemetryManager] Telemetria enviada com sucesso!"); 
+    } else { 
+        DEBUG_PRINTLN("[TelemetryManager] Falha ao enviar telemetria"); 
+        _health.reportError(STATUS_WIFI_ERROR, "Telemetry send failed"); 
+    }
 }
 
 void TelemetryManager::_saveToStorage() {
     if (!_storage.isAvailable()) return;
     DEBUG_PRINTLN("[TelemetryManager] Salvando dados no SD...");
-    if (_storage.saveTelemetry(_telemetryData)) { DEBUG_PRINTLN("[TelemetryManager] Telemetria salva no SD"); }
-    if (_storage.saveMissionData(_missionData)) { DEBUG_PRINTLN("[TelemetryManager] Dados da missão salvos no SD"); }
+    if (_storage.saveTelemetry(_telemetryData)) { 
+        DEBUG_PRINTLN("[TelemetryManager] Telemetria salva no SD"); 
+    }
+    if (_storage.saveMissionData(_missionData)) { 
+        DEBUG_PRINTLN("[TelemetryManager] Dados da missão salvos no SD"); 
+    }
 }
 
 void TelemetryManager::_checkOperationalConditions() {
-    if (_power.isCritical()) { _health.reportError(STATUS_BATTERY_CRIT, "Critical battery level"); _power.enablePowerSave(); }
-    else if (_power.isLow()) { _health.reportError(STATUS_BATTERY_LOW, "Low battery level"); }
-    if (!_sensors.isMPU6050Online() && !_sensors.isMPU9250Online()) { _health.reportError(STATUS_SENSOR_ERROR, "IMU offline"); _sensors.resetAll(); }
-    if (!_sensors.isBMP280Online()) { _health.reportError(STATUS_SENSOR_ERROR, "BMP280 offline"); _sensors.resetAll(); }
-    if (_mode == MODE_FLIGHT && !_health.isMissionActive()) { stopMission(); }
+    if (_power.isCritical()) { 
+        _health.reportError(STATUS_BATTERY_CRIT, "Critical battery level"); 
+        _power.enablePowerSave(); 
+    } else if (_power.isLow()) { 
+        _health.reportError(STATUS_BATTERY_LOW, "Low battery level"); 
+    }
+    
+    if (!_sensors.isMPU6050Online() && !_sensors.isMPU9250Online()) { 
+        _health.reportError(STATUS_SENSOR_ERROR, "IMU offline"); 
+        _sensors.resetAll(); 
+    }
+    
+    if (!_sensors.isBMP280Online()) { 
+        _health.reportError(STATUS_SENSOR_ERROR, "BMP280 offline"); 
+        _sensors.resetAll(); 
+    }
+    
+    if (_mode == MODE_FLIGHT && !_health.isMissionActive()) { 
+        stopMission(); 
+    }
+    
     uint32_t currentHeap = ESP.getFreeHeap();
-    if (currentHeap < 10000) { DEBUG_PRINTF("[TelemetryManager] CRÍTICO: Heap baixo: %lu bytes\n", currentHeap); _health.reportError(STATUS_WATCHDOG, "Critical low memory"); }
+    if (currentHeap < 10000) { 
+        DEBUG_PRINTF("[TelemetryManager] CRÍTICO: Heap baixo: %lu bytes\n", currentHeap); 
+        _health.reportError(STATUS_WATCHDOG, "Critical low memory"); 
+    }
 }
-
-// Display implementation with enhanced data and visuals
 
 void TelemetryManager::_displayStatus() {
     _display.clear();
     _display.setFont(ArialMT_Plain_10);
+    
     String line1 = "PRE-FLIGHT MODE";
     _display.drawString(0, 0, line1);
 
@@ -343,7 +378,7 @@ void TelemetryManager::_displayStatus() {
     _display.drawString(0, 12, batteryStr);
 
     String tempHumStr;
-    if (_sensors.isSHT20Online() && !isnan(_sensors.getHumidity())) {
+    if (_sensors.isSI7021Online() && !isnan(_sensors.getHumidity())) {
         tempHumStr = "Temp: " + String(_sensors.getTemperature(), 1) + "C Hum: " + String(_sensors.getHumidity(), 0) + "%";
     } else {
         tempHumStr = "Temp: " + String(_sensors.getTemperature(), 1) + "C Press: " + String(_sensors.getPressure(), 0) + "hPa";
@@ -392,7 +427,6 @@ void TelemetryManager::_displayTelemetry() {
         _display.drawString(0, 48, co2Str);
     }
 
-    // Display packets received and heap
     String bottomLine = "LoRa pkts: " + String(_missionData.packetsReceived) + "  Heap: " + String(ESP.getFreeHeap() / 1024) + "K";
     _display.drawString(0, 56, bottomLine);
 
@@ -413,23 +447,27 @@ void TelemetryManager::_displayError(const String& error) {
     _display.display();
 }
 
-
 void TelemetryManager::_logHeapUsage(const String& component) {
     uint32_t currentHeap = ESP.getFreeHeap();
     if (currentHeap < _minHeapSeen) { _minHeapSeen = currentHeap; }
     DEBUG_PRINTF("[TelemetryManager] %s - Heap: %lu bytes\n", component.c_str(), currentHeap);
 }
+
 void TelemetryManager::_monitorHeap() {
     uint32_t currentHeap = ESP.getFreeHeap();
     if (currentHeap < _minHeapSeen) { _minHeapSeen = currentHeap; }
     DEBUG_PRINTF("[TelemetryManager] Heap: %lu KB, Min: %lu KB\n",
         currentHeap / 1024, _minHeapSeen / 1024);
+    
     uint8_t sensorsActive = 0;
     if (_sensors.isMPU6050Online()) sensorsActive++;
     if (_sensors.isMPU9250Online()) sensorsActive++;
     if (_sensors.isBMP280Online()) sensorsActive++;
-    if (_sensors.isSHT20Online()) sensorsActive++;
+    if (_sensors.isSI7021Online()) sensorsActive++;
     if (_sensors.isCCS811Online()) sensorsActive++;
+    
     DEBUG_PRINTF("[TelemetryManager] Sensores ativos: %d\n", sensorsActive);
-    if (currentHeap < 15000) { DEBUG_PRINTLN("[TelemetryManager] AVISO: Heap baixo!"); }
+    if (currentHeap < 15000) { 
+        DEBUG_PRINTLN("[TelemetryManager] AVISO: Heap baixo!"); 
+    }
 }
