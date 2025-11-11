@@ -1,7 +1,7 @@
 /**
  * @file TelemetryManager.h
- * @brief VERSÃO CORRIGIDA - I2C centralizado + RTC integrado
- * @version 2.2.2
+ * @brief VERSÃO COM DISPLAYMANAGER INTEGRADO
+ * @version 2.3.0
  */
 #ifndef TELEMETRYMANAGER_H
 #define TELEMETRYMANAGER_H
@@ -10,6 +10,7 @@
 #include <Wire.h>
 #include "config.h"
 #include "SSD1306Wire.h"
+#include "DisplayManager.h"  // ✅ ADICIONAR
 #include "SystemHealth.h"
 #include "PowerManager.h"
 #include "SensorManager.h"
@@ -27,8 +28,7 @@ public:
     void stopMission();
     OperationMode getMode();
     void updateDisplay();
-    
-    // Aplicação do modo operacional
+
     void applyModeConfig(OperationMode mode);
     void testLoRaTransmission();
     void sendCustomLoRa(const String& message);
@@ -36,7 +36,8 @@ public:
 
 private:
     // Subsistemas
-    SSD1306Wire _display;
+    SSD1306Wire _display;            // MANTER (sistema legado)
+    DisplayManager _displayMgr;      // ✅ ADICIONAR (novo sistema)
     SystemHealth _health;
     PowerManager _power;
     SensorManager _sensors;
@@ -51,8 +52,8 @@ private:
     
     // Estado
     OperationMode _mode;
-    bool _missionActive;              // ← ADICIONAR
-    uint32_t _missionStartTime;       // ← ADICIONAR
+    bool _missionActive;
+    uint32_t _missionStartTime;
     
     // Timers
     unsigned long _lastTelemetrySend;
@@ -61,17 +62,19 @@ private:
     unsigned long _lastHeapCheck;
     uint32_t _minHeapSeen;
     
+    bool _useNewDisplay;              // ✅ ADICIONAR (flag para escolher sistema)
+    
     // Métodos privados
     void _collectTelemetryData();
     void _sendTelemetry();
     void _saveToStorage();
     void _checkOperationalConditions();
-    void _displayStatus();
-    void _displayTelemetry();
+    void _displayStatus();            // MANTER (legado)
+    void _displayTelemetry();         // MANTER (legado)
     void _displayError(const String& error);
     void _logHeapUsage(const String& component);
     void _monitorHeap();
     bool _initI2CBus();
 };
 
-#endif // TELEMETRYMANAGER_H
+#endif

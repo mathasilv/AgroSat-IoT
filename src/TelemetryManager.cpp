@@ -20,7 +20,8 @@ TelemetryManager::TelemetryManager() :
     _missionStartTime(0),
     _lastDisplayUpdate(0),
     _lastHeapCheck(0),
-    _minHeapSeen(UINT32_MAX)
+    _minHeapSeen(UINT32_MAX),
+    _useNewDisplay(true)  // ✅ ADICIONAR (usar novo sistema por padrão)
 {
     memset(&_telemetryData, 0, sizeof(TelemetryData));
     memset(&_missionData, 0, sizeof(MissionData));
@@ -117,20 +118,35 @@ bool TelemetryManager::begin() {
     _initI2CBus();
 
     bool displayOk = false;
+    
+    // ✅ TENTAR INICIALIZAR DISPLAYMANAGER PRIMEIRO
     if (activeModeConfig->displayEnabled) {
-        DEBUG_PRINTLN("[TelemetryManager] Inicializando display...");
-        delay(100);
-        if (_display.init()) {
-            _display.flipScreenVertically();
-            _display.setFont(ArialMT_Plain_10);
-            _display.clear();
-            _display.drawString(0, 0, "AgroSat-IoT");
-            _display.drawString(0, 15, "Initializing...");
-            _display.display();
+        DEBUG_PRINTLN("[TelemetryManager] Inicializando DisplayManager...");
+        
+        if (_displayMgr.begin()) {
+            _useNewDisplay = true;
             displayOk = true;
-            DEBUG_PRINTLN("[TelemetryManager] Display OK");
+            _displayMgr.showBoot();
+            delay(2000);
+            DEBUG_PRINTLN("[TelemetryManager] DisplayManager OK");
         } else {
-            DEBUG_PRINTLN("[TelemetryManager] Display FAILED (não-crítico)");
+            DEBUG_PRINTLN("[TelemetryManager] DisplayManager FAILED, tentando sistema legado...");
+            _useNewDisplay = false;
+            
+            // FALLBACK: Usar sistema legado
+            delay(100);
+            if (_display.init()) {
+                _display.flipScreenVertically();
+                _display.setFont(ArialMT_Plain_10);
+                _display.clear();
+                _display.drawString(0, 0, "AgroSat-IoT");
+                _display.drawString(0, 15, "Initializing...");
+                _display.display();
+                displayOk = true;
+                DEBUG_PRINTLN("[TelemetryManager] Display legado OK");
+            } else {
+                DEBUG_PRINTLN("[TelemetryManager] Display FAILED (não-crítico)");
+            }
         }
         delay(500);
     }
@@ -138,68 +154,118 @@ bool TelemetryManager::begin() {
     bool success = true;
     uint8_t subsystemsOk = 0;
 
-    // Inicializar RTC LOGO APÓS I2C
+    // RTC
     DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC Manager...");
     if (_rtc.begin(&Wire)) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] RTC Manager OK");
         DEBUG_PRINTF("[TelemetryManager] RTC: %s\n", _rtc.getDateTime().c_str());
+        
+        if (_useNewDisplay && displayOk) {
+            _displayMgr.showSensorInit("RTC", true);
+            delay(500);
+        }
     } else {
         DEBUG_PRINTLN("[TelemetryManager] RTC Manager FAILED (não-crítico)");
-        DEBUG_PRINTLN("[TelemetryManager] Sistema continuará sem RTC");
+        if (_useNewDisplay && displayOk) {
+            _displayMgr.showSensorInit("RTC", false);
+            delay(500);
+        }
     }
 
+    // System Health
     DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
     if (_health.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] System Health OK");
+        
+        if (_useNewDisplay && displayOk) {
+            _displayMgr.showSensorInit("Health", true);
+            delay(500);
+        }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] System Health FAILED");
     }
 
+    // Power Manager
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Power Manager...");
     if (_power.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Power Manager OK");
+        
+        if (_useNewDisplay && displayOk) {
+            _displayMgr.showSensorInit("Power", true);
+            delay(500);
+        }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] Power Manager FAILED");
     }
 
+    // Sensor Manager
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
     if (_sensors.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Sensor Manager OK");
+        
+        if (_useNewDisplay && displayOk) {
+            _displayMgr.showSensorInit("MPU9250", _sensors.isMPU9250Online());
+            delay(500);
+            _displayMgr.showSensorInit("BMP280", _sensors.isBMP280Online());
+            delay(500);
+            _displayMgr.showSensorInit("SI7021", _sensors.isSI7021Online());
+            delay(500);
+            _displayMgr.showSensorInit("CCS811", _sensors.isCCS811Online());
+            delay(1000);
+        }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] Sensor Manager FAILED");
     }
 
+    // Storage
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Storage Manager...");
     if (_storage.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Storage Manager OK");
+        
+        if (_useNewDisplay && displayOk) {
+            _displayMgr.showSensorInit("Storage", true);
+            delay(500);
+        }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] Storage Manager FAILED");
     }
 
+    // Payload
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Payload Manager...");
     if (_payload.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Payload Manager OK");
+        
+        if (_useNewDisplay && displayOk) {
+            _displayMgr.showSensorInit("LoRa", true);
+            delay(500);
+        }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] Payload Manager FAILED");
     }
 
+    // Communication
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication Manager...");
     if (_comm.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Communication Manager OK");
         
-        // Sincronizar RTC com NTP se WiFi disponível
+        if (_useNewDisplay && displayOk) {
+            _displayMgr.showSensorInit("WiFi", _comm.isConnected());
+            delay(500);
+        }
+        
+        // Sincronizar RTC com NTP
         if (_rtc.isInitialized() && _comm.isConnected()) {
             DEBUG_PRINTLN("[TelemetryManager] WiFi disponível, sincronizando RTC com NTP...");
             
@@ -207,28 +273,27 @@ bool TelemetryManager::begin() {
                 DEBUG_PRINTLN("[TelemetryManager] RTC sincronizado com NTP");
             } else {
                 DEBUG_PRINTLN("[TelemetryManager] Falha na sincronização NTP (não-crítico)");
-                DEBUG_PRINTLN("[TelemetryManager] RTC continuará com tempo atual");
             }
-        } else if (_rtc.isInitialized() && !_comm.isConnected()) {
-            DEBUG_PRINTLN("[TelemetryManager] WiFi não disponível, RTC não sincronizado");
         }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] Communication Manager FAILED");
     }
 
-    // Atualizar display final
-    if (displayOk) {
+    // ✅ MOSTRAR TELA FINAL
+    if (_useNewDisplay && displayOk) {
+        _displayMgr.showReady();
+    } else if (displayOk) {
+        // Sistema legado
         _display.clear();
         _display.drawString(0, 0, success ? "Sistema OK!" : "ERRO Sistema!");
         _display.drawString(0, 15, "Modo: PRE-FLIGHT");
         String subsysInfo = String(subsystemsOk) + "/7 subsistemas";
         _display.drawString(0, 30, subsysInfo);
         
-        // Mostrar hora do RTC no display
         if (_rtc.isInitialized()) {
             String dt = _rtc.getDateTime();
-            String timeOnly = dt.substring(11, 19);  // Pegar apenas HH:MM:SS
+            String timeOnly = dt.substring(11, 19);
             _display.drawString(0, 45, "RTC: " + timeOnly);
         } else {
             _display.drawString(0, 45, "RTC: OFF");
@@ -249,6 +314,7 @@ bool TelemetryManager::begin() {
     
     return success;
 }
+
 
 void TelemetryManager::loop() {
     applyModeConfig(_mode);
@@ -282,13 +348,22 @@ void TelemetryManager::loop() {
         _saveToStorage();
     }
     
-    if (activeModeConfig->displayEnabled && (currentTime - _lastDisplayUpdate >= 2000)) {
-        _lastDisplayUpdate = currentTime;
-        updateDisplay();
+    // ✅ USAR DISPLAYMANAGER (rotação automática) ou sistema legado
+    if (activeModeConfig->displayEnabled) {
+        if (_useNewDisplay) {
+            _displayMgr.updateTelemetry(_telemetryData);  // Rotação automática a cada 3s
+        } else {
+            // FALLBACK: Sistema legado (atualiza a cada 2s)
+            if (currentTime - _lastDisplayUpdate >= 2000) {
+                _lastDisplayUpdate = currentTime;
+                updateDisplay();
+            }
+        }
     }
     
     delay(20);
 }
+
 
 void TelemetryManager::startMission() {
     if (_mode == MODE_FLIGHT || _mode == MODE_POSTFLIGHT) {
@@ -312,24 +387,31 @@ void TelemetryManager::startMission() {
     DEBUG_PRINTLN("[TelemetryManager] Modo: FLIGHT");
     DEBUG_PRINTLN("[TelemetryManager] Telemetria ativada");
     
-    // Atualizar display
+    // ✅ CORREÇÃO: Verificar qual sistema de display usar
     if (activeModeConfig->displayEnabled) {
-        _display.clear();
-        _display.setFont(ArialMT_Plain_10);
-        _display.drawString(0, 0, "MISSÃO INICIADA");
-        _display.drawString(0, 15, "Modo: FLIGHT");
-        
-        if (_rtc.isInitialized()) {
-            String dt = _rtc.getDateTime();
-            String timeOnly = dt.substring(11, 19);
-            _display.drawString(0, 35, timeOnly);
+        if (_useNewDisplay) {
+            // Usar DisplayManager
+            _displayMgr.displayMessage("MISSAO", "INICIADA");
+        } else {
+            // Usar sistema legado (se foi inicializado)
+            _display.clear();
+            _display.setFont(ArialMT_Plain_10);
+            _display.drawString(0, 0, "MISSÃO INICIADA");
+            _display.drawString(0, 15, "Modo: FLIGHT");
+            
+            if (_rtc.isInitialized()) {
+                String dt = _rtc.getDateTime();
+                String timeOnly = dt.substring(11, 19);
+                _display.drawString(0, 35, timeOnly);
+            }
+            
+            _display.display();
         }
-        
-        _display.display();
     }
     
     DEBUG_PRINTLN("[TelemetryManager] Missão iniciada com sucesso!");
 }
+
 
 void TelemetryManager::stopMission() {
     if (!_missionActive) {
@@ -352,24 +434,32 @@ void TelemetryManager::stopMission() {
     _mode = MODE_POSTFLIGHT;
     _missionActive = false;
     
-    // Atualizar display
+    // ✅ CORREÇÃO: Verificar qual sistema de display usar
     if (activeModeConfig->displayEnabled) {
-        _display.clear();
-        _display.setFont(ArialMT_Plain_10);
-        _display.drawString(0, 0, "MISSÃO ENCERRADA");
-        _display.drawString(0, 15, "Modo: POST-FLIGHT");
-        
-        if (_rtc.isInitialized()) {
-            String dt = _rtc.getDateTime();
-            String timeOnly = dt.substring(11, 19);
-            _display.drawString(0, 35, timeOnly);
+        if (_useNewDisplay) {
+            // Usar DisplayManager
+            char durationStr[32];
+            snprintf(durationStr, sizeof(durationStr), "Duracao: %lus", missionDuration / 1000);
+            _displayMgr.displayMessage("MISSAO", durationStr);
+        } else {
+            // Usar sistema legado
+            _display.clear();
+            _display.setFont(ArialMT_Plain_10);
+            _display.drawString(0, 0, "MISSÃO ENCERRADA");
+            _display.drawString(0, 15, "Modo: POST-FLIGHT");
+            
+            if (_rtc.isInitialized()) {
+                String dt = _rtc.getDateTime();
+                String timeOnly = dt.substring(11, 19);
+                _display.drawString(0, 35, timeOnly);
+            }
+            
+            char durationStr[32];
+            snprintf(durationStr, sizeof(durationStr), "Duração: %lus", missionDuration / 1000);
+            _display.drawString(0, 50, durationStr);
+            
+            _display.display();
         }
-        
-        char durationStr[32];
-        snprintf(durationStr, sizeof(durationStr), "Duração: %lus", missionDuration / 1000);
-        _display.drawString(0, 50, durationStr);
-        
-        _display.display();
     }
     
     DEBUG_PRINTLN("[TelemetryManager] Missão encerrada com sucesso!");
@@ -380,20 +470,26 @@ OperationMode TelemetryManager::getMode() {
 }
 
 void TelemetryManager::updateDisplay() {
+    // Este método continua existindo como fallback
+    // Só será usado se DisplayManager falhar
+    
     if (!activeModeConfig->displayEnabled) {
         _display.displayOff();
         return;
     }
+    
     if (_mode == MODE_ERROR) {
         _displayError("Sistema com erro");
         return;
     }
+    
     if (_mode == MODE_PREFLIGHT) {
         _displayStatus();
     } else {
         _displayTelemetry();
     }
 }
+
 
 void TelemetryManager::_collectTelemetryData() {
     // ========================================
