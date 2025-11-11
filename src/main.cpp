@@ -1,8 +1,8 @@
 /**
  * @file main.cpp
- * @brief Programa principal com suporte dual-mode (FLIGHT/PREFLIGHT) e troca de modo via Serial
- * @version 2.3.0 (dual-mode + RTC)
- * @date 2025-11-10
+ * @brief Programa principal com dual-mode + SAFE MODE + watchdog fix
+ * @version 4.0.0
+ * @date 2025-11-11
  */
 #include <Arduino.h>
 #include "config.h"
@@ -40,10 +40,6 @@ void processSerialCommands() {
     
     OperationMode currentMode = telemetry.getMode();
     
-    // ========================================================================
-    // COMANDOS DE CONTROLE DE MISSÃO
-    // ========================================================================
-    
     if (cmd == "START" || cmd == "S" || cmd == "1") {
         if (currentMode == MODE_PREFLIGHT) {
             DEBUG_PRINTLN("[Main] │");
@@ -54,7 +50,6 @@ void processSerialCommands() {
             DEBUG_PRINTF("[Main] └─✗ Erro: Sistema não está em PRE-FLIGHT (modo atual: %d)\n", currentMode);
         }
     } 
-    
     else if (cmd == "STOP" || cmd == "P" || cmd == "0") {
         if (currentMode == MODE_FLIGHT) {
             DEBUG_PRINTLN("[Main] │");
@@ -65,7 +60,6 @@ void processSerialCommands() {
             DEBUG_PRINTF("[Main] └─✗ Erro: Sistema não está em FLIGHT (modo atual: %d)\n", currentMode);
         }
     } 
-    
     else if (cmd.startsWith("MODE ")) {
         if (cmd.indexOf("FLIGHT") > 0) {
             telemetry.applyModeConfig(MODE_FLIGHT);
@@ -73,11 +67,13 @@ void processSerialCommands() {
         } else if (cmd.indexOf("PREFLIGHT") > 0) {
             telemetry.applyModeConfig(MODE_PREFLIGHT);
             DEBUG_PRINTLN("[Main] └─► Modo PREFLIGHT ativado!");
+        } else if (cmd.indexOf("SAFE") > 0) {
+            telemetry.applyModeConfig(MODE_SAFE);
+            DEBUG_PRINTLN("[Main] └─► Modo SAFE ativado!");
         } else {
-            DEBUG_PRINTLN("[Main] └─✗ Argumento inválido para MODE. Use 'MODE FLIGHT' ou 'MODE PREFLIGHT'.");
+            DEBUG_PRINTLN("[Main] └─✗ Argumento inválido. Use FLIGHT/PREFLIGHT/SAFE.");
         }
     } 
-    
     else if (cmd == "RESTART" || cmd == "R") {
         DEBUG_PRINTLN("[Main] │");
         DEBUG_PRINTLN("[Main] └─► REINICIANDO SISTEMA");
@@ -85,11 +81,6 @@ void processSerialCommands() {
         delay(1000);
         ESP.restart();
     } 
-    
-    // ========================================================================
-    // STATUS E INFORMAÇÕES
-    // ========================================================================
-    
     else if (cmd == "STATUS" || cmd == "?" || cmd == "INFO") {
         DEBUG_PRINTLN("[Main] │");
         DEBUG_PRINTLN("[Main] ╔════════════════════════════════════════╗");
@@ -101,6 +92,7 @@ void processSerialCommands() {
             case MODE_PREFLIGHT: modeStr = "PRE-FLIGHT"; break;
             case MODE_FLIGHT: modeStr = "FLIGHT"; break;
             case MODE_POSTFLIGHT: modeStr = "POST-FLIGHT"; break;
+            case MODE_SAFE: modeStr = "SAFE"; break;
             case MODE_ERROR: modeStr = "ERRO"; break;
             default: modeStr = "DESCONHECIDO"; break;
         }
@@ -111,7 +103,6 @@ void processSerialCommands() {
         DEBUG_PRINTF("[Main] ║ WiFi:    %-29s ║\n", WiFi.isConnected() ? "Conectado" : "Desconectado");
         DEBUG_PRINTLN("[Main] ╚════════════════════════════════════════╝");
     } 
-    
     else if (cmd == "HELP" || cmd == "H" || cmd == "AJUDA") {
         DEBUG_PRINTLN("[Main] │");
         DEBUG_PRINTLN("[Main] ╔════════════════════════════════════════╗");
@@ -121,16 +112,12 @@ void processSerialCommands() {
         DEBUG_PRINTLN("[Main] ║ STOP  / P / 0   - Parar missão         ║");
         DEBUG_PRINTLN("[Main] ║ MODE FLIGHT     - Modo eficiente       ║");
         DEBUG_PRINTLN("[Main] ║ MODE PREFLIGHT  - Debug completo       ║");
+        DEBUG_PRINTLN("[Main] ║ MODE SAFE       - Modo degradado       ║");
         DEBUG_PRINTLN("[Main] ║ STATUS / ?      - Mostrar status       ║");
         DEBUG_PRINTLN("[Main] ║ RESTART / R     - Reiniciar ESP32      ║");
         DEBUG_PRINTLN("[Main] ║ HELP  / H       - Esta mensagem        ║");
         DEBUG_PRINTLN("[Main] ╚════════════════════════════════════════╝");
     } 
-    
-    // ========================================================================
-    // COMANDO DESCONHECIDO
-    // ========================================================================
-    
     else {
         DEBUG_PRINTF("[Main] └─✗ Comando desconhecido: '%s'\n", cmd.c_str());
         DEBUG_PRINTLN("[Main]    Digite 'HELP' para lista de comandos");
@@ -155,8 +142,14 @@ void printPeriodicStatus() {
         DEBUG_PRINTF("Heap atual: %lu KB\n", currentHeap / 1024);
         DEBUG_PRINTF("Heap mínimo: %lu KB\n", minHeapSeen / 1024);
         
-        if (currentHeap < 15000) DEBUG_PRINTLN("ALERTA: Heap baixo!");
-        if (minHeapSeen < 10000) DEBUG_PRINTLN("CRÍTICO: Heap mínimo muito baixo!");
+        // NOVO: Alerta para SAFE MODE
+        if (currentHeap < 15000) {
+            DEBUG_PRINTLN("ALERTA: Heap baixo!");
+        }
+        if (currentHeap < 5000) {
+            DEBUG_PRINTLN("CRÍTICO: Entrando em SAFE MODE!");
+            telemetry.applyModeConfig(MODE_SAFE);
+        }
         
         DEBUG_PRINTLN("=======================================");
         DEBUG_PRINTLN("");
@@ -217,24 +210,24 @@ void loop() {
     
     if (loopHeap < minHeapSeen) minHeapSeen = loopHeap;
     
-    // Proteção contra crash por falta de memória
+    // NOVO: Proteção SAFE MODE antes de crash
+    if (loopHeap < 8000) {
+        DEBUG_PRINTF("[Main] Heap crítico: %lu bytes - SAFE MODE\n", loopHeap);
+        telemetry.applyModeConfig(MODE_SAFE);
+    }
+    
     if (loopHeap < 5000) { 
-        DEBUG_PRINTF("[Main] CRÍTICO: Heap muito baixo no loop: %lu bytes\n", loopHeap); 
-        DEBUG_PRINTLN("[Main] Reiniciando sistema para evitar crash..."); 
+        DEBUG_PRINTF("[Main] CRÍTICO: Heap muito baixo: %lu bytes\n", loopHeap); 
+        DEBUG_PRINTLN("[Main] Reiniciando sistema..."); 
         delay(1000); 
         ESP.restart(); 
     }
     
-    // Loop principal do sistema de telemetria
     telemetry.loop();
-    
-    // Processar comandos seriais
     processSerialCommands();
-    
-    // Status periódico
     printPeriodicStatus();
     
-    // Controle do LED indicador de status
+    // LED indicador
     static unsigned long lastBlink = 0;
     unsigned long currentTime = millis();
     
@@ -246,27 +239,22 @@ void loop() {
             case MODE_PREFLIGHT: 
                 digitalWrite(LED_BUILTIN, HIGH); 
                 break;
-                
             case MODE_FLIGHT: 
                 digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); 
                 break;
-                
+            case MODE_SAFE:
+                // Padrão triplo flash
+                if (currentTime % 3000 < 1000) digitalWrite(LED_BUILTIN, HIGH);
+                else digitalWrite(LED_BUILTIN, LOW);
+                break;
             case MODE_POSTFLIGHT:
-                if (currentTime % 2000 < 1000) { 
-                    digitalWrite(LED_BUILTIN, HIGH); 
-                } else { 
-                    digitalWrite(LED_BUILTIN, LOW); 
-                } 
+                if (currentTime % 2000 < 1000) digitalWrite(LED_BUILTIN, HIGH);
+                else digitalWrite(LED_BUILTIN, LOW);
                 break;
-                
             case MODE_ERROR:
-                if (currentTime % 200 < 100) { 
-                    digitalWrite(LED_BUILTIN, HIGH); 
-                } else { 
-                    digitalWrite(LED_BUILTIN, LOW); 
-                } 
+                if (currentTime % 200 < 100) digitalWrite(LED_BUILTIN, HIGH);
+                else digitalWrite(LED_BUILTIN, LOW);
                 break;
-                
             default: 
                 digitalWrite(LED_BUILTIN, LOW); 
                 break;

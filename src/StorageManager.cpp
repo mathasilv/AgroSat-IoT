@@ -149,14 +149,41 @@ bool StorageManager::createTelemetryFile() {
         return false;
     }
     
-    // ✅ HEADER CSV ATUALIZADO COM TIMESTAMP REAL
-    file.println("ISO8601,UnixTimestamp,MissionTime,BatteryVoltage,BatteryPercentage,Temperature,Pressure,Altitude,GyroX,GyroY,GyroZ,AccelX,AccelY,AccelZ,Humidity,CO2,TVOC,MagX,MagY,MagZ,Status,Errors,Payload");
+    // ✅ HEADER CSV COMPLETO COM AMBAS TEMPERATURAS
+    file.print("ISO8601,");
+    file.print("UnixTimestamp,");
+    file.print("MissionTime,");
+    file.print("BatteryVoltage,");
+    file.print("BatteryPercentage,");
+    file.print("TempBMP280,");          // ✅ Temperatura primária (BMP280)
+    file.print("TempSI7021,");          // ✅ Temperatura SI7021
+    file.print("TempDelta,");           // ✅ Diferença entre sensores
+    file.print("Pressure,");
+    file.print("Altitude,");
+    file.print("GyroX,");
+    file.print("GyroY,");
+    file.print("GyroZ,");
+    file.print("AccelX,");
+    file.print("AccelY,");
+    file.print("AccelZ,");
+    file.print("Humidity,");
+    file.print("CO2,");
+    file.print("TVOC,");
+    file.print("MagX,");
+    file.print("MagY,");
+    file.print("MagZ,");
+    file.print("Status,");
+    file.print("Errors,");
+    file.println("Payload");
     
     file.close();
     
-    DEBUG_PRINTLN("[StorageManager] Arquivo de telemetria criado");
+    DEBUG_PRINTLN("[StorageManager] Arquivo de telemetria criado com sucesso");
+    DEBUG_PRINTLN("[StorageManager] Colunas: ISO8601, UnixTimestamp, MissionTime, BatteryV, Battery%, TempBMP280, TempSI7021, TempDelta, Pressure, Altitude, Gyro[3], Accel[3], Humidity, CO2, TVOC, Mag[3], Status, Errors, Payload");
+    
     return true;
 }
+
 
 bool StorageManager::createMissionFile() {
     if (!_available) return false;
@@ -271,41 +298,85 @@ bool StorageManager::_checkFileSize(const char* path) {
 // ✅ MÉTODO ATUALIZADO COM TIMESTAMP RTC
 // ============================================================================
 String StorageManager::_telemetryToCSV(const TelemetryData& data) {
-    String csv = "";
+    char csvBuffer[512];  // Buffer estático (evitar fragmentação heap)
     
+    // ========================================
+    // TIMESTAMP
+    // ========================================
+    String timestamp = "N/A";
     if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-        csv += _rtcManager->getDateTime() + ",";  // CORRIGIDO: era getISO8601()
-    } else {
-        csv += "N/A,";
+        timestamp = _rtcManager->getDateTime();
     }
     
-    csv += String(data.timestamp) + ",";
-    csv += String(data.missionTime) + ",";
-    csv += String(data.batteryVoltage, 2) + ",";
-    csv += String(data.batteryPercentage, 1) + ",";
-    csv += String(data.temperature, 2) + ",";
-    csv += String(data.pressure, 2) + ",";
-    csv += String(data.altitude, 1) + ",";
-    csv += String(data.gyroX, 4) + ",";
-    csv += String(data.gyroY, 4) + ",";
-    csv += String(data.gyroZ, 4) + ",";
-    csv += String(data.accelX, 4) + ",";
-    csv += String(data.accelY, 4) + ",";
-    csv += String(data.accelZ, 4) + ",";
+    // ========================================
+    // TEMPERATURA DELTA
+    // ========================================
+    float tempDelta = 0.0;
+    if (!isnan(data.temperature) && !isnan(data.temperatureSI)) {
+        tempDelta = data.temperature - data.temperatureSI;
+    }
     
-    csv += isnan(data.humidity) ? "," : String(data.humidity, 2) + ",";
-    csv += isnan(data.co2) ? "," : String(data.co2, 0) + ",";
-    csv += isnan(data.tvoc) ? "," : String(data.tvoc, 0) + ",";
-    csv += isnan(data.magX) ? "," : String(data.magX, 2) + ",";
-    csv += isnan(data.magY) ? "," : String(data.magY, 2) + ",";
-    csv += isnan(data.magZ) ? "," : String(data.magZ, 2) + ",";
+    // ========================================
+    // FORMATAR CSV (TODOS OS CAMPOS)
+    // ========================================
+    snprintf(csvBuffer, sizeof(csvBuffer),
+        "%s,"           // ISO8601 timestamp
+        "%lu,"          // Unix timestamp
+        "%lu,"          // Mission time
+        "%.2f,"         // Battery voltage
+        "%.1f,"         // Battery percentage
+        "%.2f,"         // Temperature BMP280
+        "%s,"           // Temperature SI7021 (ou vazio)
+        "%s,"           // Temperature delta (ou vazio)
+        "%.2f,"         // Pressure
+        "%.1f,"         // Altitude
+        "%.4f,"         // GyroX
+        "%.4f,"         // GyroY
+        "%.4f,"         // GyroZ
+        "%.4f,"         // AccelX
+        "%.4f,"         // AccelY
+        "%.4f,"         // AccelZ
+        "%s,"           // Humidity (ou vazio)
+        "%s,"           // CO2 (ou vazio)
+        "%s,"           // TVOC (ou vazio)
+        "%s,"           // MagX (ou vazio)
+        "%s,"           // MagY (ou vazio)
+        "%s,"           // MagZ (ou vazio)
+        "%d,"           // System status
+        "%d,"           // Error count
+        "%s",           // Payload
+        
+        // Valores
+        timestamp.c_str(),
+        (unsigned long)data.timestamp,
+        (unsigned long)data.missionTime,
+        data.batteryVoltage,
+        data.batteryPercentage,
+        data.temperature,
+        isnan(data.temperatureSI) ? "" : String(data.temperatureSI, 2).c_str(),
+        (isnan(data.temperature) || isnan(data.temperatureSI)) ? "" : String(tempDelta, 2).c_str(),
+        data.pressure,
+        data.altitude,
+        data.gyroX,
+        data.gyroY,
+        data.gyroZ,
+        data.accelX,
+        data.accelY,
+        data.accelZ,
+        isnan(data.humidity) ? "" : String(data.humidity, 2).c_str(),
+        isnan(data.co2) ? "" : String(data.co2, 0).c_str(),
+        isnan(data.tvoc) ? "" : String(data.tvoc, 0).c_str(),
+        isnan(data.magX) ? "" : String(data.magX, 2).c_str(),
+        isnan(data.magY) ? "" : String(data.magY, 2).c_str(),
+        isnan(data.magZ) ? "" : String(data.magZ, 2).c_str(),
+        data.systemStatus,
+        data.errorCount,
+        data.payload
+    );
     
-    csv += String(data.systemStatus) + ",";
-    csv += String(data.errorCount) + ",";
-    csv += String(data.payload);
-    
-    return csv;
+    return String(csvBuffer);
 }
+
 
 
 // ============================================================================

@@ -1,8 +1,17 @@
 /**
  * @file config.h
- * @brief Configurações globais do CubeSat AgroSat-IoT - OBSAT Fase 2
- * @version 3.0.0 (SENSORES PION REAIS)
- * @date 2025-11-09
+ * @brief Configurações globais do CubeSat AgroSat-IoT - VERSÃO OTIMIZADA
+ * @version 4.0.0
+ * @date 2025-11-11
+ * 
+ * CHANGELOG v4.0.0:
+ * - [CRÍTICO] Adicionado mutex I2C/SPI para thread-safety
+ * - [CRÍTICO] Corrigido timezone offset RTC
+ * - [GRAVE] Aumentado warmup CCS811 para 20s
+ * - [OTIM] Ajustado duty cycle LoRa para compliance ANATEL
+ * - [OTIM] Buffers estáticos para zero heap fragmentation
+ * - [NEW] Modo SAFE para degradação controlada
+ * - [NEW] Buffer circular telemetria (10 slots)
  */
 
 #ifndef CONFIG_H
@@ -15,7 +24,7 @@
 // ============================================================================
 #define MISSION_NAME "AgroSat-IoT"
 #define TEAM_CATEGORY "N3"
-#define FIRMWARE_VERSION "3.0.0"
+#define FIRMWARE_VERSION "4.0.0"
 #define BUILD_DATE __DATE__
 #define BUILD_TIME __TIME__
 #define TEAM_ID 666
@@ -36,7 +45,7 @@
 #define LORA_CS 18
 #define LORA_RST 23
 #define LORA_DIO0 26
-#define LORA_FREQUENCY 915E6  // 915 MHz (Brasil - Plano AU915-928)
+#define LORA_FREQUENCY 915E6
 
 #define SD_CS 13
 #define SD_MOSI 15
@@ -45,10 +54,10 @@
 
 #define SENSOR_I2C_SDA 21
 #define SENSOR_I2C_SCL 22
-#define I2C_FREQUENCY 50000
+#define I2C_FREQUENCY 100000  // 100kHz (testado com todos sensores)
 
 #define BATTERY_PIN 35
-#define BATTERY_SAMPLES 10
+#define BATTERY_SAMPLES 16  // Oversampling 16 amostras
 #define BATTERY_VREF 3.6
 #define BATTERY_DIVIDER 2.0
 
@@ -61,11 +70,12 @@
 // MODOS OPERACIONAIS E CONFIGS DINÂMICAS
 // ============================================================================
 enum OperationMode : uint8_t {
-    MODE_PREFLIGHT = 0,
-    MODE_FLIGHT = 1,
-    MODE_POSTFLIGHT = 2,
-    MODE_ERROR = 3,
-    MODE_INIT = 4
+    MODE_INIT = 0,
+    MODE_PREFLIGHT = 1,
+    MODE_FLIGHT = 2,
+    MODE_POSTFLIGHT = 3,
+    MODE_SAFE = 4,      // NOVO: Modo degradado
+    MODE_ERROR = 5
 };
 
 struct ModeConfig {
@@ -95,15 +105,23 @@ const ModeConfig FLIGHT_CONFIG = {
     5        // wifiDutyCycle (5%)
 };
 
+// NOVO: Modo SAFE
+const ModeConfig SAFE_CONFIG = {
+    false,   // displayEnabled
+    true,    // serialLogsEnabled (manter debug)
+    true,    // sdLogsVerbose
+    120000,  // telemetrySendInterval (2min)
+    300000,  // storageSaveInterval (5min)
+    0        // wifiDutyCycle (desligar WiFi)
+};
+
 // ============================================================================
 // CONFIGURAÇÃO DE SENSORES - PLACA PION REAL
 // ============================================================================
-
-// Sensores ativos
-#define USE_MPU9250     // IMU 9-axis
-#define USE_BMP280      // Pressão + Temperatura
-#define USE_SI7021      // Umidade (temperatura do BMP280)
-#define USE_CCS811      // CO2 + VOC
+#define USE_MPU9250
+#define USE_BMP280
+#define USE_SI7021
+#define USE_CCS811
 
 // Endereços I2C
 #define MPU9250_ADDRESS 0x69
@@ -112,6 +130,7 @@ const ModeConfig FLIGHT_CONFIG = {
 #define SI7021_ADDRESS 0x40
 #define CCS811_ADDR_1 0x5A
 #define CCS811_ADDR_2 0x5B
+#define DS3231_ADDRESS 0x68
 
 // Intervalos de leitura
 #define CUSTOM_FILTER_SIZE 5
@@ -119,34 +138,23 @@ const ModeConfig FLIGHT_CONFIG = {
 #define CCS811_READ_INTERVAL 5000
 #define SI7021_READ_INTERVAL 2000
 #define MPU9250_CALIBRATION_SAMPLES 100
+#define CCS811_WARMUP_TIME 20000  // 20s obrigatório
 
 // ============================================================================
 // LIMITES DE VALIDAÇÃO DE SENSORES
 // ============================================================================
-
-// Temperatura (múltiplas fontes)
 #define TEMP_MIN_VALID -50.0
 #define TEMP_MAX_VALID 100.0
-
-// Pressão atmosférica (BMP280)
 #define PRESSURE_MIN_VALID 300.0
 #define PRESSURE_MAX_VALID 1100.0
-
-// Umidade relativa (SI7021)
 #define HUMIDITY_MIN_VALID 0.0
 #define HUMIDITY_MAX_VALID 100.0
-
-// Qualidade do ar (CCS811)
 #define CO2_MIN_VALID 350.0
 #define CO2_MAX_VALID 5000.0
 #define TVOC_MIN_VALID 0.0
 #define TVOC_MAX_VALID 1000.0
-
-// Magnetômetro (MPU9250)
 #define MAG_MIN_VALID -4800.0
 #define MAG_MAX_VALID 4800.0
-
-// Acelerômetro e giroscópio (MPU9250)
 #define ACCEL_MIN_VALID -16.0
 #define ACCEL_MAX_VALID 16.0
 #define GYRO_MIN_VALID -2000.0
@@ -156,7 +164,21 @@ const ModeConfig FLIGHT_CONFIG = {
 // TIMEOUTS DE INICIALIZAÇÃO
 // ============================================================================
 #define SENSOR_INIT_TIMEOUT 2000
-#define CCS811_WARMUP_TIME 20000
+
+// ============================================================================
+// COMUNICAÇÃO - LORA (ANATEL COMPLIANCE)
+// ============================================================================
+// Resolução ANATEL 680/2017: 915MHz = 1% duty cycle
+#define LORA_MAX_TX_TIME_MS 2000
+#define LORA_DUTY_CYCLE_PERCENT 1.0
+#define LORA_MIN_INTERVAL_MS ((uint32_t)(LORA_MAX_TX_TIME_MS * (100.0 / LORA_DUTY_CYCLE_PERCENT)))
+
+// Parâmetros LoRa otimizados
+#define LORA_SPREADING_FACTOR 12
+#define LORA_SIGNAL_BANDWIDTH 125E3
+#define LORA_CODING_RATE 8
+#define LORA_TX_POWER 20
+#define LORA_SYNC_WORD 0x34
 
 // ============================================================================
 // REDE/HTTP/COMUNICAÇÃO - OBSAT
@@ -166,17 +188,14 @@ const ModeConfig FLIGHT_CONFIG = {
 #define WIFI_TIMEOUT_MS 60000
 #define WIFI_RETRY_ATTEMPTS 5
 
-// Servidor OBSAT oficial (HTTPS obrigatório)
 #define HTTP_SERVER "obsat.org.br"
 #define HTTP_PORT 443
 #define HTTP_ENDPOINT "/teste_post/envio.php"
 #define HTTP_TIMEOUT_MS 10000
 
-// Limites de tamanho JSON (OBSAT)
 #define JSON_MAX_SIZE 512
 #define PAYLOAD_MAX_SIZE 90
 
-// Intervalos de envio (seguem modo operacional)
 #define TELEMETRY_SEND_INTERVAL PREFLIGHT_CONFIG.telemetrySendInterval
 #define STORAGE_SAVE_INTERVAL PREFLIGHT_CONFIG.storageSaveInterval
 
@@ -202,11 +221,14 @@ const ModeConfig FLIGHT_CONFIG = {
 #define MIN_TEMPERATURE -80
 #define MAX_TEMPERATURE 85
 
-// Servidores NTP (múltiplos para fallback)
-#define NTP_SERVER_PRIMARY   "pool.ntp.org"          // Global
-#define NTP_SERVER_SECONDARY "time.google.com"        // Google
-#define NTP_SERVER_TERTIARY  "time.cloudflare.com"    // Cloudflare
-#define TIMEZONE_STRING      "<-03>3"                  // Brasil GMT-3
+// NTP
+#define NTP_SERVER_PRIMARY   "pool.ntp.org"
+#define NTP_SERVER_SECONDARY "time.google.com"
+#define NTP_SERVER_TERTIARY  "time.cloudflare.com"
+#define TIMEZONE_STRING      "<-03>3"
+
+// CORRIGIDO: RTC armazena UTC, aplicar offset apenas para display local
+#define RTC_TIMEZONE_OFFSET -10800  // GMT-3 (apenas para display)
 
 // ============================================================================
 // DEBUG (segue modo operacional)
@@ -219,49 +241,39 @@ extern bool currentSerialLogsEnabled;
 #define DEBUG_PRINTF(...) if(currentSerialLogsEnabled){DEBUG_SERIAL.printf(__VA_ARGS__);}
 
 // ============================================================================
+// BUFFER CIRCULAR TELEMETRIA
+// ============================================================================
+#define TELEMETRY_BUFFER_SIZE 10
+
+// ============================================================================
 // ESTRUTURAS DE DADOS - COMPATÍVEL OBSAT
 // ============================================================================
-
-/**
- * @brief Estrutura de telemetria compatível com servidor OBSAT
- */
 struct TelemetryData {
-    // Sistema
-    unsigned long timestamp;
+    unsigned long timestamp;      // Unix UTC (SEM offset!)
     unsigned long missionTime;
     
-    // Campos obrigatórios OBSAT
     float batteryVoltage;
     float batteryPercentage;
-    float temperature;      // Fonte primária: SI7021, fallback: BMP280
-    float pressure;         // Fonte: BMP280
+    float temperature;
+    float temperatureSI;
+    float pressure;
     
-    // Giroscópio (MPU9250)
     float gyroX, gyroY, gyroZ;
-    
-    // Acelerômetro (MPU9250)
     float accelX, accelY, accelZ;
     
-    // Dados extras para payload customizado
-    float altitude;         // Calculado de pressure
-    float humidity;         // Fonte: SI7021
-    float co2;              // Fonte: CCS811
-    float tvoc;             // Fonte: CCS811
+    float altitude;
+    float humidity;
+    float co2;
+    float tvoc;
     
-    // Magnetômetro (MPU9250) - novo, não estava disponível antes
-    float magX, magY, magZ;
+    float magX, magY, magZ;  // Magnetômetro
     
-    // Status
     uint8_t systemStatus;
     uint16_t errorCount;
     
-    // Payload legado (compatibilidade)
     char payload[PAYLOAD_MAX_SIZE];
 };
 
-/**
- * @brief Dados de missão específicos (LoRa, etc)
- */
 struct MissionData {
     float soilMoisture;
     float ambientTemp;
@@ -274,9 +286,6 @@ struct MissionData {
     unsigned long lastLoraRx;
 };
 
-/**
- * @brief Status do sistema (bitmask)
- */
 enum SystemStatus : uint8_t {
     STATUS_OK = 0x00,
     STATUS_WIFI_ERROR = 0x01,
@@ -288,8 +297,5 @@ enum SystemStatus : uint8_t {
     STATUS_TEMP_ALARM = 0x40,
     STATUS_WATCHDOG = 0x80
 };
-
-#define RTC_TIMEZONE_OFFSET -10800
-#define ENABLE_HTTP_POST false
 
 #endif // CONFIG_H

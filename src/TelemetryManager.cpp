@@ -41,13 +41,18 @@ bool TelemetryManager::_initI2CBus() {
         DEBUG_PRINTLN("[TelemetryManager] ========================================");
         
         Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
-        Wire.setClock(100000);  // 100kHz para compatibilidade com todos os sensores
-        Wire.setTimeout(5000);
+        Wire.setClock(100000);
+        
+        // ✅ SOLUÇÃO: Aumentar timeout I2C do ESP32
+        // 200.000 ticks @ 80MHz = 2.5ms * 20 = 50ms timeout
+        // (suficiente para conversão 14-bit do SI7021 = 22ms máx)
+        Wire.setTimeOut(200);  // 200ms timeout (padrão é 50ms)
         
         delay(300);
         i2cInitialized = true;
         
-        DEBUG_PRINTLN("[TelemetryManager] I2C inicializado (100 kHz)");
+        DEBUG_PRINTLN("[TelemetryManager] I2C inicializado (100 kHz, timeout 200ms)");
+        
         DEBUG_PRINTLN("[TelemetryManager] Dispositivos no barramento:");
         
         // Scanner I2C para debug
@@ -391,7 +396,9 @@ void TelemetryManager::updateDisplay() {
 }
 
 void TelemetryManager::_collectTelemetryData() {
-    // Usar timestamp do RTC se disponível
+    // ========================================
+    // TIMESTAMPS
+    // ========================================
     if (_rtc.isInitialized()) {
         _telemetryData.timestamp = _rtc.getUnixTime();
     } else {
@@ -399,19 +406,35 @@ void TelemetryManager::_collectTelemetryData() {
     }
     
     _telemetryData.missionTime = _health.getMissionTime();
+    
+    // ========================================
+    // DADOS OBRIGATÓRIOS (SEMPRE PRESENTES)
+    // ========================================
     _telemetryData.batteryVoltage = _power.getVoltage();
     _telemetryData.batteryPercentage = _power.getPercentage();
+    
+    // Temperatura primária (BMP280) - OBRIGATÓRIA OBSAT
     _telemetryData.temperature = _sensors.getTemperature();
+    
+    // Pressão e altitude (BMP280)
     _telemetryData.pressure = _sensors.getPressure();
     _telemetryData.altitude = _sensors.getAltitude();
+    
+    // IMU (MPU9250) - giroscópio
     _telemetryData.gyroX = _sensors.getGyroX();
     _telemetryData.gyroY = _sensors.getGyroY();
     _telemetryData.gyroZ = _sensors.getGyroZ();
+    
+    // IMU (MPU9250) - acelerômetro
     _telemetryData.accelX = _sensors.getAccelX();
     _telemetryData.accelY = _sensors.getAccelY();
     _telemetryData.accelZ = _sensors.getAccelZ();
     
-    // Inicializar opcionais como NAN
+    // ========================================
+    // DADOS OPCIONAIS (SENSORES EXTRAS)
+    // ========================================
+    // Inicializar como NAN (não disponível)
+    _telemetryData.temperatureSI = NAN;
     _telemetryData.humidity = NAN;
     _telemetryData.co2 = NAN;
     _telemetryData.tvoc = NAN;
@@ -419,68 +442,148 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.magY = NAN;
     _telemetryData.magZ = NAN;
     
+    // SI7021: TEMPERATURA + UMIDADE
     if (_sensors.isSI7021Online()) {
+        float tempSI = _sensors.getTemperatureSI7021();
+        if (!isnan(tempSI) && tempSI >= TEMP_MIN_VALID && tempSI <= TEMP_MAX_VALID) {
+            _telemetryData.temperatureSI = tempSI;
+        }
+        
         float hum = _sensors.getHumidity();
-        if (!isnan(hum)) { _telemetryData.humidity = hum; }
+        if (!isnan(hum) && hum >= HUMIDITY_MIN_VALID && hum <= HUMIDITY_MAX_VALID) {
+            _telemetryData.humidity = hum;
+        }
     }
     
+    // CCS811: CO2 + TVOC
     if (_sensors.isCCS811Online()) {
         float co2 = _sensors.getCO2();
         float tvoc = _sensors.getTVOC();
-        if (!isnan(co2) && co2 > 0) { _telemetryData.co2 = co2; }
-        if (!isnan(tvoc) && tvoc > 0) { _telemetryData.tvoc = tvoc; }
+        
+        if (!isnan(co2) && co2 >= CO2_MIN_VALID && co2 <= CO2_MAX_VALID) {
+            _telemetryData.co2 = co2;
+        }
+        
+        if (!isnan(tvoc) && tvoc >= TVOC_MIN_VALID && tvoc <= TVOC_MAX_VALID) {
+            _telemetryData.tvoc = tvoc;
+        }
     }
     
+    // MPU9250: MAGNETÔMETRO
     if (_sensors.isMPU9250Online()) {
         float magX = _sensors.getMagX();
         float magY = _sensors.getMagY();
         float magZ = _sensors.getMagZ();
+        
         if (!isnan(magX) && !isnan(magY) && !isnan(magZ)) {
-            _telemetryData.magX = magX;
-            _telemetryData.magY = magY;
-            _telemetryData.magZ = magZ;
+            if (magX >= MAG_MIN_VALID && magX <= MAG_MAX_VALID &&
+                magY >= MAG_MIN_VALID && magY <= MAG_MAX_VALID &&
+                magZ >= MAG_MIN_VALID && magZ <= MAG_MAX_VALID) {
+                _telemetryData.magX = magX;
+                _telemetryData.magY = magY;
+                _telemetryData.magZ = magZ;
+            }
         }
     }
     
+    // ========================================
+    // STATUS DO SISTEMA
+    // ========================================
     _telemetryData.systemStatus = _health.getSystemStatus();
     _telemetryData.errorCount = _health.getErrorCount();
     
+    // ========================================
+    // PAYLOAD DA MISSÃO
+    // ========================================
     String payloadStr = _payload.generatePayload();
     strncpy(_telemetryData.payload, payloadStr.c_str(), PAYLOAD_MAX_SIZE - 1);
     _telemetryData.payload[PAYLOAD_MAX_SIZE - 1] = '\0';
     
     _missionData = _payload.getMissionData();
+    
+    // ========================================
+    // DEBUG (apenas em modo PRE-FLIGHT)
+    // ========================================
+    if (currentSerialLogsEnabled) {
+    }
 }
 
+
+
 void TelemetryManager::_sendTelemetry() {
-    if (_rtc.isInitialized()) {
-        DEBUG_PRINTF("[TelemetryManager] Enviando telemetria [%s]...\n", _rtc.getDateTime().c_str());
+    // ========================================
+    // DEBUG: MOSTRAR DADOS COLETADOS
+    // ========================================
+    if (activeModeConfig->serialLogsEnabled) {
+        DEBUG_PRINTF("[TelemetryManager] Enviando telemetria [%s]...\n", 
+                     _rtc.getDateTime().c_str());
+        
+        // ✅ TEMPERATURAS (BMP280 + SI7021)
+        DEBUG_PRINTF("  Temp BMP280: %.2f°C", _telemetryData.temperature);
+        
+        if (!isnan(_telemetryData.temperatureSI)) {
+            DEBUG_PRINTF(" | Temp SI7021: %.2f°C", _telemetryData.temperatureSI);
+            float delta = _telemetryData.temperature - _telemetryData.temperatureSI;
+            DEBUG_PRINTF(" | Delta: %.2f°C\n", delta);
+        } else {
+            DEBUG_PRINTLN();
+        }
+        
+        // Pressão e altitude
+        DEBUG_PRINTF("  Pressão: %.2f hPa, Alt: %.1f m\n", 
+                     _telemetryData.pressure, 
+                     _telemetryData.altitude);
+        
+        // IMU - Giroscópio
+        DEBUG_PRINTF("  Gyro: [%.4f, %.4f, %.4f] rad/s\n", 
+                     _telemetryData.gyroX, 
+                     _telemetryData.gyroY, 
+                     _telemetryData.gyroZ);
+        
+        // IMU - Acelerômetro
+        DEBUG_PRINTF("  Accel: [%.4f, %.4f, %.4f] m/s²\n", 
+                     _telemetryData.accelX, 
+                     _telemetryData.accelY, 
+                     _telemetryData.accelZ);
+        
+        // Umidade (se disponível)
+        if (!isnan(_telemetryData.humidity)) {
+            DEBUG_PRINTF("  Umidade: %.1f%%\n", _telemetryData.humidity);
+        }
+        
+        // Qualidade do ar (se disponível)
+        if (!isnan(_telemetryData.co2) || !isnan(_telemetryData.tvoc)) {
+            DEBUG_PRINTF("  CO2: %.0f ppm, TVOC: %.0f ppb\n", 
+                        _telemetryData.co2, 
+                        _telemetryData.tvoc);
+        }
+        
+        // Magnetômetro (se disponível)
+        if (!isnan(_telemetryData.magX)) {
+            DEBUG_PRINTF("  Mag: [%.2f, %.2f, %.2f] µT\n", 
+                        _telemetryData.magX, 
+                        _telemetryData.magY, 
+                        _telemetryData.magZ);
+        }
+    }
+    
+    // ========================================
+    // ENVIAR VIA COMMUNICATION MANAGER
+    // ========================================
+    bool sendSuccess = _comm.sendTelemetry(_telemetryData);
+    
+    if (sendSuccess) {
+        if (activeModeConfig->serialLogsEnabled) {
+            DEBUG_PRINTLN("[TelemetryManager] Telemetria enviada com sucesso!");
+        }
     } else {
-        DEBUG_PRINTLN("[TelemetryManager] Enviando telemetria...");
-    }
-    
-    DEBUG_PRINTF("  Temp: %.2f°C, Pressão: %.2f hPa, Alt: %.1f m\n",
-        _telemetryData.temperature, _telemetryData.pressure, _telemetryData.altitude);
-    DEBUG_PRINTF("  Gyro: [%.4f, %.4f, %.4f] rad/s\n",
-        _telemetryData.gyroX, _telemetryData.gyroY, _telemetryData.gyroZ);
-    DEBUG_PRINTF("  Accel: [%.4f, %.4f, %.4f] m/s²\n",
-        _telemetryData.accelX, _telemetryData.accelY, _telemetryData.accelZ);
-    if (!isnan(_telemetryData.humidity)) { DEBUG_PRINTF("  Umidade: %.1f%%\n", _telemetryData.humidity); }
-    if (!isnan(_telemetryData.co2)) { DEBUG_PRINTF("  CO2: %.0f ppm, TVOC: %.0f ppb\n", _telemetryData.co2, _telemetryData.tvoc); }
-    if (!isnan(_telemetryData.magX)) { DEBUG_PRINTF("  Mag: [%.2f, %.2f, %.2f] µT\n", _telemetryData.magX, _telemetryData.magY, _telemetryData.magZ); }
-    
-    if (!_comm.isConnected()) { 
-        DEBUG_PRINTLN("[TelemetryManager] Tentando reconectar WiFi..."); 
-        _comm.connectWiFi(); 
-    }
-    
-    if (_comm.sendTelemetry(_telemetryData)) { 
-        DEBUG_PRINTLN("[TelemetryManager] Telemetria enviada com sucesso!"); 
-    } else { 
-        DEBUG_PRINTLN("[TelemetryManager] Falha ao enviar telemetria"); 
-        _health.reportError(STATUS_WIFI_ERROR, "Telemetry send failed"); 
+        if (activeModeConfig->serialLogsEnabled) {
+            DEBUG_PRINTLN("[TelemetryManager] ERRO ao enviar telemetria");
+        }
     }
 }
+
+
 
 void TelemetryManager::_saveToStorage() {
     if (!_storage.isAvailable()) return;

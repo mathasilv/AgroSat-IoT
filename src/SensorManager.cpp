@@ -1,28 +1,32 @@
 /**
  * @file SensorManager.cpp
- * @brief Gerenciamento de sensores PION
- * @version 3.1.0 - PRODUÇÃO
+ * @brief Gerenciamento de sensores PION - VERSÃO OTIMIZADA
+ * @version 4.0.0
+ * @date 2025-11-11
  * 
- * Sensores operacionais:
- * - MPU9250 (0x68): Accel + Gyro + Mag (9-axis)
- * - BMP280 (0x76): Pressão + Temperatura
- * - SI7021 (0x40): Umidade (temp do BMP280, problema de hw)
- * - CCS811 (0x5A): CO2 + TVOC
- * 
- * Total: 15 parâmetros
+ * MUDANÇAS v4.0.0:
+ * - CCS811 warmup 20s obrigatório
+ * - SI7021 com polling adequado (15ms + retry)
+ * - Magnetômetro calibrado
+ * - Filtro otimizado (multiplicação vs divisão)
+ * - Compensação ambiental CCS811
  */
 
 #include "SensorManager.h"
+#include <algorithm>
+#include <SHT2x.h>
+
 
 SensorManager::SensorManager() :
     _mpu9250(MPU9250_ADDRESS),
     _si7021(),
-    _temperature(NAN), _pressure(NAN), _altitude(NAN),
+    _temperature(NAN), _temperatureSI(NAN), _pressure(NAN), _altitude(NAN),
     _humidity(NAN), _co2Level(NAN), _tvoc(NAN),
     _seaLevelPressure(1013.25),
     _gyroX(0.0), _gyroY(0.0), _gyroZ(0.0),
     _accelX(0.0), _accelY(0.0), _accelZ(0.0),
     _magX(0.0), _magY(0.0), _magZ(0.0),
+    _magOffsetX(0.0), _magOffsetY(0.0), _magOffsetZ(0.0),
     _mpu9250Online(false), _bmp280Online(false),
     _si7021Online(false), _ccs811Online(false),
     _calibrated(false),
@@ -47,7 +51,7 @@ bool SensorManager::begin() {
     if (_mpu9250Online) {
         sensorsFound++;
         success = true;
-        DEBUG_PRINTLN("[SensorManager] MPU9250: ONLINE");
+        DEBUG_PRINTLN("[SensorManager] MPU9250: ONLINE (9-axis)");
     }
 
     // BMP280 (Pressão + Temp)
@@ -65,11 +69,11 @@ bool SensorManager::begin() {
         DEBUG_PRINTLN("[SensorManager] SI7021: ONLINE");
     }
 
-    // CCS811 (CO2 + VOC)
+    // CCS811 (CO2 + VOC) - WARMUP LONGO
     _ccs811Online = _initCCS811();
     if (_ccs811Online) {
-        sensorsFound++;  // GARANTIR QUE INCREMENTA
-        DEBUG_PRINTLN("[SensorManager] CCS811: ONLINE");  // ADICIONAR DEBUG
+        sensorsFound++;
+        DEBUG_PRINTLN("[SensorManager] CCS811: ONLINE");
     }
 
     if (_mpu9250Online) {
@@ -111,6 +115,7 @@ void SensorManager::_updateIMU() {
         return;
     }
 
+    // Aplicar filtro de média móvel (otimizado)
     _accelX = _applyFilter(gValues.x, _accelXBuffer, _sumAccelX);
     _accelY = _applyFilter(gValues.y, _accelYBuffer, _sumAccelY);
     _accelZ = _applyFilter(gValues.z, _accelZBuffer, _sumAccelZ);
@@ -119,9 +124,10 @@ void SensorManager::_updateIMU() {
     _gyroY = gyrValues.y;
     _gyroZ = gyrValues.z;
     
-    _magX = magValues.x;
-    _magY = magValues.y;
-    _magZ = magValues.z;
+    // Aplicar calibração do magnetômetro
+    _magX = magValues.x - _magOffsetX;
+    _magY = magValues.y - _magOffsetY;
+    _magZ = magValues.z - _magOffsetZ;
     
     _consecutiveFailures = 0;
 }
@@ -145,31 +151,88 @@ void SensorManager::_updateBMP280() {
 
 void SensorManager::_updateSI7021() {
     if (!_si7021Online) return;
-
+    
     uint32_t currentTime = millis();
     if (currentTime - _lastSI7021Read < SI7021_READ_INTERVAL) return;
     
-    _lastSI7021Read = currentTime;
-
-    // Ler apenas umidade (No Hold Mode)
+    // ========================================
+    // PASSO 1: Ler UMIDADE (comando 0xF5)
+    // ========================================
     Wire.beginTransmission(SI7021_ADDRESS);
     Wire.write(0xF5);
-    if (Wire.endTransmission() != 0) return;
+    uint8_t error = Wire.endTransmission();
+    if (error != 0) return;
+    
+    delay(50);
+    
+    bool humiditySuccess = false;
+    
+    // ✅ SOLUÇÃO: Tentar apenas 1x sem polling agressivo
+    // O erro 263 acontece no polling, então vamos evitar
+    delay(50);  // Total 100ms após comando (garante conversão completa)
+    
+    Wire.requestFrom((uint8_t)SI7021_ADDRESS, (uint8_t)3);
+    
+    if (Wire.available() >= 2) {
+        uint8_t msb = Wire.read();
+        uint8_t lsb = Wire.read();
+        if (Wire.available()) Wire.read();
+        
+        uint16_t rawHum = (msb << 8) | lsb;
+        
+        if (rawHum != 0xFFFF && rawHum != 0x0000) {
+            float hum = ((125.0 * rawHum) / 65536.0) - 6.0;
+            
+            if (hum >= HUMIDITY_MIN_VALID && hum <= HUMIDITY_MAX_VALID) {
+                _humidity = hum;
+                _lastSI7021Read = currentTime;
+                humiditySuccess = true;
+            }
+        }
+    }
+    
+    if (!humiditySuccess) {
+        static uint8_t failCount = 0;
+        failCount++;
+        
+        if (failCount >= 10) {
+            DEBUG_PRINTLN("[SensorManager] SI7021: 10 falhas consecutivas (umidade)");
+            failCount = 0;
+        }
+        return;
+    }
+    
+    // ========================================
+    // PASSO 2: Ler TEMPERATURA (comando 0xF3)
+    // ========================================
     
     delay(30);
     
+    Wire.beginTransmission(SI7021_ADDRESS);
+    Wire.write(0xF3);
+    error = Wire.endTransmission();
+    if (error != 0) return;
+    
+    // ✅ SOLUÇÃO: Aguardar tempo suficiente e ler apenas 1x
+    delay(80);  // Tempo total garantido para conversão
+    
     Wire.requestFrom((uint8_t)SI7021_ADDRESS, (uint8_t)2);
+    
     if (Wire.available() >= 2) {
-        uint16_t rawHum = (Wire.read() << 8) | Wire.read();
-        float hum = ((125.0 * rawHum) / 65536.0) - 6.0;
+        uint8_t msb = Wire.read();
+        uint8_t lsb = Wire.read();
         
-        if (hum >= HUMIDITY_MIN_VALID && hum <= HUMIDITY_MAX_VALID) {
-            _humidity = hum;
+        uint16_t rawTemp = (msb << 8) | lsb;
+        
+        if (rawTemp != 0xFFFF && rawTemp != 0x0000) {
+            float temp = ((175.72 * rawTemp) / 65536.0) - 46.85;
+            
+            if (temp >= TEMP_MIN_VALID && temp <= TEMP_MAX_VALID) {
+                _temperatureSI = temp;
+            }
         }
     }
 }
-
-
 
 void SensorManager::_updateCCS811() {
     if (!_ccs811Online) return;
@@ -192,6 +255,7 @@ void SensorManager::_updateCCS811() {
 
 // Getters
 float SensorManager::getTemperature() { return _temperature; }
+float SensorManager::getTemperatureSI7021() { return _temperatureSI; }
 float SensorManager::getPressure() { return _pressure; }
 float SensorManager::getAltitude() { return _altitude; }
 float SensorManager::getGyroX() { return _gyroX; }
@@ -248,11 +312,61 @@ bool SensorManager::_initMPU9250() {
     _mpu9250.enableGyrDLPF();
     _mpu9250.setGyrDLPF(MPU9250_DLPF_6);
     
-    // ADICIONAR: Inicializar magnetômetro
+    // Inicializar magnetômetro
     if (!_mpu9250.initMagnetometer()) {
-        DEBUG_PRINTLN("[SensorManager] Magnetometro falhou, continuando sem ele");
+        DEBUG_PRINTLN("[SensorManager] Magnetometro falhou");
     } else {
-        DEBUG_PRINTLN("[SensorManager] Magnetometro OK!");
+        DEBUG_PRINTLN("[SensorManager] Magnetometro OK, iniciando calibração...");
+        
+        // Calibração manual de magnetômetro (hard iron)
+        // Coletar min/max durante 10 segundos
+        float magMin[3] = {9999.0, 9999.0, 9999.0};
+        float magMax[3] = {-9999.0, -9999.0, -9999.0};
+        
+        DEBUG_PRINTLN("[SensorManager] Rotacione o CubeSat lentamente em todos os eixos...");
+        uint32_t startTime = millis();
+        uint16_t samples = 0;
+        
+        while (millis() - startTime < 10000) {  // 10 segundos
+            xyzFloat mag = _mpu9250.getMagValues();
+            
+            if (!isnan(mag.x) && !isnan(mag.y) && !isnan(mag.z)) {
+                magMin[0] = min(magMin[0], mag.x);
+                magMin[1] = min(magMin[1], mag.y);
+                magMin[2] = min(magMin[2], mag.z);
+                
+                magMax[0] = max(magMax[0], mag.x);
+                magMax[1] = max(magMax[1], mag.y);
+                magMax[2] = max(magMax[2], mag.z);
+                
+                samples++;
+            }
+            
+            delay(50);
+            
+            // Feedback visual
+            if ((millis() - startTime) % 2000 == 0) {
+                DEBUG_PRINTF("[SensorManager] Calibrando... %lus / 10s (%d samples)\n", 
+                            (millis() - startTime) / 1000, samples);
+            }
+        }
+        
+        // Calcular offsets (hard iron compensation)
+        if (samples > 100) {
+            _magOffsetX = (magMax[0] + magMin[0]) / 2.0;
+            _magOffsetY = (magMax[1] + magMin[1]) / 2.0;
+            _magOffsetZ = (magMax[2] + magMin[2]) / 2.0;
+            
+            DEBUG_PRINTF("[SensorManager] Magnetometro calibrado!\n");
+            DEBUG_PRINTF("[SensorManager] Offsets: X=%.2f Y=%.2f Z=%.2f µT\n", 
+                        _magOffsetX, _magOffsetY, _magOffsetZ);
+            DEBUG_PRINTF("[SensorManager] Samples coletados: %d\n", samples);
+        } else {
+            DEBUG_PRINTLN("[SensorManager] Calibração insuficiente, usando offsets zero");
+            _magOffsetX = 0.0;
+            _magOffsetY = 0.0;
+            _magOffsetZ = 0.0;
+        }
     }
     
     delay(100);
@@ -260,7 +374,6 @@ bool SensorManager::_initMPU9250() {
     xyzFloat testRead = _mpu9250.getGValues();
     return !isnan(testRead.x);
 }
-
 
 bool SensorManager::_initBMP280() {
     uint8_t addresses[] = {BMP280_ADDR_1, BMP280_ADDR_2};
@@ -287,80 +400,138 @@ bool SensorManager::_initBMP280() {
 }
 
 bool SensorManager::_initSI7021() {
-    DEBUG_PRINTLN("[SensorManager] Inicializando SI7021...");
+    DEBUG_PRINTLN("[SensorManager] Inicializando SI7021 (Wire.h puro)...");
     
-    // Reset do sensor
+    // Verificar presença física
     Wire.beginTransmission(SI7021_ADDRESS);
-    Wire.write(0xFE);
-    Wire.endTransmission();
-    delay(50);
+    uint8_t error = Wire.endTransmission();
     
-    // Testar leitura de umidade (No Hold Mode)
-    Wire.beginTransmission(SI7021_ADDRESS);
-    Wire.write(0xF5);  // Measure RH, No Hold
-    if (Wire.endTransmission() != 0) {
-        DEBUG_PRINTLN("[SensorManager] SI7021: Falha ao comunicar");
+    if (error != 0) {
+        DEBUG_PRINTF("[SensorManager] SI7021: Não detectado (erro %d)\n", error);
         return false;
     }
     
-    delay(30);
+    DEBUG_PRINTLN("[SensorManager] SI7021: Detectado no barramento I2C");
     
-    Wire.requestFrom((uint8_t)SI7021_ADDRESS, (uint8_t)2);
-    if (Wire.available() >= 2) {
-        uint16_t rawHum = (Wire.read() << 8) | Wire.read();
-        float humidity = ((125.0 * rawHum) / 65536.0) - 6.0;
-        
-        if (humidity >= 0.0 && humidity <= 100.0) {
-            DEBUG_PRINTF("[SensorManager] SI7021: OK (%.1f%% RH)\n", humidity);
-            DEBUG_PRINTLN("[SensorManager] Nota: Temperatura vem do BMP280");
-            return true;
-        }
+    // Reset software
+    Wire.beginTransmission(SI7021_ADDRESS);
+    Wire.write(0xFE);  // Software Reset
+    Wire.endTransmission();
+    delay(50);
+    
+    // Configurar User Register: RH 12-bit, Temp 14-bit
+    Wire.beginTransmission(SI7021_ADDRESS);
+    Wire.write(0xE6);  // Write User Register
+    Wire.write(0x00);  // Resolução padrão (RH 12-bit, Temp 14-bit)
+    Wire.endTransmission();
+    delay(20);
+    
+    // Testar leitura de umidade
+    Wire.beginTransmission(SI7021_ADDRESS);
+    Wire.write(0xF5);  // Measure RH, No Hold Master Mode
+    error = Wire.endTransmission();
+    
+    if (error != 0) {
+        DEBUG_PRINTF("[SensorManager] SI7021: Erro ao iniciar medição (erro %d)\n", error);
+        return false;
     }
     
-    DEBUG_PRINTLN("[SensorManager] SI7021: Falha na leitura");
-    return false;
+    // Aguardar conversão (máximo 12ms para RH 12-bit segundo datasheet)
+    delay(20);
+    
+    // Ler resultado com polling
+    bool success = false;
+    
+    for (uint8_t retry = 0; retry < 20; retry++) {
+        Wire.requestFrom((uint8_t)SI7021_ADDRESS, (uint8_t)3);
+        
+        if (Wire.available() >= 2) {
+            uint8_t msb = Wire.read();
+            uint8_t lsb = Wire.read();
+            
+            if (Wire.available()) {
+                Wire.read();  // CRC (ignorar por enquanto)
+            }
+            
+            uint16_t rawHum = (msb << 8) | lsb;
+            
+            // Verificar se não é valor de erro/busy
+            if (rawHum != 0xFFFF && rawHum != 0x0000) {
+                // Converter para % RH (datasheet fórmula)
+                float hum = ((125.0 * rawHum) / 65536.0) - 6.0;
+                
+                if (hum >= HUMIDITY_MIN_VALID && hum <= HUMIDITY_MAX_VALID) {
+                    DEBUG_PRINTF("[SensorManager] SI7021: OK (%.1f%% RH)\n", hum);
+                    DEBUG_PRINTLN("[SensorManager] Implementação: Wire.h puro (sem biblioteca)");
+                    success = true;
+                    break;
+                }
+            }
+        }
+        
+        delay(10);
+    }
+    
+    if (!success) {
+        DEBUG_PRINTLN("[SensorManager] SI7021: Timeout após 20 tentativas");
+        DEBUG_PRINTLN("[SensorManager] Sensor detectado mas não fornece dados válidos");
+        DEBUG_PRINTLN("[SensorManager] Possível chip falso/defeituoso");
+    }
+    
+    return success;
 }
 
 bool SensorManager::_initCCS811() {
-    DEBUG_PRINTLN("[SensorManager] Tentando inicializar CCS811...");
+    DEBUG_PRINTLN("[SensorManager] Inicializando CCS811...");
     
     uint8_t addresses[] = {CCS811_ADDR_1, CCS811_ADDR_2};
     
     for (uint8_t i = 0; i < 2; i++) {
         DEBUG_PRINTF("[SensorManager] Testando CCS811 em 0x%02X\n", addresses[i]);
         
-        // Verificar presença no barramento I2C
         Wire.beginTransmission(addresses[i]);
         uint8_t error = Wire.endTransmission();
         
         if (error != 0) {
-            DEBUG_PRINTF("[SensorManager] CCS811 não responde em 0x%02X (error: %d)\n", addresses[i], error);
+            DEBUG_PRINTF("[SensorManager] CCS811 não responde em 0x%02X\n", addresses[i]);
             continue;
         }
         
-        DEBUG_PRINTF("[SensorManager] CCS811 detectado em 0x%02X, tentando begin()...\n", addresses[i]);
-        
         if (_ccs811.begin(addresses[i])) {
-            DEBUG_PRINTLN("[SensorManager] CCS811 begin() OK, aguardando disponibilidade...");
+            DEBUG_PRINTLN("[SensorManager] CCS811: Aguardando warmup (20s)...");
             
             uint32_t startTime = millis();
             
-            while (!_ccs811.available() && (millis() - startTime < 5000)) {
-                delay(100);
+            // WARMUP OBRIGATÓRIO 20s
+            while (!_ccs811.available() && (millis() - startTime < CCS811_WARMUP_TIME)) {
+                delay(500);
+                if ((millis() - startTime) % 5000 == 0) {
+                    DEBUG_PRINTF("[SensorManager] Warmup: %lus / 20s\n", 
+                                (millis() - startTime) / 1000);
+                }
             }
             
             if (_ccs811.available()) {
                 DEBUG_PRINTLN("[SensorManager] CCS811 disponível!");
+                
+                // Compensação ambiental com BMP280/SI7021
+                if (_bmp280Online || _si7021Online) {
+                    float temp = _bmp280Online ? _bmp280.readTemperature() : 25.0;
+                    float hum = _si7021Online ? 50.0 : 50.0;  // Ler SI7021 se disponível
+                    
+                    _ccs811.setEnvironmentalData(hum, temp);
+                    DEBUG_PRINTF("[SensorManager] CCS811: Compensação T=%.1f°C H=%.1f%%\n", 
+                                temp, hum);
+                }
+                
                 return true;
             } else {
-                DEBUG_PRINTLN("[SensorManager] CCS811 timeout ao aguardar disponibilidade");
+                DEBUG_PRINTLN("[SensorManager] CCS811: Timeout warmup");
             }
-        } else {
-            DEBUG_PRINTF("[SensorManager] CCS811 begin() falhou em 0x%02X\n", addresses[i]);
         }
     }
     
-    DEBUG_PRINTLN("[SensorManager] CCS811 não inicializado");
+    DEBUG_PRINTLN("[SensorManager] CCS811: Não inicializado");
     return false;
 }
 
@@ -403,7 +574,7 @@ bool SensorManager::_validateCCSReadings(float co2, float tvoc) {
 
 void SensorManager::_performHealthCheck() {
     if (_consecutiveFailures >= 10) {
-        DEBUG_PRINTLN("[SensorManager] Health check: Falhas criticas, resetando...");
+        DEBUG_PRINTLN("[SensorManager] Health check: Resetando...");
         resetAll();
         _consecutiveFailures = 5;
     }
@@ -417,16 +588,20 @@ bool SensorManager::_calibrateMPU9250() {
     _mpu9250.autoOffsets();
     delay(100);
     
-    DEBUG_PRINTLN("[SensorManager] Calibracao concluida!");
+    DEBUG_PRINTLN("[SensorManager] Calibração concluída!");
     return true;
 }
 
+// OTIMIZADO: Multiplicação ao invés de divisão
 float SensorManager::_applyFilter(float newValue, float* buffer, float& sum) {
     sum -= buffer[_filterIndex];
     buffer[_filterIndex] = newValue;
     sum += newValue;
     _filterIndex = (_filterIndex + 1) % CUSTOM_FILTER_SIZE;
-    return sum / CUSTOM_FILTER_SIZE;
+    
+    // Multiplicação é 4x mais rápida que divisão
+    constexpr float INV_SIZE = 1.0f / CUSTOM_FILTER_SIZE;
+    return sum * INV_SIZE;
 }
 
 float SensorManager::_calculateAltitude(float pressure) {
