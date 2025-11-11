@@ -289,4 +289,6 @@ enum SystemStatus : uint8_t {
     STATUS_WATCHDOG = 0x80
 };
 
+#define RTC_TIMEZONE_OFFSET -10800
+
 #endif // CONFIG_H

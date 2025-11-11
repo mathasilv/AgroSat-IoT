@@ -6,49 +6,24 @@
 #include <Wire.h>
 #include "config.h"
 
-struct RTCStatus {
-    bool initialized;
-    bool ntpSynced;
-    bool timeValid;
-    uint32_t bootCount;
-    uint32_t lastSyncTime;
-    float temperature;
-};
-
 class RTCManager {
 public:
     RTCManager();
+    bool begin(TwoWire* wire = &Wire);
+    bool syncWithNTP();
     
-    bool begin();
-    bool syncWithNTP(const char* ssid = nullptr, const char* password = nullptr);
-    
-    DateTime getDateTime();
-    RTCStatus getStatus() const { return _status; }
-    float getTemperature();
-    
-    void update();
-    
-    // Métodos auxiliares para outros managers
-    bool isInitialized() const { return _status.initialized; }
+    // Métodos essenciais
+    bool isInitialized() const { return _initialized; }
+    String getDateTime();  // Retorna: "2025-11-11 00:49:30"
     uint32_t getUnixTime();
-    String getISO8601();
-    String getTimeString();
-    String getDateString();
-
+    
 private:
     RTC_DS3231 _rtc;
-    RTCStatus _status;
     TwoWire* _wire;
+    bool _initialized;
     
     bool _detectRTC();
-    void _syncSystemClock(const DateTime& dt);
-    
-    // EEPROM DS3231 (endereço 0x57)
-    static constexpr uint8_t EEPROM_I2C_ADDR = 0x57;
-    static constexpr uint16_t EEPROM_ADDR_BOOT_COUNT = 0x00;
-    
-    bool eepromWrite(uint16_t addr, const uint8_t* data, size_t len);
-    bool eepromRead(uint16_t addr, uint8_t* data, size_t len);
+    time_t _applyOffset(time_t utcTime) const;
 };
 
-#endif // RTC_MANAGER_H
+#endif

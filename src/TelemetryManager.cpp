@@ -1,8 +1,8 @@
 /**
  * @file TelemetryManager.cpp
- * @brief VERSÃO DUAL MODE COM RTC DS3231 INTEGRADO
- * @version 3.1.0
- * @date 2025-11-10
+ * @brief VERSÃO DUAL MODE COM RTC DS3231 SIMPLIFICADO
+ * @version 3.2.0
+ * @date 2025-11-11
  */
 #include "TelemetryManager.h"
 #include "config.h"
@@ -16,8 +16,8 @@ TelemetryManager::TelemetryManager() :
     _mode(MODE_INIT),
     _lastTelemetrySend(0),
     _lastStorageSave(0),
-    _missionActive(false),        // ← ADICIONAR
-    _missionStartTime(0),          // ← ADICIONAR
+    _missionActive(false),
+    _missionStartTime(0),
     _lastDisplayUpdate(0),
     _lastHeapCheck(0),
     _minHeapSeen(UINT32_MAX)
@@ -34,17 +34,44 @@ TelemetryManager::TelemetryManager() :
 
 bool TelemetryManager::_initI2CBus() {
     static bool i2cInitialized = false;
+    
     if (!i2cInitialized) {
+        DEBUG_PRINTLN("[TelemetryManager] ========================================");
+        DEBUG_PRINTLN("[TelemetryManager] Inicializando barramento I2C...");
+        DEBUG_PRINTLN("[TelemetryManager] ========================================");
+        
         Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
-        Wire.setClock(50000);  // 50kHz para SI7021
+        Wire.setClock(100000);  // 100kHz para compatibilidade com todos os sensores
         Wire.setTimeout(5000);
+        
         delay(300);
         i2cInitialized = true;
-        DEBUG_PRINTLN("[TelemetryManager] I2C inicializado");
+        
+        DEBUG_PRINTLN("[TelemetryManager] I2C inicializado (100 kHz)");
+        DEBUG_PRINTLN("[TelemetryManager] Dispositivos no barramento:");
+        
+        // Scanner I2C para debug
+        uint8_t devicesFound = 0;
+        for (uint8_t addr = 1; addr < 127; addr++) {
+            Wire.beginTransmission(addr);
+            if (Wire.endTransmission() == 0) {
+                DEBUG_PRINTF("[TelemetryManager]   - 0x%02X\n", addr);
+                devicesFound++;
+            }
+        }
+        
+        if (devicesFound == 0) {
+            DEBUG_PRINTLN("[TelemetryManager] Nenhum dispositivo I2C encontrado!");
+        } else {
+            DEBUG_PRINTF("[TelemetryManager] Total: %d dispositivo(s) I2C\n", devicesFound);
+        }
+        
+        DEBUG_PRINTLN("[TelemetryManager] ========================================");
+        DEBUG_PRINTLN("");
     }
+    
     return true;
 }
-
 
 void TelemetryManager::applyModeConfig(OperationMode mode) {
     switch(mode) {
@@ -72,7 +99,7 @@ bool TelemetryManager::begin() {
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("  AgroSat-IoT CubeSat - OBSAT Fase 2");
-    DEBUG_PRINTLN("  Equipe: Orbitalis ");
+    DEBUG_PRINTLN("  Equipe: Orbitalis");
     DEBUG_PRINTLN("  Firmware: " FIRMWARE_VERSION);
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
@@ -81,6 +108,7 @@ bool TelemetryManager::begin() {
     _minHeapSeen = initialHeap;
     DEBUG_PRINTF("[TelemetryManager] Heap inicial: %lu bytes\n", initialHeap);
 
+    // Inicializar I2C PRIMEIRO
     _initI2CBus();
 
     bool displayOk = false;
@@ -96,6 +124,8 @@ bool TelemetryManager::begin() {
             _display.display();
             displayOk = true;
             DEBUG_PRINTLN("[TelemetryManager] Display OK");
+        } else {
+            DEBUG_PRINTLN("[TelemetryManager] Display FAILED (não-crítico)");
         }
         delay(500);
     }
@@ -103,115 +133,115 @@ bool TelemetryManager::begin() {
     bool success = true;
     uint8_t subsystemsOk = 0;
 
-    // ========================================================================
-    // ✅ NOVO: INICIALIZAR RTC ANTES DOS OUTROS SUBSISTEMAS
-    // ========================================================================
+    // Inicializar RTC LOGO APÓS I2C
     DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC Manager...");
-    if (_rtc.begin()) {
+    if (_rtc.begin(&Wire)) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] ✓ RTC Manager OK");
-        
-        // Verificar se tempo do RTC é válido
-        RTCStatus rtcStatus = _rtc.getStatus();
-        if (!rtcStatus.timeValid) {
-            DEBUG_PRINTLN("[TelemetryManager] ! RTC com tempo inválido, será sincronizado com NTP");
-        } else {
-            DEBUG_PRINTF("[TelemetryManager] RTC time: %s\n", _rtc.getISO8601().c_str());
-            DEBUG_PRINTF("[TelemetryManager] RTC temp: %.2f°C\n", rtcStatus.temperature);
-        }
+        DEBUG_PRINTLN("[TelemetryManager] RTC Manager OK");
+        DEBUG_PRINTF("[TelemetryManager] RTC: %s\n", _rtc.getDateTime().c_str());
     } else {
-        // RTC não é crítico, sistema pode funcionar sem ele
-        DEBUG_PRINTLN("[TelemetryManager] ! RTC Manager FAILED (não-crítico)");
+        DEBUG_PRINTLN("[TelemetryManager] RTC Manager FAILED (não-crítico)");
+        DEBUG_PRINTLN("[TelemetryManager] Sistema continuará sem RTC");
     }
 
     DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
     if (_health.begin()) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] ✓ System Health OK");
+        DEBUG_PRINTLN("[TelemetryManager] System Health OK");
     } else {
         success = false;
-        DEBUG_PRINTLN("[TelemetryManager] ! System Health FAILED");
+        DEBUG_PRINTLN("[TelemetryManager] System Health FAILED");
     }
 
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Power Manager...");
     if (_power.begin()) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] ✓ Power Manager OK");
+        DEBUG_PRINTLN("[TelemetryManager] Power Manager OK");
     } else {
         success = false;
-        DEBUG_PRINTLN("[TelemetryManager] ! Power Manager FAILED");
+        DEBUG_PRINTLN("[TelemetryManager] Power Manager FAILED");
     }
 
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
     if (_sensors.begin()) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] ✓ Sensor Manager OK");
+        DEBUG_PRINTLN("[TelemetryManager] Sensor Manager OK");
     } else {
         success = false;
-        DEBUG_PRINTLN("[TelemetryManager] ! Sensor Manager FAILED");
+        DEBUG_PRINTLN("[TelemetryManager] Sensor Manager FAILED");
     }
 
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Storage Manager...");
     if (_storage.begin()) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] ✓ Storage Manager OK");
+        DEBUG_PRINTLN("[TelemetryManager] Storage Manager OK");
     } else {
         success = false;
-        DEBUG_PRINTLN("[TelemetryManager] ! Storage Manager FAILED");
-    }
-
-    if (_rtc.isInitialized()) {
-        _storage.setRTCManager(&_rtc);
-        DEBUG_PRINTLN("[TelemetryManager] RTC conectado ao StorageManager");
+        DEBUG_PRINTLN("[TelemetryManager] Storage Manager FAILED");
     }
 
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Payload Manager...");
     if (_payload.begin()) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] ✓ Payload Manager OK");
+        DEBUG_PRINTLN("[TelemetryManager] Payload Manager OK");
     } else {
         success = false;
-        DEBUG_PRINTLN("[TelemetryManager] ! Payload Manager FAILED");
+        DEBUG_PRINTLN("[TelemetryManager] Payload Manager FAILED");
     }
 
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication Manager...");
     if (_comm.begin()) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] ✓ Communication Manager OK");
+        DEBUG_PRINTLN("[TelemetryManager] Communication Manager OK");
         
-        // ====================================================================
-        // ✅ NOVO: SINCRONIZAR RTC COM NTP SE WIFI DISPONÍVEL
-        // ====================================================================
+        // Sincronizar RTC com NTP se WiFi disponível
         if (_rtc.isInitialized() && _comm.isConnected()) {
-            DEBUG_PRINTLN("[TelemetryManager] Tentando sincronizar RTC com NTP...");
-            if (_rtc.syncWithNTP(WIFI_SSID, WIFI_PASSWORD)) {
-                DEBUG_PRINTLN("[TelemetryManager] ✓ RTC sincronizado com NTP");
+            DEBUG_PRINTLN("[TelemetryManager] WiFi disponível, sincronizando RTC com NTP...");
+            
+            if (_rtc.syncWithNTP()) {
+                DEBUG_PRINTLN("[TelemetryManager] RTC sincronizado com NTP");
             } else {
-                DEBUG_PRINTLN("[TelemetryManager] ! Falha na sincronização NTP (não-crítico)");
+                DEBUG_PRINTLN("[TelemetryManager] Falha na sincronização NTP (não-crítico)");
+                DEBUG_PRINTLN("[TelemetryManager] RTC continuará com tempo atual");
             }
+        } else if (_rtc.isInitialized() && !_comm.isConnected()) {
+            DEBUG_PRINTLN("[TelemetryManager] WiFi não disponível, RTC não sincronizado");
         }
     } else {
         success = false;
-        DEBUG_PRINTLN("[TelemetryManager] ! Communication Manager FAILED");
+        DEBUG_PRINTLN("[TelemetryManager] Communication Manager FAILED");
     }
 
+    // Atualizar display final
     if (displayOk) {
         _display.clear();
         _display.drawString(0, 0, success ? "Sistema OK!" : "ERRO Sistema!");
         _display.drawString(0, 15, "Modo: PRE-FLIGHT");
-        String subsysInfo = String(subsystemsOk) + "/7 subsistemas";  // ✅ Mudou de 6 para 7
+        String subsysInfo = String(subsystemsOk) + "/7 subsistemas";
         _display.drawString(0, 30, subsysInfo);
         
-        // ✅ NOVO: Mostrar status do RTC no display
+        // Mostrar hora do RTC no display
         if (_rtc.isInitialized()) {
-            String rtcInfo = "RTC: " + _rtc.getTimeString();
-            _display.drawString(0, 45, rtcInfo);
+            String dt = _rtc.getDateTime();
+            String timeOnly = dt.substring(11, 19);  // Pegar apenas HH:MM:SS
+            _display.drawString(0, 45, "RTC: " + timeOnly);
+        } else {
+            _display.drawString(0, 45, "RTC: OFF");
         }
         
         _display.display();
     }
 
     _mode = MODE_PREFLIGHT;
+    
+    DEBUG_PRINTLN("");
+    DEBUG_PRINTLN("========================================");
+    DEBUG_PRINTF("Sistema inicializado: %s\n", success ? "OK" : "COM ERROS");
+    DEBUG_PRINTF("Subsistemas online: %d/7\n", subsystemsOk);
+    DEBUG_PRINTF("Heap disponível: %lu bytes\n", ESP.getFreeHeap());
+    DEBUG_PRINTLN("========================================");
+    DEBUG_PRINTLN("");
+    
     return success;
 }
 
@@ -219,11 +249,20 @@ void TelemetryManager::loop() {
     applyModeConfig(_mode);
     uint32_t currentTime = millis();
     
-    _health.update(); delay(5);
-    _power.update(); delay(5);
-    _sensors.update(); delay(10);
-    _comm.update(); delay(5);
-    _payload.update(); delay(5);
+    _health.update(); 
+    delay(5);
+    
+    _power.update(); 
+    delay(5);
+    
+    _sensors.update(); 
+    delay(10);
+    
+    _comm.update(); 
+    delay(5);
+    
+    _payload.update(); 
+    delay(5);
     
     _collectTelemetryData();
     _checkOperationalConditions();
@@ -247,7 +286,7 @@ void TelemetryManager::loop() {
 }
 
 void TelemetryManager::startMission() {
-    if (_mode == OperationMode::IN_FLIGHT || _mode == OperationMode::DESCENT) {
+    if (_mode == MODE_FLIGHT || _mode == MODE_POSTFLIGHT) {
         DEBUG_PRINTLN("[TelemetryManager] Missão já em andamento!");
         return;
     }
@@ -256,31 +295,35 @@ void TelemetryManager::startMission() {
     DEBUG_PRINTLN("[TelemetryManager] INICIANDO MISSÃO");
     DEBUG_PRINTLN("[TelemetryManager] ==========================================");
     
-    _mode = OperationMode::IN_FLIGHT;
+    _mode = MODE_FLIGHT;
     _missionActive = true;
     _missionStartTime = millis();
     
     // Log início da missão
     if (_rtc.isInitialized()) {
-        DEBUG_PRINTF("[TelemetryManager] Início: %s\n", _rtc.getISO8601().c_str());
+        DEBUG_PRINTF("[TelemetryManager] Início: %s\n", _rtc.getDateTime().c_str());
     }
     
-    DEBUG_PRINTLN("[TelemetryManager] Modo: IN-FLIGHT");
+    DEBUG_PRINTLN("[TelemetryManager] Modo: FLIGHT");
     DEBUG_PRINTLN("[TelemetryManager] Telemetria ativada");
     
     // Atualizar display
-    _display.clear();
-    _display.setFont(ArialMT_Plain_10);
-    _display.drawString(0, 0, "MISSÃO INICIADA");
-    _display.drawString(0, 15, "Modo: IN-FLIGHT");
-    
-    if (_rtc.isInitialized()) {
-        _display.drawString(0, 35, _rtc.getISO8601());
+    if (activeModeConfig->displayEnabled) {
+        _display.clear();
+        _display.setFont(ArialMT_Plain_10);
+        _display.drawString(0, 0, "MISSÃO INICIADA");
+        _display.drawString(0, 15, "Modo: FLIGHT");
+        
+        if (_rtc.isInitialized()) {
+            String dt = _rtc.getDateTime();
+            String timeOnly = dt.substring(11, 19);
+            _display.drawString(0, 35, timeOnly);
+        }
+        
+        _display.display();
     }
     
-    _display.display();
-    
-    DEBUG_PRINTLN("[TelemetryManager] ✓ Missão iniciada com sucesso!");
+    DEBUG_PRINTLN("[TelemetryManager] Missão iniciada com sucesso!");
 }
 
 void TelemetryManager::stopMission() {
@@ -296,33 +339,36 @@ void TelemetryManager::stopMission() {
     uint32_t missionDuration = millis() - _missionStartTime;
     
     if (_rtc.isInitialized()) {
-        DEBUG_PRINTF("[TelemetryManager] Fim: %s\n", _rtc.getISO8601().c_str());
+        DEBUG_PRINTF("[TelemetryManager] Fim: %s\n", _rtc.getDateTime().c_str());
     }
     
     DEBUG_PRINTF("[TelemetryManager] Duração: %lu segundos\n", missionDuration / 1000);
     
-    _mode = OperationMode::LANDED;
+    _mode = MODE_POSTFLIGHT;
     _missionActive = false;
     
     // Atualizar display
-    _display.clear();
-    _display.setFont(ArialMT_Plain_10);
-    _display.drawString(0, 0, "MISSÃO ENCERRADA");
-    _display.drawString(0, 15, "Modo: LANDED");
-    
-    if (_rtc.isInitialized()) {
-        _display.drawString(0, 35, _rtc.getISO8601());
+    if (activeModeConfig->displayEnabled) {
+        _display.clear();
+        _display.setFont(ArialMT_Plain_10);
+        _display.drawString(0, 0, "MISSÃO ENCERRADA");
+        _display.drawString(0, 15, "Modo: POST-FLIGHT");
+        
+        if (_rtc.isInitialized()) {
+            String dt = _rtc.getDateTime();
+            String timeOnly = dt.substring(11, 19);
+            _display.drawString(0, 35, timeOnly);
+        }
+        
+        char durationStr[32];
+        snprintf(durationStr, sizeof(durationStr), "Duração: %lus", missionDuration / 1000);
+        _display.drawString(0, 50, durationStr);
+        
+        _display.display();
     }
     
-    char durationStr[32];
-    snprintf(durationStr, sizeof(durationStr), "Duração: %lus", missionDuration / 1000);
-    _display.drawString(0, 50, durationStr);
-    
-    _display.display();
-    
-    DEBUG_PRINTLN("[TelemetryManager] ✓ Missão encerrada com sucesso!");
+    DEBUG_PRINTLN("[TelemetryManager] Missão encerrada com sucesso!");
 }
-
 
 OperationMode TelemetryManager::getMode() {
     return _mode;
@@ -345,13 +391,11 @@ void TelemetryManager::updateDisplay() {
 }
 
 void TelemetryManager::_collectTelemetryData() {
-    // ========================================================================
-    // ✅ CRÍTICO: USAR TIMESTAMP ABSOLUTO DO RTC EM VEZ DE millis()
-    // ========================================================================
+    // Usar timestamp do RTC se disponível
     if (_rtc.isInitialized()) {
-        _telemetryData.timestamp = _rtc.getUnixTime();  // ✅ Timestamp absoluto
+        _telemetryData.timestamp = _rtc.getUnixTime();
     } else {
-        _telemetryData.timestamp = millis();  // Fallback se RTC falhar
+        _telemetryData.timestamp = millis();
     }
     
     _telemetryData.missionTime = _health.getMissionTime();
@@ -409,11 +453,8 @@ void TelemetryManager::_collectTelemetryData() {
 }
 
 void TelemetryManager::_sendTelemetry() {
-    // ========================================================================
-    // ✅ NOVO: INCLUIR TIMESTAMP ISO8601 NOS LOGS
-    // ========================================================================
     if (_rtc.isInitialized()) {
-        DEBUG_PRINTF("[TelemetryManager] Enviando telemetria [%s]...\n", _rtc.getISO8601().c_str());
+        DEBUG_PRINTF("[TelemetryManager] Enviando telemetria [%s]...\n", _rtc.getDateTime().c_str());
     } else {
         DEBUG_PRINTLN("[TelemetryManager] Enviando telemetria...");
     }
@@ -444,11 +485,8 @@ void TelemetryManager::_sendTelemetry() {
 void TelemetryManager::_saveToStorage() {
     if (!_storage.isAvailable()) return;
     
-    // ========================================================================
-    // ✅ NOVO: LOG COM TIMESTAMP ISO8601
-    // ========================================================================
     if (_rtc.isInitialized()) {
-        DEBUG_PRINTF("[TelemetryManager] Salvando dados no SD [%s]...\n", _rtc.getISO8601().c_str());
+        DEBUG_PRINTF("[TelemetryManager] Salvando dados no SD [%s]...\n", _rtc.getDateTime().c_str());
     } else {
         DEBUG_PRINTLN("[TelemetryManager] Salvando dados no SD...");
     }
@@ -508,27 +546,25 @@ void TelemetryManager::_displayStatus() {
     }
     _display.drawString(0, 24, tempHumStr);
 
-    // ========================================================================
-    // ✅ NOVO: MOSTRAR HORA DO RTC NO DISPLAY
-    // ========================================================================
+    // Mostrar hora do RTC ou altitude
     String timeLine;
     if (_rtc.isInitialized()) {
-        timeLine = "RTC: " + _rtc.getTimeString();
+        String dt = _rtc.getDateTime();
+        timeLine = "RTC: " + dt.substring(11, 19);  // Pegar apenas HH:MM:SS
     } else {
-        String co2Str;
         if (_sensors.isCCS811Online() && !isnan(_sensors.getCO2())) {
-            timeLine = "CO2: " + String(_sensors.getCO2(), 0) + "ppm TVOC: " + String(_sensors.getTVOC(), 0) + "ppb";
+            timeLine = "CO2: " + String(_sensors.getCO2(), 0) + "ppm";
         } else {
-            timeLine = "Altitude: " + String(_sensors.getAltitude(), 0) + "m";
+            timeLine = "Alt: " + String(_sensors.getAltitude(), 0) + "m";
         }
     }
     _display.drawString(0, 36, timeLine);
 
     String statusStr = "";
     statusStr += _comm.isConnected() ? "[WiFi]" : "[NoWiFi]";
-    statusStr += _payload.isOnline() ? "[Payload]" : "[NoPayload]";
+    statusStr += _payload.isOnline() ? "[LoRa]" : "[NoLoRa]";
     statusStr += _storage.isAvailable() ? "[SD]" : "[NoSD]";
-    statusStr += _rtc.isInitialized() ? "[RTC]" : "";  // ✅ NOVO
+    statusStr += _rtc.isInitialized() ? "[RTC]" : "";
     _display.drawString(0, 48, statusStr);
 
     _display.display();
@@ -553,13 +589,12 @@ void TelemetryManager::_displayTelemetry() {
     String tempStr = "Temp: " + String(_sensors.getTemperature(), 1) + " C";
     _display.drawString(0, 36, tempStr);
 
-    String co2Str = "";
     if (_sensors.isCCS811Online() && !isnan(_sensors.getCO2())) {
-        co2Str = "CO2: " + String(_sensors.getCO2(), 0) + " ppm TVOC: " + String(_sensors.getTVOC(), 0) + " ppb";
+        String co2Str = "CO2: " + String(_sensors.getCO2(), 0) + " ppm";
         _display.drawString(0, 48, co2Str);
     }
 
-    String bottomLine = "LoRa pkts: " + String(_missionData.packetsReceived) + "  Heap: " + String(ESP.getFreeHeap() / 1024) + "K";
+    String bottomLine = "Heap: " + String(ESP.getFreeHeap() / 1024) + "K";
     _display.drawString(0, 56, bottomLine);
 
     _display.display();

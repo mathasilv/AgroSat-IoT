@@ -109,18 +109,16 @@ bool StorageManager::saveMissionData(const MissionData& data) {
 // ✅ MÉTODO ATUALIZADO COM RTC
 // ============================================================================
 bool StorageManager::logError(const String& errorMsg) {
-    if (!_available) return false;
+    if (!_available) return false;  // Manter _available (não _initialized)
     
     File file = SD.open(SD_ERROR_FILE, FILE_APPEND);
     if (!file) return false;
     
     String timestamp;
     
-    // ✅ USAR TIMESTAMP ISO8601 DO RTC SE DISPONÍVEL
     if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-        timestamp = _rtcManager->getISO8601();
+        timestamp = _rtcManager->getDateTime();  // CORRIGIDO: era getISO8601()
     } else {
-        // Fallback: usar millis()
         timestamp = String(millis());
     }
     
@@ -133,6 +131,7 @@ bool StorageManager::logError(const String& errorMsg) {
     
     return true;
 }
+
 
 bool StorageManager::createTelemetryFile() {
     if (!_available) return false;
@@ -237,32 +236,26 @@ bool StorageManager::_checkFileSize(const char* path) {
     size_t fileSize = file.size();
     file.close();
     
-    // Verificar se excedeu tamanho máximo
     if (fileSize > SD_MAX_FILE_SIZE) {
         DEBUG_PRINTF("[StorageManager] Arquivo %s excedeu tamanho máximo. Rotacionando...\n", path);
         
         String backupPath;
         
-        // ✅ USAR TIMESTAMP DO RTC NO NOME DO BACKUP
         if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-            String timestamp = _rtcManager->getDateString(); // "2025-11-10"
+            String timestamp = _rtcManager->getDateTime().substring(0, 10); // CORRIGIDO: era getDateString()
             backupPath = String(path) + "." + timestamp + ".bak";
         } else {
-            // Fallback: usar millis()
             backupPath = String(path) + "." + String(millis()) + ".bak";
         }
         
-        // Remover backup antigo se existir
         if (SD.exists(backupPath.c_str())) {
             SD.remove(backupPath.c_str());
         }
         
-        // Renomear arquivo atual para backup
         SD.rename(path, backupPath.c_str());
         
         DEBUG_PRINTF("[StorageManager] Arquivo rotacionado para: %s\n", backupPath.c_str());
         
-        // Criar novo arquivo
         if (strcmp(path, SD_LOG_FILE) == 0) {
             createTelemetryFile();
         } else if (strcmp(path, SD_MISSION_FILE) == 0) {
@@ -273,15 +266,15 @@ bool StorageManager::_checkFileSize(const char* path) {
     return true;
 }
 
+
 // ============================================================================
 // ✅ MÉTODO ATUALIZADO COM TIMESTAMP RTC
 // ============================================================================
 String StorageManager::_telemetryToCSV(const TelemetryData& data) {
     String csv = "";
     
-    // ✅ ADICIONAR TIMESTAMP ISO8601 SE RTC DISPONÍVEL
     if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-        csv += _rtcManager->getISO8601() + ",";
+        csv += _rtcManager->getDateTime() + ",";  // CORRIGIDO: era getISO8601()
     } else {
         csv += "N/A,";
     }
@@ -300,7 +293,6 @@ String StorageManager::_telemetryToCSV(const TelemetryData& data) {
     csv += String(data.accelY, 4) + ",";
     csv += String(data.accelZ, 4) + ",";
     
-    // Campos opcionais
     csv += isnan(data.humidity) ? "," : String(data.humidity, 2) + ",";
     csv += isnan(data.co2) ? "," : String(data.co2, 0) + ",";
     csv += isnan(data.tvoc) ? "," : String(data.tvoc, 0) + ",";
@@ -315,15 +307,15 @@ String StorageManager::_telemetryToCSV(const TelemetryData& data) {
     return csv;
 }
 
+
 // ============================================================================
 // ✅ MÉTODO ATUALIZADO COM TIMESTAMP RTC
 // ============================================================================
 String StorageManager::_missionToCSV(const MissionData& data) {
     String csv = "";
     
-    // ✅ ADICIONAR TIMESTAMP ISO8601 SE RTC DISPONÍVEL
     if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-        csv += _rtcManager->getISO8601() + ",";
+        csv += _rtcManager->getDateTime() + ",";  // CORRIGIDO: era getISO8601()
     } else {
         csv += "N/A,";
     }
