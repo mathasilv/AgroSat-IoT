@@ -59,7 +59,25 @@ void processSerialCommands() {
         } else {
             DEBUG_PRINTF("[Main] └─✗ Erro: Sistema não está em FLIGHT (modo atual: %d)\n", currentMode);
         }
-    } 
+    }
+    // ✅ NOVO: Comandos LoRa ON/OFF
+    else if (cmd == "LORA ON") {
+        telemetry.enableLoRa(true);
+        DEBUG_PRINTLN("[Main] └─► LoRa HABILITADO");
+    }
+    else if (cmd == "LORA OFF") {
+        telemetry.enableLoRa(false);
+        DEBUG_PRINTLN("[Main] └─► LoRa DESABILITADO");
+    }
+    // ✅ NOVO: Comandos HTTP ON/OFF
+    else if (cmd == "HTTP ON") {
+        telemetry.enableHTTP(true);
+        DEBUG_PRINTLN("[Main] └─► HTTP HABILITADO");
+    }
+    else if (cmd == "HTTP OFF") {
+        telemetry.enableHTTP(false);
+        DEBUG_PRINTLN("[Main] └─► HTTP DESABILITADO");
+    }
     else if (cmd.startsWith("MODE ")) {
         if (cmd.indexOf("FLIGHT") > 0) {
             telemetry.applyModeConfig(MODE_FLIGHT);
@@ -73,14 +91,7 @@ void processSerialCommands() {
         } else {
             DEBUG_PRINTLN("[Main] └─✗ Argumento inválido. Use FLIGHT/PREFLIGHT/SAFE.");
         }
-    } 
-    else if (cmd == "RESTART" || cmd == "R") {
-        DEBUG_PRINTLN("[Main] │");
-        DEBUG_PRINTLN("[Main] └─► REINICIANDO SISTEMA");
-        DEBUG_PRINTF("[Main]    Heap final: %lu bytes\n", ESP.getFreeHeap());
-        delay(1000);
-        ESP.restart();
-    } 
+    }
     else if (cmd == "STATUS" || cmd == "?" || cmd == "INFO") {
         DEBUG_PRINTLN("[Main] │");
         DEBUG_PRINTLN("[Main] ╔════════════════════════════════════════╗");
@@ -101,8 +112,10 @@ void processSerialCommands() {
         DEBUG_PRINTF("[Main] ║ Uptime:  %lu segundos%-16s║\n", millis()/1000, "");
         DEBUG_PRINTF("[Main] ║ Heap:    %lu KB%-22s║\n", ESP.getFreeHeap()/1024, "");
         DEBUG_PRINTF("[Main] ║ WiFi:    %-29s ║\n", WiFi.isConnected() ? "Conectado" : "Desconectado");
+        DEBUG_PRINTF("[Main] ║ LoRa:    %-29s ║\n", telemetry.isLoRaEnabled() ? "Habilitado" : "Desabilitado");
+        DEBUG_PRINTF("[Main] ║ HTTP:    %-29s ║\n", telemetry.isHTTPEnabled() ? "Habilitado" : "Desabilitado");
         DEBUG_PRINTLN("[Main] ╚════════════════════════════════════════╝");
-    } 
+    }
     else if (cmd == "HELP" || cmd == "H" || cmd == "AJUDA") {
         DEBUG_PRINTLN("[Main] │");
         DEBUG_PRINTLN("[Main] ╔════════════════════════════════════════╗");
@@ -113,11 +126,19 @@ void processSerialCommands() {
         DEBUG_PRINTLN("[Main] ║ MODE FLIGHT     - Modo eficiente       ║");
         DEBUG_PRINTLN("[Main] ║ MODE PREFLIGHT  - Debug completo       ║");
         DEBUG_PRINTLN("[Main] ║ MODE SAFE       - Modo degradado       ║");
+        DEBUG_PRINTLN("[Main] ║ LORA ON/OFF     - Controlar LoRa       ║");  // ✅ NOVO
+        DEBUG_PRINTLN("[Main] ║ HTTP ON/OFF     - Controlar HTTP       ║");  // ✅ NOVO
         DEBUG_PRINTLN("[Main] ║ STATUS / ?      - Mostrar status       ║");
         DEBUG_PRINTLN("[Main] ║ RESTART / R     - Reiniciar ESP32      ║");
         DEBUG_PRINTLN("[Main] ║ HELP  / H       - Esta mensagem        ║");
         DEBUG_PRINTLN("[Main] ╚════════════════════════════════════════╝");
-    } 
+    }
+    else if (cmd == "RESTART" || cmd == "R") {
+        DEBUG_PRINTLN("[Main] │");
+        DEBUG_PRINTLN("[Main] └─► REINICIANDO SISTEMA");
+        delay(1000);
+        ESP.restart();
+    }
     else {
         DEBUG_PRINTF("[Main] └─✗ Comando desconhecido: '%s'\n", cmd.c_str());
         DEBUG_PRINTLN("[Main]    Digite 'HELP' para lista de comandos");
@@ -125,6 +146,7 @@ void processSerialCommands() {
     
     DEBUG_PRINTLN("");
 }
+
 
 void printPeriodicStatus() {
     unsigned long currentTime = millis();

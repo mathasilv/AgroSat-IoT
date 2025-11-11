@@ -13,7 +13,8 @@ DisplayManager::DisplayManager() :
     _currentState(DISPLAY_BOOT),
     _lastTelemetryScreen(DISPLAY_TELEMETRY_1),
     _lastScreenChange(0),
-    _screenInterval(SCREEN_DURATION)
+    _screenInterval(SCREEN_DURATION),
+    _isDisplayOn(false)  // ✅ NOVO: Inicia desligado
 {
 }
 
@@ -27,18 +28,42 @@ bool DisplayManager::begin() {
     _display.setTextSize(1);
     _display.display();
     
+    _isDisplayOn = true;  // ✅ Marca como ligado após init
+    
     return true;
 }
 
 void DisplayManager::clear() {
+    if (!_isDisplayOn) return;  // ✅ Proteção
+    
     _display.clearDisplay();
     _display.display();
+}
+
+// ✅ NOVO: Desligamento físico total
+void DisplayManager::turnOff() {
+    _display.clearDisplay();
+    _display.display();
+    _display.ssd1306_command(SSD1306_DISPLAYOFF);  // Comando físico de desligamento
+    _isDisplayOn = false;
+    
+    DEBUG_PRINTLN("[DisplayManager] Display DESLIGADO fisicamente");
+}
+
+// ✅ NOVO: Religamento
+void DisplayManager::turnOn() {
+    _display.ssd1306_command(SSD1306_DISPLAYON);
+    _isDisplayOn = true;
+    
+    DEBUG_PRINTLN("[DisplayManager] Display LIGADO");
 }
 
 // ========================================
 // TELA DE BOOT
 // ========================================
 void DisplayManager::showBoot() {
+    if (!_isDisplayOn) return;  // ✅ Proteção
+    
     _currentState = DISPLAY_BOOT;
     _display.clearDisplay();
     
@@ -64,6 +89,8 @@ void DisplayManager::showBoot() {
 // INICIALIZAÇÃO DE SENSORES
 // ========================================
 void DisplayManager::showSensorInit(const char* sensorName, bool status) {
+    if (!_isDisplayOn) return;  // ✅ Proteção
+    
     _currentState = DISPLAY_INIT_SENSORS;
     
     // Não limpar tela, apenas adicionar linha
@@ -96,6 +123,8 @@ void DisplayManager::showSensorInit(const char* sensorName, bool status) {
 // CALIBRAÇÃO DO IMU
 // ========================================
 void DisplayManager::showCalibration(uint8_t progress) {
+    if (!_isDisplayOn) return;  // ✅ Proteção
+    
     _currentState = DISPLAY_CALIBRATION;
     _display.clearDisplay();
     
@@ -115,6 +144,8 @@ void DisplayManager::showCalibration(uint8_t progress) {
 }
 
 void DisplayManager::showCalibrationResult(float offsetX, float offsetY, float offsetZ) {
+    if (!_isDisplayOn) return;  // ✅ Proteção
+    
     _display.clearDisplay();
     
     _drawHeader("CALIBRADO!");
@@ -135,6 +166,8 @@ void DisplayManager::showCalibrationResult(float offsetX, float offsetY, float o
 // SISTEMA PRONTO
 // ========================================
 void DisplayManager::showReady() {
+    if (!_isDisplayOn) return;  // ✅ Proteção
+    
     _currentState = DISPLAY_READY;
     _display.clearDisplay();
     
@@ -158,6 +191,8 @@ void DisplayManager::showReady() {
 // ATUALIZAÇÃO DE TELEMETRIA (ROTAÇÃO)
 // ========================================
 void DisplayManager::updateTelemetry(const TelemetryData& data) {
+    if (!_isDisplayOn) return;  // ✅ CRÍTICO: Não atualiza se display está off
+    
     uint32_t currentTime = millis();
     
     // Rotacionar telas automaticamente
@@ -380,6 +415,8 @@ void DisplayManager::_drawProgressBar(uint8_t progress, const char* label) {
 }
 
 void DisplayManager::displayMessage(const char* title, const char* msg) {
+    if (!_isDisplayOn) return;  // ✅ Proteção
+    
     _display.clearDisplay();
     _drawHeader(title);
     

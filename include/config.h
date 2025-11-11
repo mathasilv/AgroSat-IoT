@@ -1,17 +1,13 @@
 /**
  * @file config.h
  * @brief Configurações globais do CubeSat AgroSat-IoT - VERSÃO OTIMIZADA
- * @version 4.0.0
+ * @version 4.1.0
  * @date 2025-11-11
  * 
- * CHANGELOG v4.0.0:
- * - [CRÍTICO] Adicionado mutex I2C/SPI para thread-safety
- * - [CRÍTICO] Corrigido timezone offset RTC
- * - [GRAVE] Aumentado warmup CCS811 para 20s
- * - [OTIM] Ajustado duty cycle LoRa para compliance ANATEL
- * - [OTIM] Buffers estáticos para zero heap fragmentation
- * - [NEW] Modo SAFE para degradação controlada
- * - [NEW] Buffer circular telemetria (10 slots)
+ * CHANGELOG v4.1.0:
+ * - [NEW] Controle de LoRa e HTTP por modo operacional
+ * - [NEW] Flags loraEnabled e httpEnabled nos ModeConfig
+ * - [NEW] Comandos serial para controle: LORA ON/OFF, HTTP ON/OFF
  */
 
 #ifndef CONFIG_H
@@ -24,7 +20,7 @@
 // ============================================================================
 #define MISSION_NAME "AgroSat-IoT"
 #define TEAM_CATEGORY "N3"
-#define FIRMWARE_VERSION "4.0.0"
+#define FIRMWARE_VERSION "4.1.0"
 #define BUILD_DATE __DATE__
 #define BUILD_TIME __TIME__
 #define TEAM_ID 666
@@ -54,10 +50,10 @@
 
 #define SENSOR_I2C_SDA 21
 #define SENSOR_I2C_SCL 22
-#define I2C_FREQUENCY 100000  // 100kHz (testado com todos sensores)
+#define I2C_FREQUENCY 100000
 
 #define BATTERY_PIN 35
-#define BATTERY_SAMPLES 16  // Oversampling 16 amostras
+#define BATTERY_SAMPLES 16
 #define BATTERY_VREF 3.6
 #define BATTERY_DIVIDER 2.0
 
@@ -74,7 +70,7 @@ enum OperationMode : uint8_t {
     MODE_PREFLIGHT = 1,
     MODE_FLIGHT = 2,
     MODE_POSTFLIGHT = 3,
-    MODE_SAFE = 4,      // NOVO: Modo degradado
+    MODE_SAFE = 4,
     MODE_ERROR = 5
 };
 
@@ -82,34 +78,44 @@ struct ModeConfig {
     bool displayEnabled;
     bool serialLogsEnabled;
     bool sdLogsVerbose;
+    bool loraEnabled;        // ✅ NOVO: Controle LoRa
+    bool httpEnabled;        // ✅ NOVO: Controle HTTP
     uint32_t telemetrySendInterval;
     uint32_t storageSaveInterval;
     uint8_t wifiDutyCycle;
 };
 
+// ✅ PREFLIGHT: Tudo habilitado para testes
 const ModeConfig PREFLIGHT_CONFIG = {
     true,   // displayEnabled
     true,   // serialLogsEnabled
     true,   // sdLogsVerbose
+    false,   // loraEnabled - LoRa ATIVO
+    false,   // httpEnabled - HTTP ATIVO
     30000,  // telemetrySendInterval (30s)
     60000,  // storageSaveInterval (1min)
     100     // wifiDutyCycle (sempre ligado)
 };
 
+// ✅ FLIGHT: Operação eficiente, ambos ativos
 const ModeConfig FLIGHT_CONFIG = {
     false,   // displayEnabled
     false,   // serialLogsEnabled
     false,   // sdLogsVerbose
+    true,    // loraEnabled - LoRa ATIVO (missão)
+    true,    // httpEnabled - HTTP ATIVO (missão)
     240000,  // telemetrySendInterval (4min - OBSAT)
     240000,  // storageSaveInterval (4min)
     5        // wifiDutyCycle (5%)
 };
 
-// NOVO: Modo SAFE
+// ✅ SAFE: Modo degradado, APENAS LoRa (economia extrema)
 const ModeConfig SAFE_CONFIG = {
     false,   // displayEnabled
     true,    // serialLogsEnabled (manter debug)
     true,    // sdLogsVerbose
+    true,    // loraEnabled - LoRa ATIVO (comunicação crítica)
+    false,   // httpEnabled - HTTP DESLIGADO (economia)
     120000,  // telemetrySendInterval (2min)
     300000,  // storageSaveInterval (5min)
     0        // wifiDutyCycle (desligar WiFi)
@@ -138,7 +144,7 @@ const ModeConfig SAFE_CONFIG = {
 #define CCS811_READ_INTERVAL 5000
 #define SI7021_READ_INTERVAL 2000
 #define MPU9250_CALIBRATION_SAMPLES 100
-#define CCS811_WARMUP_TIME 20000  // 20s obrigatório
+#define CCS811_WARMUP_TIME 20000
 
 // ============================================================================
 // LIMITES DE VALIDAÇÃO DE SENSORES
@@ -168,12 +174,10 @@ const ModeConfig SAFE_CONFIG = {
 // ============================================================================
 // COMUNICAÇÃO - LORA (ANATEL COMPLIANCE)
 // ============================================================================
-// Resolução ANATEL 680/2017: 915MHz = 1% duty cycle
 #define LORA_MAX_TX_TIME_MS 2000
 #define LORA_DUTY_CYCLE_PERCENT 1.0
 #define LORA_MIN_INTERVAL_MS ((uint32_t)(LORA_MAX_TX_TIME_MS * (100.0 / LORA_DUTY_CYCLE_PERCENT)))
 
-// Parâmetros LoRa otimizados
 #define LORA_SPREADING_FACTOR 12
 #define LORA_SIGNAL_BANDWIDTH 125E3
 #define LORA_CODING_RATE 8
@@ -226,9 +230,7 @@ const ModeConfig SAFE_CONFIG = {
 #define NTP_SERVER_SECONDARY "time.google.com"
 #define NTP_SERVER_TERTIARY  "time.cloudflare.com"
 #define TIMEZONE_STRING      "<-03>3"
-
-// CORRIGIDO: RTC armazena UTC, aplicar offset apenas para display local
-#define RTC_TIMEZONE_OFFSET -10800  // GMT-3 (apenas para display)
+#define RTC_TIMEZONE_OFFSET -10800
 
 // ============================================================================
 // DEBUG (segue modo operacional)
@@ -249,7 +251,7 @@ extern bool currentSerialLogsEnabled;
 // ESTRUTURAS DE DADOS - COMPATÍVEL OBSAT
 // ============================================================================
 struct TelemetryData {
-    unsigned long timestamp;      // Unix UTC (SEM offset!)
+    unsigned long timestamp;
     unsigned long missionTime;
     
     float batteryVoltage;
@@ -266,7 +268,7 @@ struct TelemetryData {
     float co2;
     float tvoc;
     
-    float magX, magY, magZ;  // Magnetômetro
+    float magX, magY, magZ;
     
     uint8_t systemStatus;
     uint16_t errorCount;

@@ -1,7 +1,7 @@
 /**
  * @file TelemetryManager.cpp
  * @brief VERSÃO DUAL MODE COM RTC DS3231 SIMPLIFICADO
- * @version 3.2.0
+ * @version 4.0.0
  * @date 2025-11-11
  */
 #include "TelemetryManager.h"
@@ -21,7 +21,7 @@ TelemetryManager::TelemetryManager() :
     _lastDisplayUpdate(0),
     _lastHeapCheck(0),
     _minHeapSeen(UINT32_MAX),
-    _useNewDisplay(true)  // ✅ ADICIONAR (usar novo sistema por padrão)
+    _useNewDisplay(true)
 {
     memset(&_telemetryData, 0, sizeof(TelemetryData));
     memset(&_missionData, 0, sizeof(MissionData));
@@ -43,11 +43,7 @@ bool TelemetryManager::_initI2CBus() {
         
         Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
         Wire.setClock(100000);
-        
-        // ✅ SOLUÇÃO: Aumentar timeout I2C do ESP32
-        // 200.000 ticks @ 80MHz = 2.5ms * 20 = 50ms timeout
-        // (suficiente para conversão 14-bit do SI7021 = 22ms máx)
-        Wire.setTimeOut(200);  // 200ms timeout (padrão é 50ms)
+        Wire.setTimeOut(200);
         
         delay(300);
         i2cInitialized = true;
@@ -56,7 +52,6 @@ bool TelemetryManager::_initI2CBus() {
         
         DEBUG_PRINTLN("[TelemetryManager] Dispositivos no barramento:");
         
-        // Scanner I2C para debug
         uint8_t devicesFound = 0;
         for (uint8_t addr = 1; addr < 127; addr++) {
             Wire.beginTransmission(addr);
@@ -87,21 +82,50 @@ void TelemetryManager::applyModeConfig(OperationMode mode) {
         case MODE_FLIGHT: 
             activeModeConfig = &FLIGHT_CONFIG; 
             break;
+        case MODE_SAFE:
+            activeModeConfig = &SAFE_CONFIG;
+            break;
         default: 
             activeModeConfig = &PREFLIGHT_CONFIG; 
             break;
     }
+    
+    // Aplica flag global de logs
     currentSerialLogsEnabled = activeModeConfig->serialLogsEnabled;
     
-    if (!activeModeConfig->displayEnabled) {
-        _display.displayOff();
+    // ✅ CONTROLE FÍSICO DO DISPLAY
+    if (_useNewDisplay) {
+        if (activeModeConfig->displayEnabled) {
+            _displayMgr.turnOn();
+        } else {
+            _displayMgr.turnOff();
+        }
     } else {
-        _display.displayOn();
+        if (!activeModeConfig->displayEnabled) {
+            _display.displayOff();
+        } else {
+            _display.displayOn();
+        }
     }
+    
+    // ✅ NOVO: Aplicar configuração LoRa/HTTP
+    _comm.enableLoRa(activeModeConfig->loraEnabled);
+    _comm.enableHTTP(activeModeConfig->httpEnabled);
+    
+    DEBUG_PRINTF("[TelemetryManager] Modo aplicado: %d | Display: %s | Logs: %s | LoRa: %s | HTTP: %s\n",
+                 mode,
+                 activeModeConfig->displayEnabled ? "ON" : "OFF",
+                 activeModeConfig->serialLogsEnabled ? "ON" : "OFF",
+                 activeModeConfig->loraEnabled ? "ON" : "OFF",
+                 activeModeConfig->httpEnabled ? "ON" : "OFF");
 }
 
+
 bool TelemetryManager::begin() {
+    // ✅ Aplicar config PREFLIGHT uma única vez no início
+    _mode = MODE_PREFLIGHT;
     applyModeConfig(MODE_PREFLIGHT);
+    
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("  AgroSat-IoT CubeSat - OBSAT Fase 2");
@@ -133,7 +157,6 @@ bool TelemetryManager::begin() {
             DEBUG_PRINTLN("[TelemetryManager] DisplayManager FAILED, tentando sistema legado...");
             _useNewDisplay = false;
             
-            // FALLBACK: Usar sistema legado
             delay(100);
             if (_display.init()) {
                 _display.flipScreenVertically();
@@ -284,7 +307,6 @@ bool TelemetryManager::begin() {
     if (_useNewDisplay && displayOk) {
         _displayMgr.showReady();
     } else if (displayOk) {
-        // Sistema legado
         _display.clear();
         _display.drawString(0, 0, success ? "Sistema OK!" : "ERRO Sistema!");
         _display.drawString(0, 15, "Modo: PRE-FLIGHT");
@@ -301,8 +323,6 @@ bool TelemetryManager::begin() {
         
         _display.display();
     }
-
-    _mode = MODE_PREFLIGHT;
     
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========================================");
@@ -315,9 +335,8 @@ bool TelemetryManager::begin() {
     return success;
 }
 
-
 void TelemetryManager::loop() {
-    applyModeConfig(_mode);
+    // ✅ NÃO chamar applyModeConfig() aqui!
     uint32_t currentTime = millis();
     
     _health.update(); 
@@ -348,12 +367,11 @@ void TelemetryManager::loop() {
         _saveToStorage();
     }
     
-    // ✅ USAR DISPLAYMANAGER (rotação automática) ou sistema legado
+    // ✅ SÓ ATUALIZA DISPLAY SE ESTIVER HABILITADO
     if (activeModeConfig->displayEnabled) {
         if (_useNewDisplay) {
-            _displayMgr.updateTelemetry(_telemetryData);  // Rotação automática a cada 3s
+            _displayMgr.updateTelemetry(_telemetryData);
         } else {
-            // FALLBACK: Sistema legado (atualiza a cada 2s)
             if (currentTime - _lastDisplayUpdate >= 2000) {
                 _lastDisplayUpdate = currentTime;
                 updateDisplay();
@@ -363,7 +381,6 @@ void TelemetryManager::loop() {
     
     delay(20);
 }
-
 
 void TelemetryManager::startMission() {
     if (_mode == MODE_FLIGHT || _mode == MODE_POSTFLIGHT) {
@@ -375,49 +392,38 @@ void TelemetryManager::startMission() {
     DEBUG_PRINTLN("[TelemetryManager] INICIANDO MISSÃO");
     DEBUG_PRINTLN("[TelemetryManager] ==========================================");
     
-    _mode = MODE_FLIGHT;
-    _missionActive = true;
-    _missionStartTime = millis();
-    
-    // Log início da missão
+    // ✅ Log de timestamp ANTES de desligar logs
     if (_rtc.isInitialized()) {
         DEBUG_PRINTF("[TelemetryManager] Início: %s\n", _rtc.getDateTime().c_str());
     }
     
-    DEBUG_PRINTLN("[TelemetryManager] Modo: FLIGHT");
-    DEBUG_PRINTLN("[TelemetryManager] Telemetria ativada");
-    
-    // ✅ CORREÇÃO: Verificar qual sistema de display usar
-    if (activeModeConfig->displayEnabled) {
-        if (_useNewDisplay) {
-            // Usar DisplayManager
-            _displayMgr.displayMessage("MISSAO", "INICIADA");
-        } else {
-            // Usar sistema legado (se foi inicializado)
-            _display.clear();
-            _display.setFont(ArialMT_Plain_10);
-            _display.drawString(0, 0, "MISSÃO INICIADA");
-            _display.drawString(0, 15, "Modo: FLIGHT");
-            
-            if (_rtc.isInitialized()) {
-                String dt = _rtc.getDateTime();
-                String timeOnly = dt.substring(11, 19);
-                _display.drawString(0, 35, timeOnly);
-            }
-            
-            _display.display();
-        }
+    // ✅ Mensagem no display ANTES de desligar
+    if (_useNewDisplay && _displayMgr.isOn()) {
+        _displayMgr.displayMessage("MISSAO", "INICIADA");
+        delay(2000);  // Tempo para usuário ver a mensagem
     }
     
+    // ✅ AGORA sim, mudar para FLIGHT e aplicar config
+    _mode = MODE_FLIGHT;
+    _missionActive = true;
+    _missionStartTime = millis();
+    
+    applyModeConfig(MODE_FLIGHT);  // ← Aqui desliga display/logs
+    
+    // ✅ Última mensagem antes do silêncio (se logs ainda estiverem ativos)
+    DEBUG_PRINTLN("[TelemetryManager] Modo FLIGHT ativado");
+    DEBUG_PRINTLN("[TelemetryManager] Display: OFF | Logs: OFF");
     DEBUG_PRINTLN("[TelemetryManager] Missão iniciada com sucesso!");
 }
-
 
 void TelemetryManager::stopMission() {
     if (!_missionActive) {
         DEBUG_PRINTLN("[TelemetryManager] Nenhuma missão ativa!");
         return;
     }
+    
+    // ✅ REATIVAR LOGS/DISPLAY ANTES DE MOSTRAR MENSAGENS
+    applyModeConfig(MODE_PREFLIGHT);
     
     DEBUG_PRINTLN("[TelemetryManager] ==========================================");
     DEBUG_PRINTLN("[TelemetryManager] ENCERRANDO MISSÃO");
@@ -434,32 +440,10 @@ void TelemetryManager::stopMission() {
     _mode = MODE_POSTFLIGHT;
     _missionActive = false;
     
-    // ✅ CORREÇÃO: Verificar qual sistema de display usar
-    if (activeModeConfig->displayEnabled) {
-        if (_useNewDisplay) {
-            // Usar DisplayManager
-            char durationStr[32];
-            snprintf(durationStr, sizeof(durationStr), "Duracao: %lus", missionDuration / 1000);
-            _displayMgr.displayMessage("MISSAO", durationStr);
-        } else {
-            // Usar sistema legado
-            _display.clear();
-            _display.setFont(ArialMT_Plain_10);
-            _display.drawString(0, 0, "MISSÃO ENCERRADA");
-            _display.drawString(0, 15, "Modo: POST-FLIGHT");
-            
-            if (_rtc.isInitialized()) {
-                String dt = _rtc.getDateTime();
-                String timeOnly = dt.substring(11, 19);
-                _display.drawString(0, 35, timeOnly);
-            }
-            
-            char durationStr[32];
-            snprintf(durationStr, sizeof(durationStr), "Duração: %lus", missionDuration / 1000);
-            _display.drawString(0, 50, durationStr);
-            
-            _display.display();
-        }
+    if (_useNewDisplay) {
+        char durationStr[32];
+        snprintf(durationStr, sizeof(durationStr), "%lus", missionDuration / 1000);
+        _displayMgr.displayMessage("MISSAO COMPLETA", durationStr);
     }
     
     DEBUG_PRINTLN("[TelemetryManager] Missão encerrada com sucesso!");
@@ -468,7 +452,6 @@ void TelemetryManager::stopMission() {
 OperationMode TelemetryManager::getMode() {
     return _mode;
 }
-
 void TelemetryManager::updateDisplay() {
     // Este método continua existindo como fallback
     // Só será usado se DisplayManager falhar
@@ -714,10 +697,6 @@ void TelemetryManager::_checkOperationalConditions() {
     if (!_sensors.isBMP280Online()) { 
         _health.reportError(STATUS_SENSOR_ERROR, "BMP280 offline"); 
         _sensors.resetAll(); 
-    }
-    
-    if (_mode == MODE_FLIGHT && !_health.isMissionActive()) { 
-        stopMission(); 
     }
     
     uint32_t currentHeap = ESP.getFreeHeap();

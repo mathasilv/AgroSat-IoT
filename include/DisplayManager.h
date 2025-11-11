@@ -40,6 +40,11 @@ public:
     // Utilitários
     void clear();
     void displayMessage(const char* title, const char* msg);
+    
+    // ✅ NOVO: Desligamento físico total
+    void turnOff();
+    void turnOn();
+    bool isOn() const { return _isDisplayOn; }
 
 private:
     Adafruit_SSD1306 _display;
@@ -47,6 +52,7 @@ private:
     DisplayState _lastTelemetryScreen;
     uint32_t _lastScreenChange;
     uint32_t _screenInterval;
+    bool _isDisplayOn;  // ✅ NOVO: Flag de controle
     
     // Métodos internos de renderização
     void _showTelemetry1(const TelemetryData& data);

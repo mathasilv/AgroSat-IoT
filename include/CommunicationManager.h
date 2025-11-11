@@ -1,19 +1,12 @@
-/**
- * @file CommunicationManager.h
- * @brief Gerenciador de comunicação DUAL MODE: LoRa + WiFi/HTTP
- * @version 4.0.0
- * @date 2025-11-11
- */
-
-#ifndef COMMUNICATIONMANAGER_H
-#define COMMUNICATIONMANAGER_H
+#ifndef COMMUNICATION_MANAGER_H
+#define COMMUNICATION_MANAGER_H
 
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <SPI.h>
-#include <LoRa.h>
 #include <ArduinoJson.h>
+#include <LoRa.h>
+#include <SPI.h>
 #include "config.h"
 
 class CommunicationManager {
@@ -31,19 +24,25 @@ public:
     String getIPAddress();
     bool testConnection();
     
-    // HTTP/OBSAT
+    // Telemetria
     bool sendTelemetry(const TelemetryData& data);
     void getStatistics(uint16_t& sent, uint16_t& failed, uint16_t& retries);
     
-    // LoRa (NOVO - ÚNICO GERENCIADOR)
+    // LoRa
     bool initLoRa();
     bool sendLoRa(const String& data);
     bool sendLoRaTelemetry(const TelemetryData& data);
-    bool receiveLoRaPacket(String& packet, int& rssi, float& snr);  // ADICIONADO
+    bool receiveLoRaPacket(String& packet, int& rssi, float& snr);
     bool isLoRaOnline();
     int getLoRaRSSI();
     float getLoRaSNR();
     void getLoRaStatistics(uint16_t& sent, uint16_t& failed);
+    
+    // ✅ NOVO: Controle de transmissão
+    void enableLoRa(bool enable);
+    void enableHTTP(bool enable);
+    bool isLoRaEnabled() const { return _loraEnabled; }
+    bool isHTTPEnabled() const { return _httpEnabled; }
 
 private:
     // WiFi/HTTP
@@ -63,11 +62,14 @@ private:
     uint16_t _loraPacketsFailed;
     unsigned long _lastLoRaTransmission;
     
+    // ✅ NOVO: Flags de controle
+    bool _loraEnabled;
+    bool _httpEnabled;
+    
     // Métodos privados
     String _createTelemetryJSON(const TelemetryData& data);
     String _createLoRaPayload(const TelemetryData& data);
     bool _sendHTTPPost(const String& jsonPayload);
-    bool _waitForConnection(uint32_t timeoutMs);
 };
 
-#endif // COMMUNICATIONMANAGER_H
+#endif

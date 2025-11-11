@@ -25,7 +25,9 @@ CommunicationManager::CommunicationManager() :
     _loraSNR(0.0),
     _loraPacketsSent(0),
     _loraPacketsFailed(0),
-    _lastLoRaTransmission(0)
+    _lastLoRaTransmission(0),
+    _loraEnabled(true),      // ✅ NOVO: Iniciado como habilitado
+    _httpEnabled(true)       // ✅ NOVO: Iniciado como habilitado
 {
 }
 
@@ -98,6 +100,11 @@ bool CommunicationManager::initLoRa() {
 }
 
 bool CommunicationManager::sendLoRa(const String& data) {
+    if (!_loraEnabled) {
+        DEBUG_PRINTLN("[CommunicationManager] LoRa desabilitado");
+        return false;
+    }
+    
     if (!_loraInitialized) {
         _loraPacketsFailed++;
         return false;
@@ -105,7 +112,7 @@ bool CommunicationManager::sendLoRa(const String& data) {
     
     unsigned long now = millis();
     
-    // DUTY CYCLE ANATEL (200s entre transmissões)
+    // DUTY CYCLE ANATEL
     if (now - _lastLoRaTransmission < LORA_MIN_INTERVAL_MS) {
         uint32_t waitTime = (LORA_MIN_INTERVAL_MS - (now - _lastLoRaTransmission)) / 1000;
         DEBUG_PRINTF("[CommunicationManager] Duty cycle: aguarde %lu s\n", waitTime);
@@ -130,7 +137,7 @@ bool CommunicationManager::sendLoRa(const String& data) {
         DEBUG_PRINTLN("[CommunicationManager] ✗ Falha na transmissão");
     }
     
-    LoRa.receive();  // Voltar para RX
+    LoRa.receive();
     return success;
 }
 
@@ -265,49 +272,69 @@ void CommunicationManager::disconnectWiFi() {
     DEBUG_PRINTLN("[CommunicationManager] WiFi desconectado");
 }
 
+void CommunicationManager::enableLoRa(bool enable) {
+    _loraEnabled = enable;
+    DEBUG_PRINTF("[CommunicationManager] LoRa %s\n", enable ? "HABILITADO" : "DESABILITADO");
+}
+
+void CommunicationManager::enableHTTP(bool enable) {
+    _httpEnabled = enable;
+    DEBUG_PRINTF("[CommunicationManager] HTTP %s\n", enable ? "HABILITADO" : "DESABILITADO");
+}
+
 bool CommunicationManager::sendTelemetry(const TelemetryData& data) {
-    // 1. ENVIAR VIA LORA
-    if (_loraInitialized) {
+    bool loraSuccess = false;
+    bool httpSuccess = false;
+    
+    // 1. ENVIAR VIA LORA (se habilitado)
+    if (_loraEnabled && _loraInitialized) {
         DEBUG_PRINTLN("[CommunicationManager] >>> Enviando via LoRa...");
-        sendLoRaTelemetry(data);
+        loraSuccess = sendLoRaTelemetry(data);
+    } else if (!_loraEnabled) {
+        DEBUG_PRINTLN("[CommunicationManager] LoRa desabilitado (pulando)");
     }
     
-    // 2. ENVIAR VIA HTTP
-    if (!_connected) {
+    // 2. ENVIAR VIA HTTP (se habilitado)
+    if (_httpEnabled && _connected) {
+        String jsonPayload = _createTelemetryJSON(data);
+        DEBUG_PRINTLN("[CommunicationManager] >>> Enviando HTTP/OBSAT...");
+        DEBUG_PRINTF("[CommunicationManager] JSON size: %d bytes\n", jsonPayload.length());
+
+        if (jsonPayload.length() > JSON_MAX_SIZE) {
+            DEBUG_PRINTF("[CommunicationManager] ERRO: JSON muito grande (%d > %d)\n", 
+                        jsonPayload.length(), JSON_MAX_SIZE);
+            _packetsFailed++;
+        } else {
+            for (uint8_t attempt = 0; attempt < WIFI_RETRY_ATTEMPTS; attempt++) {
+                if (attempt > 0) {
+                    _totalRetries++;
+                    DEBUG_PRINTF("[CommunicationManager] Tentativa %d/%d...\n", 
+                                attempt + 1, WIFI_RETRY_ATTEMPTS);
+                    delay(1000);
+                }
+
+                if (_sendHTTPPost(jsonPayload)) {
+                    _packetsSent++;
+                    httpSuccess = true;
+                    DEBUG_PRINTLN("[CommunicationManager] HTTP enviado com sucesso!");
+                    break;
+                }
+            }
+            
+            if (!httpSuccess) {
+                _packetsFailed++;
+                DEBUG_PRINTLN("[CommunicationManager] Falha HTTP após todas tentativas");
+            }
+        }
+    } else if (!_httpEnabled) {
+        DEBUG_PRINTLN("[CommunicationManager] HTTP desabilitado (pulando)");
+    } else if (!_connected) {
         DEBUG_PRINTLN("[CommunicationManager] Sem WiFi para HTTP");
         _packetsFailed++;
-        return false;
     }
-
-    String jsonPayload = _createTelemetryJSON(data);
-    DEBUG_PRINTLN("[CommunicationManager] >>> Enviando HTTP/OBSAT...");
-    DEBUG_PRINTF("[CommunicationManager] JSON size: %d bytes\n", jsonPayload.length());
-
-    if (jsonPayload.length() > JSON_MAX_SIZE) {
-        DEBUG_PRINTF("[CommunicationManager] ERRO: JSON muito grande (%d > %d)\n", 
-                    jsonPayload.length(), JSON_MAX_SIZE);
-        _packetsFailed++;
-        return false;
-    }
-
-    for (uint8_t attempt = 0; attempt < WIFI_RETRY_ATTEMPTS; attempt++) {
-        if (attempt > 0) {
-            _totalRetries++;
-            DEBUG_PRINTF("[CommunicationManager] Tentativa %d/%d...\n", 
-                        attempt + 1, WIFI_RETRY_ATTEMPTS);
-            delay(1000);
-        }
-
-        if (_sendHTTPPost(jsonPayload)) {
-            _packetsSent++;
-            DEBUG_PRINTLN("[CommunicationManager] HTTP enviado com sucesso!");
-            return true;
-        }
-    }
-
-    _packetsFailed++;
-    DEBUG_PRINTLN("[CommunicationManager] Falha HTTP após todas tentativas");
-    return false;
+    
+    // Retorna sucesso se PELO MENOS UM método funcionou
+    return (loraSuccess || httpSuccess);
 }
 
 bool CommunicationManager::isConnected() {

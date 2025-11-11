@@ -33,6 +33,11 @@ public:
     void testLoRaTransmission();
     void sendCustomLoRa(const String& message);
     void printLoRaStats();
+    void enableLoRa(bool enable) { _comm.enableLoRa(enable); }
+    void enableHTTP(bool enable) { _comm.enableHTTP(enable); }
+    bool isLoRaEnabled() const { return _comm.isLoRaEnabled(); }
+    bool isHTTPEnabled() const { return _comm.isHTTPEnabled(); }
+    
 
 private:
     // Subsistemas
