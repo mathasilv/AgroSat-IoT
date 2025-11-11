@@ -1,8 +1,8 @@
 /**
  * @file TelemetryManager.cpp
- * @brief VERSÃO DUAL MODE: FLIGHT/PREFLIGHT + SENSORES PION REAIS
- * @version 3.0.0
- * @date 2025-11-09
+ * @brief VERSÃO DUAL MODE COM RTC DS3231 INTEGRADO
+ * @version 3.1.0
+ * @date 2025-11-10
  */
 #include "TelemetryManager.h"
 #include "config.h"
@@ -16,6 +16,8 @@ TelemetryManager::TelemetryManager() :
     _mode(MODE_INIT),
     _lastTelemetrySend(0),
     _lastStorageSave(0),
+    _missionActive(false),        // ← ADICIONAR
+    _missionStartTime(0),          // ← ADICIONAR
     _lastDisplayUpdate(0),
     _lastHeapCheck(0),
     _minHeapSeen(UINT32_MAX)
@@ -101,6 +103,27 @@ bool TelemetryManager::begin() {
     bool success = true;
     uint8_t subsystemsOk = 0;
 
+    // ========================================================================
+    // ✅ NOVO: INICIALIZAR RTC ANTES DOS OUTROS SUBSISTEMAS
+    // ========================================================================
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC Manager...");
+    if (_rtc.begin()) {
+        subsystemsOk++;
+        DEBUG_PRINTLN("[TelemetryManager] ✓ RTC Manager OK");
+        
+        // Verificar se tempo do RTC é válido
+        RTCStatus rtcStatus = _rtc.getStatus();
+        if (!rtcStatus.timeValid) {
+            DEBUG_PRINTLN("[TelemetryManager] ! RTC com tempo inválido, será sincronizado com NTP");
+        } else {
+            DEBUG_PRINTF("[TelemetryManager] RTC time: %s\n", _rtc.getISO8601().c_str());
+            DEBUG_PRINTF("[TelemetryManager] RTC temp: %.2f°C\n", rtcStatus.temperature);
+        }
+    } else {
+        // RTC não é crítico, sistema pode funcionar sem ele
+        DEBUG_PRINTLN("[TelemetryManager] ! RTC Manager FAILED (não-crítico)");
+    }
+
     DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
     if (_health.begin()) {
         subsystemsOk++;
@@ -137,6 +160,11 @@ bool TelemetryManager::begin() {
         DEBUG_PRINTLN("[TelemetryManager] ! Storage Manager FAILED");
     }
 
+    if (_rtc.isInitialized()) {
+        _storage.setRTCManager(&_rtc);
+        DEBUG_PRINTLN("[TelemetryManager] RTC conectado ao StorageManager");
+    }
+
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Payload Manager...");
     if (_payload.begin()) {
         subsystemsOk++;
@@ -150,6 +178,18 @@ bool TelemetryManager::begin() {
     if (_comm.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] ✓ Communication Manager OK");
+        
+        // ====================================================================
+        // ✅ NOVO: SINCRONIZAR RTC COM NTP SE WIFI DISPONÍVEL
+        // ====================================================================
+        if (_rtc.isInitialized() && _comm.isConnected()) {
+            DEBUG_PRINTLN("[TelemetryManager] Tentando sincronizar RTC com NTP...");
+            if (_rtc.syncWithNTP(WIFI_SSID, WIFI_PASSWORD)) {
+                DEBUG_PRINTLN("[TelemetryManager] ✓ RTC sincronizado com NTP");
+            } else {
+                DEBUG_PRINTLN("[TelemetryManager] ! Falha na sincronização NTP (não-crítico)");
+            }
+        }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] ! Communication Manager FAILED");
@@ -159,8 +199,15 @@ bool TelemetryManager::begin() {
         _display.clear();
         _display.drawString(0, 0, success ? "Sistema OK!" : "ERRO Sistema!");
         _display.drawString(0, 15, "Modo: PRE-FLIGHT");
-        String subsysInfo = String(subsystemsOk) + "/6 subsistemas";
+        String subsysInfo = String(subsystemsOk) + "/7 subsistemas";  // ✅ Mudou de 6 para 7
         _display.drawString(0, 30, subsysInfo);
+        
+        // ✅ NOVO: Mostrar status do RTC no display
+        if (_rtc.isInitialized()) {
+            String rtcInfo = "RTC: " + _rtc.getTimeString();
+            _display.drawString(0, 45, rtcInfo);
+        }
+        
         _display.display();
     }
 
@@ -171,60 +218,111 @@ bool TelemetryManager::begin() {
 void TelemetryManager::loop() {
     applyModeConfig(_mode);
     uint32_t currentTime = millis();
+    
     _health.update(); delay(5);
     _power.update(); delay(5);
     _sensors.update(); delay(10);
     _comm.update(); delay(5);
     _payload.update(); delay(5);
+    
     _collectTelemetryData();
     _checkOperationalConditions();
+    
     if (currentTime - _lastTelemetrySend >= activeModeConfig->telemetrySendInterval) {
         _lastTelemetrySend = currentTime;
         _sendTelemetry();
     }
+    
     if (currentTime - _lastStorageSave >= activeModeConfig->storageSaveInterval) {
         _lastStorageSave = currentTime;
         _saveToStorage();
     }
+    
     if (activeModeConfig->displayEnabled && (currentTime - _lastDisplayUpdate >= 2000)) {
         _lastDisplayUpdate = currentTime;
         updateDisplay();
     }
+    
     delay(20);
 }
 
 void TelemetryManager::startMission() {
-    DEBUG_PRINTLN("[TelemetryManager] INICIANDO MISSÃO!");
-    _mode = MODE_FLIGHT;
-    applyModeConfig(_mode);
-    _health.startMission();
-    _lastTelemetrySend = millis();
-    _lastStorageSave = millis();
-
-    if (activeModeConfig->displayEnabled) {
-        _display.clear();
-        _display.drawString(0, 0, "MISSAO INICIADA");
-        _display.drawString(0, 20, "Modo: FLIGHT");
-        _display.display();
-        delay(1500);
-        _display.displayOff();
+    if (_mode == OperationMode::IN_FLIGHT || _mode == OperationMode::DESCENT) {
+        DEBUG_PRINTLN("[TelemetryManager] Missão já em andamento!");
+        return;
     }
+    
+    DEBUG_PRINTLN("[TelemetryManager] ==========================================");
+    DEBUG_PRINTLN("[TelemetryManager] INICIANDO MISSÃO");
+    DEBUG_PRINTLN("[TelemetryManager] ==========================================");
+    
+    _mode = OperationMode::IN_FLIGHT;
+    _missionActive = true;
+    _missionStartTime = millis();
+    
+    // Log início da missão
+    if (_rtc.isInitialized()) {
+        DEBUG_PRINTF("[TelemetryManager] Início: %s\n", _rtc.getISO8601().c_str());
+    }
+    
+    DEBUG_PRINTLN("[TelemetryManager] Modo: IN-FLIGHT");
+    DEBUG_PRINTLN("[TelemetryManager] Telemetria ativada");
+    
+    // Atualizar display
+    _display.clear();
+    _display.setFont(ArialMT_Plain_10);
+    _display.drawString(0, 0, "MISSÃO INICIADA");
+    _display.drawString(0, 15, "Modo: IN-FLIGHT");
+    
+    if (_rtc.isInitialized()) {
+        _display.drawString(0, 35, _rtc.getISO8601());
+    }
+    
+    _display.display();
+    
+    DEBUG_PRINTLN("[TelemetryManager] ✓ Missão iniciada com sucesso!");
 }
 
 void TelemetryManager::stopMission() {
-    DEBUG_PRINTLN("[TelemetryManager] MISSÃO FINALIZADA!");
-    _mode = MODE_POSTFLIGHT;
-    applyModeConfig(_mode);
-    _sendTelemetry();
-    _saveToStorage();
-    if (activeModeConfig->displayEnabled) {
-        _display.clear();
-        _display.drawString(0, 0, "MISSAO COMPLETA");
-        String heapInfo = "MIN: " + String(_minHeapSeen / 1024) + "KB";
-        _display.drawString(0, 20, heapInfo);
-        _display.display();
+    if (!_missionActive) {
+        DEBUG_PRINTLN("[TelemetryManager] Nenhuma missão ativa!");
+        return;
     }
+    
+    DEBUG_PRINTLN("[TelemetryManager] ==========================================");
+    DEBUG_PRINTLN("[TelemetryManager] ENCERRANDO MISSÃO");
+    DEBUG_PRINTLN("[TelemetryManager] ==========================================");
+    
+    uint32_t missionDuration = millis() - _missionStartTime;
+    
+    if (_rtc.isInitialized()) {
+        DEBUG_PRINTF("[TelemetryManager] Fim: %s\n", _rtc.getISO8601().c_str());
+    }
+    
+    DEBUG_PRINTF("[TelemetryManager] Duração: %lu segundos\n", missionDuration / 1000);
+    
+    _mode = OperationMode::LANDED;
+    _missionActive = false;
+    
+    // Atualizar display
+    _display.clear();
+    _display.setFont(ArialMT_Plain_10);
+    _display.drawString(0, 0, "MISSÃO ENCERRADA");
+    _display.drawString(0, 15, "Modo: LANDED");
+    
+    if (_rtc.isInitialized()) {
+        _display.drawString(0, 35, _rtc.getISO8601());
+    }
+    
+    char durationStr[32];
+    snprintf(durationStr, sizeof(durationStr), "Duração: %lus", missionDuration / 1000);
+    _display.drawString(0, 50, durationStr);
+    
+    _display.display();
+    
+    DEBUG_PRINTLN("[TelemetryManager] ✓ Missão encerrada com sucesso!");
 }
+
 
 OperationMode TelemetryManager::getMode() {
     return _mode;
@@ -247,7 +345,15 @@ void TelemetryManager::updateDisplay() {
 }
 
 void TelemetryManager::_collectTelemetryData() {
-    _telemetryData.timestamp = millis();
+    // ========================================================================
+    // ✅ CRÍTICO: USAR TIMESTAMP ABSOLUTO DO RTC EM VEZ DE millis()
+    // ========================================================================
+    if (_rtc.isInitialized()) {
+        _telemetryData.timestamp = _rtc.getUnixTime();  // ✅ Timestamp absoluto
+    } else {
+        _telemetryData.timestamp = millis();  // Fallback se RTC falhar
+    }
+    
     _telemetryData.missionTime = _health.getMissionTime();
     _telemetryData.batteryVoltage = _power.getVoltage();
     _telemetryData.batteryPercentage = _power.getPercentage();
@@ -303,7 +409,15 @@ void TelemetryManager::_collectTelemetryData() {
 }
 
 void TelemetryManager::_sendTelemetry() {
-    DEBUG_PRINTLN("[TelemetryManager] Enviando telemetria...");
+    // ========================================================================
+    // ✅ NOVO: INCLUIR TIMESTAMP ISO8601 NOS LOGS
+    // ========================================================================
+    if (_rtc.isInitialized()) {
+        DEBUG_PRINTF("[TelemetryManager] Enviando telemetria [%s]...\n", _rtc.getISO8601().c_str());
+    } else {
+        DEBUG_PRINTLN("[TelemetryManager] Enviando telemetria...");
+    }
+    
     DEBUG_PRINTF("  Temp: %.2f°C, Pressão: %.2f hPa, Alt: %.1f m\n",
         _telemetryData.temperature, _telemetryData.pressure, _telemetryData.altitude);
     DEBUG_PRINTF("  Gyro: [%.4f, %.4f, %.4f] rad/s\n",
@@ -329,7 +443,16 @@ void TelemetryManager::_sendTelemetry() {
 
 void TelemetryManager::_saveToStorage() {
     if (!_storage.isAvailable()) return;
-    DEBUG_PRINTLN("[TelemetryManager] Salvando dados no SD...");
+    
+    // ========================================================================
+    // ✅ NOVO: LOG COM TIMESTAMP ISO8601
+    // ========================================================================
+    if (_rtc.isInitialized()) {
+        DEBUG_PRINTF("[TelemetryManager] Salvando dados no SD [%s]...\n", _rtc.getISO8601().c_str());
+    } else {
+        DEBUG_PRINTLN("[TelemetryManager] Salvando dados no SD...");
+    }
+    
     if (_storage.saveTelemetry(_telemetryData)) { 
         DEBUG_PRINTLN("[TelemetryManager] Telemetria salva no SD"); 
     }
@@ -385,18 +508,27 @@ void TelemetryManager::_displayStatus() {
     }
     _display.drawString(0, 24, tempHumStr);
 
-    String co2Str;
-    if (_sensors.isCCS811Online() && !isnan(_sensors.getCO2())) {
-        co2Str = "CO2: " + String(_sensors.getCO2(), 0) + "ppm TVOC: " + String(_sensors.getTVOC(), 0) + "ppb";
+    // ========================================================================
+    // ✅ NOVO: MOSTRAR HORA DO RTC NO DISPLAY
+    // ========================================================================
+    String timeLine;
+    if (_rtc.isInitialized()) {
+        timeLine = "RTC: " + _rtc.getTimeString();
     } else {
-        co2Str = "Altitude: " + String(_sensors.getAltitude(), 0) + "m";
+        String co2Str;
+        if (_sensors.isCCS811Online() && !isnan(_sensors.getCO2())) {
+            timeLine = "CO2: " + String(_sensors.getCO2(), 0) + "ppm TVOC: " + String(_sensors.getTVOC(), 0) + "ppb";
+        } else {
+            timeLine = "Altitude: " + String(_sensors.getAltitude(), 0) + "m";
+        }
     }
-    _display.drawString(0, 36, co2Str);
+    _display.drawString(0, 36, timeLine);
 
     String statusStr = "";
     statusStr += _comm.isConnected() ? "[WiFi]" : "[NoWiFi]";
     statusStr += _payload.isOnline() ? "[Payload]" : "[NoPayload]";
     statusStr += _storage.isAvailable() ? "[SD]" : "[NoSD]";
+    statusStr += _rtc.isInitialized() ? "[RTC]" : "";  // ✅ NOVO
     _display.drawString(0, 48, statusStr);
 
     _display.display();

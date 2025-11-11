@@ -49,7 +49,7 @@
 
 #define BATTERY_PIN 35
 #define BATTERY_SAMPLES 10
-#define BATTERY_VREF 3.3
+#define BATTERY_VREF 3.6
 #define BATTERY_DIVIDER 2.0
 
 #ifndef LED_BUILTIN
@@ -106,7 +106,7 @@ const ModeConfig FLIGHT_CONFIG = {
 #define USE_CCS811      // CO2 + VOC
 
 // Endereços I2C
-#define MPU9250_ADDRESS 0x68
+#define MPU9250_ADDRESS 0x69
 #define BMP280_ADDR_1 0x76
 #define BMP280_ADDR_2 0x77
 #define SI7021_ADDRESS 0x40
@@ -188,10 +188,10 @@ const ModeConfig FLIGHT_CONFIG = {
 #define SD_ERROR_FILE "/errors.log"
 #define SD_MAX_FILE_SIZE 10485760
 
-#define BATTERY_MIN_VOLTAGE 3.3
+#define BATTERY_MIN_VOLTAGE 3.7
 #define BATTERY_MAX_VOLTAGE 4.2
-#define BATTERY_CRITICAL 3.3
-#define BATTERY_LOW 3.5
+#define BATTERY_CRITICAL 3.9
+#define BATTERY_LOW 3.8
 
 #define DEEP_SLEEP_DURATION 3600
 #define MISSION_DURATION_MS 7200000
@@ -201,6 +201,12 @@ const ModeConfig FLIGHT_CONFIG = {
 #define MAX_ALTITUDE 30000
 #define MIN_TEMPERATURE -80
 #define MAX_TEMPERATURE 85
+
+// Servidores NTP (múltiplos para fallback)
+#define NTP_SERVER_PRIMARY   "pool.ntp.org"          // Global
+#define NTP_SERVER_SECONDARY "time.google.com"        // Google
+#define NTP_SERVER_TERTIARY  "time.cloudflare.com"    // Cloudflare
+#define TIMEZONE_STRING      "<-03>3"                  // Brasil GMT-3
 
 // ============================================================================
 // DEBUG (segue modo operacional)

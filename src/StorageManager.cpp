@@ -1,14 +1,18 @@
 /**
  * @file StorageManager.cpp
- * @brief Implementação do gerenciador de armazenamento
+ * @brief Implementação do gerenciador de armazenamento - COM RTC
+ * @version 1.1.0
+ * @date 2025-11-10
  */
 
 #include "StorageManager.h"
+#include "RTCManager.h"  // ✅ NOVO
 
 SPIClass spiSD(HSPI);
 
 StorageManager::StorageManager() :
-    _available(false)
+    _available(false),
+    _rtcManager(nullptr)  // ✅ NOVO
 {
 }
 
@@ -101,14 +105,26 @@ bool StorageManager::saveMissionData(const MissionData& data) {
     return true;
 }
 
+// ============================================================================
+// ✅ MÉTODO ATUALIZADO COM RTC
+// ============================================================================
 bool StorageManager::logError(const String& errorMsg) {
     if (!_available) return false;
     
     File file = SD.open(SD_ERROR_FILE, FILE_APPEND);
     if (!file) return false;
     
-    // Formato: [timestamp] erro
-    String logLine = "[" + String(millis()) + "] " + errorMsg;
+    String timestamp;
+    
+    // ✅ USAR TIMESTAMP ISO8601 DO RTC SE DISPONÍVEL
+    if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
+        timestamp = _rtcManager->getISO8601();
+    } else {
+        // Fallback: usar millis()
+        timestamp = String(millis());
+    }
+    
+    String logLine = "[" + timestamp + "] " + errorMsg;
     file.println(logLine);
     
     file.close();
@@ -134,8 +150,8 @@ bool StorageManager::createTelemetryFile() {
         return false;
     }
     
-    // Header CSV
-    file.println("Timestamp,MissionTime,BatteryVoltage,BatteryPercentage,Temperature,Pressure,Altitude,GyroX,GyroY,GyroZ,AccelX,AccelY,AccelZ,Status,Errors,Payload");
+    // ✅ HEADER CSV ATUALIZADO COM TIMESTAMP REAL
+    file.println("ISO8601,UnixTimestamp,MissionTime,BatteryVoltage,BatteryPercentage,Temperature,Pressure,Altitude,GyroX,GyroY,GyroZ,AccelX,AccelY,AccelZ,Humidity,CO2,TVOC,MagX,MagY,MagZ,Status,Errors,Payload");
     
     file.close();
     
@@ -159,8 +175,8 @@ bool StorageManager::createMissionFile() {
         return false;
     }
     
-    // Header CSV
-    file.println("Timestamp,SoilMoisture,AmbientTemp,Humidity,IrrigationStatus,RSSI,SNR,PacketsReceived,PacketsLost,LastRx");
+    // ✅ HEADER CSV ATUALIZADO
+    file.println("ISO8601,UnixTimestamp,SoilMoisture,AmbientTemp,Humidity,IrrigationStatus,RSSI,SNR,PacketsReceived,PacketsLost,LastRx");
     
     file.close();
     
@@ -209,6 +225,9 @@ File StorageManager::_openFile(const char* path) {
     return SD.open(path, FILE_APPEND);
 }
 
+// ============================================================================
+// ✅ MÉTODO ATUALIZADO COM RTC
+// ============================================================================
 bool StorageManager::_checkFileSize(const char* path) {
     if (!SD.exists(path)) return false;
     
@@ -222,8 +241,16 @@ bool StorageManager::_checkFileSize(const char* path) {
     if (fileSize > SD_MAX_FILE_SIZE) {
         DEBUG_PRINTF("[StorageManager] Arquivo %s excedeu tamanho máximo. Rotacionando...\n", path);
         
-        // Criar nome do arquivo de backup
-        String backupPath = String(path) + ".old";
+        String backupPath;
+        
+        // ✅ USAR TIMESTAMP DO RTC NO NOME DO BACKUP
+        if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
+            String timestamp = _rtcManager->getDateString(); // "2025-11-10"
+            backupPath = String(path) + "." + timestamp + ".bak";
+        } else {
+            // Fallback: usar millis()
+            backupPath = String(path) + "." + String(millis()) + ".bak";
+        }
         
         // Remover backup antigo se existir
         if (SD.exists(backupPath.c_str())) {
@@ -232,6 +259,8 @@ bool StorageManager::_checkFileSize(const char* path) {
         
         // Renomear arquivo atual para backup
         SD.rename(path, backupPath.c_str());
+        
+        DEBUG_PRINTF("[StorageManager] Arquivo rotacionado para: %s\n", backupPath.c_str());
         
         // Criar novo arquivo
         if (strcmp(path, SD_LOG_FILE) == 0) {
@@ -244,8 +273,18 @@ bool StorageManager::_checkFileSize(const char* path) {
     return true;
 }
 
+// ============================================================================
+// ✅ MÉTODO ATUALIZADO COM TIMESTAMP RTC
+// ============================================================================
 String StorageManager::_telemetryToCSV(const TelemetryData& data) {
     String csv = "";
+    
+    // ✅ ADICIONAR TIMESTAMP ISO8601 SE RTC DISPONÍVEL
+    if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
+        csv += _rtcManager->getISO8601() + ",";
+    } else {
+        csv += "N/A,";
+    }
     
     csv += String(data.timestamp) + ",";
     csv += String(data.missionTime) + ",";
@@ -260,6 +299,15 @@ String StorageManager::_telemetryToCSV(const TelemetryData& data) {
     csv += String(data.accelX, 4) + ",";
     csv += String(data.accelY, 4) + ",";
     csv += String(data.accelZ, 4) + ",";
+    
+    // Campos opcionais
+    csv += isnan(data.humidity) ? "," : String(data.humidity, 2) + ",";
+    csv += isnan(data.co2) ? "," : String(data.co2, 0) + ",";
+    csv += isnan(data.tvoc) ? "," : String(data.tvoc, 0) + ",";
+    csv += isnan(data.magX) ? "," : String(data.magX, 2) + ",";
+    csv += isnan(data.magY) ? "," : String(data.magY, 2) + ",";
+    csv += isnan(data.magZ) ? "," : String(data.magZ, 2) + ",";
+    
     csv += String(data.systemStatus) + ",";
     csv += String(data.errorCount) + ",";
     csv += String(data.payload);
@@ -267,8 +315,18 @@ String StorageManager::_telemetryToCSV(const TelemetryData& data) {
     return csv;
 }
 
+// ============================================================================
+// ✅ MÉTODO ATUALIZADO COM TIMESTAMP RTC
+// ============================================================================
 String StorageManager::_missionToCSV(const MissionData& data) {
     String csv = "";
+    
+    // ✅ ADICIONAR TIMESTAMP ISO8601 SE RTC DISPONÍVEL
+    if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
+        csv += _rtcManager->getISO8601() + ",";
+    } else {
+        csv += "N/A,";
+    }
     
     csv += String(millis()) + ",";
     csv += String(data.soilMoisture, 2) + ",";

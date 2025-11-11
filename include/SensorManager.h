@@ -17,6 +17,8 @@
 #include <Adafruit_Si7021.h>
 #include <Adafruit_CCS811.h>
 
+extern TwoWire I2C_Sensors;
+
 class SensorManager {
 public:
     SensorManager();
