@@ -290,5 +290,6 @@ enum SystemStatus : uint8_t {
 };
 
 #define RTC_TIMEZONE_OFFSET -10800
+#define ENABLE_HTTP_POST false
 
 #endif // CONFIG_H

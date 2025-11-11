@@ -259,6 +259,12 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data) {
         return false;
     }
 
+        if (!ENABLE_HTTP_POST) {
+        DEBUG_PRINTLN("[CommunicationManager] Envio HTTP desativado (ENABLE_HTTP_POST = false)");
+        DEBUG_PRINTLN("[CommunicationManager] Telemetria enviada apenas via LoRa e SD Card");
+        return true;  // Retorna sucesso (LoRa foi enviado com sucesso)
+    }
+
     String jsonPayload = _createTelemetryJSON(data);
     DEBUG_PRINTLN("[CommunicationManager] >>> Enviando telemetria HTTP/OBSAT...");
     DEBUG_PRINTF("[CommunicationManager] JSON size: %d bytes\n", jsonPayload.length());
@@ -385,63 +391,70 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
     return output;
 }
 
-
 bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
-    HTTPClient http;
     
-    String url = String("https://") + HTTP_SERVER + HTTP_ENDPOINT;
-    
-    DEBUG_PRINTF("[CommunicationManager] URL: %s\n", url.c_str());
-    
-    http.begin(url);
-    http.setTimeout(HTTP_TIMEOUT_MS);
-    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-    http.addHeader("Content-Type", "application/json");
-    
-    int httpCode = http.POST(jsonPayload);
-    bool success = false;
-    
-    if (httpCode > 0) {
-        DEBUG_PRINTF("[CommunicationManager] HTTP Code: %d\n", httpCode);
+    if (ENABLE_HTTP_POST) {
+        HTTPClient http;
         
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
-            String response = http.getString();
-            DEBUG_PRINTF("[CommunicationManager] Resposta: %s\n", response.c_str());
+        String url = String("https://") + HTTP_SERVER + HTTP_ENDPOINT;
+        
+        DEBUG_PRINTF("[CommunicationManager] URL: %s\n", url.c_str());
+        
+        http.begin(url);
+        http.setTimeout(HTTP_TIMEOUT_MS);
+        http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+        http.addHeader("Content-Type", "application/json");
+        
+        int httpCode = http.POST(jsonPayload);
+        bool success = false;
+        
+        if (httpCode > 0) {
+            DEBUG_PRINTF("[CommunicationManager] HTTP Code: %d\n", httpCode);
             
-            if (response.indexOf("sucesso") >= 0 || response.indexOf("Sucesso") >= 0) {
-                success = true;
-            } else {
-                StaticJsonDocument<256> responseDoc;
-                DeserializationError error = deserializeJson(responseDoc, response);
+            if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
+                String response = http.getString();
+                DEBUG_PRINTF("[CommunicationManager] Resposta: %s\n", response.c_str());
                 
-                if (!error) {
-                    const char* status = responseDoc["Status"];
-                    if (status != nullptr) {
-                        DEBUG_PRINTF("[CommunicationManager] Status OBSAT: %s\n", status);
-                        String statusStr = String(status);
-                        if (statusStr.indexOf("Sucesso") >= 0 || statusStr.indexOf("sucesso") >= 0) {
-                            success = true;
-                        }
-                    }
-                } else {
+                if (response.indexOf("sucesso") >= 0 || response.indexOf("Sucesso") >= 0) {
                     success = true;
+                } else {
+                    StaticJsonDocument<256> responseDoc;
+                    DeserializationError error = deserializeJson(responseDoc, response);
+                    
+                    if (!error) {
+                        const char* status = responseDoc["Status"];
+                        if (status != nullptr) {
+                            DEBUG_PRINTF("[CommunicationManager] Status OBSAT: %s\n", status);
+                            String statusStr = String(status);
+                            if (statusStr.indexOf("Sucesso") >= 0 || statusStr.indexOf("sucesso") >= 0) {
+                                success = true;
+                            }
+                        }
+                    } else {
+                        success = true;
+                    }
                 }
+                
+            } else if (httpCode == HTTP_CODE_MOVED_PERMANENTLY || httpCode == HTTP_CODE_FOUND) {
+                String location = http.getLocation();
+                DEBUG_PRINTF("[CommunicationManager] Redirect detectado para: %s\n", location.c_str());
+            } else if (httpCode >= 400 && httpCode < 500) {
+                DEBUG_PRINTF("[CommunicationManager] Erro cliente HTTP: %d\n", httpCode);
+            } else if (httpCode >= 500) {
+                DEBUG_PRINTF("[CommunicationManager] Erro servidor HTTP: %d\n", httpCode);
             }
-            
-        } else if (httpCode == HTTP_CODE_MOVED_PERMANENTLY || httpCode == HTTP_CODE_FOUND) {
-            String location = http.getLocation();
-            DEBUG_PRINTF("[CommunicationManager] Redirect detectado para: %s\n", location.c_str());
-        } else if (httpCode >= 400 && httpCode < 500) {
-            DEBUG_PRINTF("[CommunicationManager] Erro cliente HTTP: %d\n", httpCode);
-        } else if (httpCode >= 500) {
-            DEBUG_PRINTF("[CommunicationManager] Erro servidor HTTP: %d\n", httpCode);
+        } else {
+            DEBUG_PRINTF("[CommunicationManager] Erro de conexão: %s\n", http.errorToString(httpCode).c_str());
         }
+        
+        http.end();
+        return success;
+        
     } else {
-        DEBUG_PRINTF("[CommunicationManager] Erro de conexão: %s\n", http.errorToString(httpCode).c_str());
+        // ENABLE_HTTP_POST está desativado
+        DEBUG_PRINTLN("[CommunicationManager] Envio HTTP desativado (ENABLE_HTTP_POST = false)");
+        return false;  // Retorna falso sem tentar enviar
     }
-    
-    http.end();
-    return success;
 }
 
 bool CommunicationManager::_waitForConnection(uint32_t timeoutMs) {
