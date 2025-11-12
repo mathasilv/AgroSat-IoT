@@ -1,0 +1,227 @@
+# AgroSat-IoT
+
+Sistema de Monitoramento Remoto de Cultivos por CubeSat desenvolvido pela Equipe Orbitalis para a Olimpíada Brasileira de Satélites OBSAT MCTI - Fase 2.
+
+## Visão Geral
+
+O AgroSat-IoT é um CubeSat 1U dedicado ao monitoramento remoto de plantações em áreas de difícil acesso, funcionando como nó intermediário em uma rede IoT agrícola. O sistema coleta dados de sensores terrestres via comunicação LoRa, processa as informações utilizando ESP32 e retransmite os dados consolidados para estações terrenas.
+
+## Especificações Técnicas
+
+### Hardware
+
+- Plataforma: TTGO LoRa32 V2.1 (ESP32 + LoRa SX1276)
+- IMU: MPU9250 (9 eixos: giroscópio, acelerômetro, magnetômetro)
+- Sensor de Pressão: BMP280
+- Sensor de Umidade/Temperatura: SI7021
+- Sensor de Qualidade do Ar: CCS811 (CO2 + TVOC)
+- RTC: DS3231 com bateria backup
+- Display: OLED SSD1306 128x64
+- Armazenamento: MicroSD Card
+- Estrutura: CubeSat 1U (100x100x100mm) em PLA/PETG
+
+### Comunicação
+
+- LoRa: 915 MHz 
+- WiFi: IEEE 802.11 b/g/n
+- HTTP: Telemetria para servidor obsat
+
+## Arquitetura do Software
+
+### Estrutura de Diretórios
+
+```
+AgroSat-IoT/
+├── include/               # Headers dos módulos
+│   ├── config.h          # Configurações globais e definições
+│   ├── SensorManager.h   # Gerenciamento de sensores
+│   ├── CommunicationManager.h  # LoRa + WiFi/HTTP
+│   ├── TelemetryManager.h      # Orquestração do sistema
+│   ├── StorageManager.h        # Persistência SD Card
+│   ├── PowerManager.h          # Gerenciamento de bateria
+│   ├── DisplayManager.h        # Interface visual
+│   ├── PayloadManager.h        # Protocolo missão LoRa
+│   ├── SystemHealth.h          # Monitoramento de saúde
+│   └── RTCManager.h            # Sincronização temporal
+├── src/                   # Implementações
+├── platformio.ini        # Configuração PlatformIO
+└── README.md
+```
+
+### Modos Operacionais
+
+O sistema implementa três modos de operação distintos:
+
+**PRE-FLIGHT (Testes)**
+- Display: LIGADO
+- Logs Serial: LIGADOS
+- Telemetria: A cada 30s
+- WiFi: Ativo (duty cycle 100%)
+- LoRa: Desabilitado por padrão
+- HTTP: Desabilitado por padrão
+
+**FLIGHT (Missão)**
+- Display: DESLIGADO (economia de energia)
+- Logs Serial: DESLIGADOS
+- Telemetria: A cada 4min (requisito OBSAT)
+- WiFi: Ativo (duty cycle 5%)
+- LoRa: HABILITADO
+- HTTP: HABILITADO
+
+**SAFE (Degradado)**
+- Display: DESLIGADO
+- Logs Serial: LIGADOS (debug)
+- Telemetria: A cada 2min
+- WiFi: DESLIGADO
+- LoRa: HABILITADO (comunicação crítica)
+- HTTP: DESABILITADO
+
+## Instalação
+
+### Requisitos
+
+- PlatformIO Core 6.0+
+- VSCode com extensão PlatformIO
+- Python 3.7+ (para ferramentas)
+- Git
+
+### Configuração
+
+```bash
+# Clonar repositório
+git clone https://github.com/mathasilv/AgroSat-IoT.git
+cd AgroSat-IoT
+git checkout feature/dual_mode_flight_prefight
+
+# Compilar
+pio run
+
+# Upload para ESP32
+pio run --target upload
+
+# Monitor serial
+pio device monitor
+```
+
+### Configuração WiFi
+
+Editar `include/config.h`:
+
+```cpp
+#define WIFI_SSID "SUA_REDE"
+#define WIFI_PASSWORD "SUA_SENHA"
+```
+
+## Uso
+
+### Comandos Serial
+
+Conectar à porta serial (115200 baud) e enviar:
+
+```
+START / S / 1       - Iniciar missão (PRE-FLIGHT -> FLIGHT)
+STOP  / P / 0       - Parar missão (FLIGHT -> PRE-FLIGHT)
+MODE FLIGHT         - Forçar modo FLIGHT
+MODE PREFLIGHT      - Forçar modo PRE-FLIGHT
+MODE SAFE           - Forçar modo SAFE
+LORA ON/OFF         - Habilitar/desabilitar LoRa
+HTTP ON/OFF         - Habilitar/desabilitar HTTP
+STATUS / ?          - Mostrar status do sistema
+RESTART / R         - Reiniciar ESP32
+HELP / H            - Lista de comandos
+```
+
+### Formato de Telemetria
+
+#### JSON HTTP (para OBSAT)
+
+```json
+{
+  "equipe": 666,
+  "bateria": 85,
+  "temperatura": 24.5,
+  "pressao": 1013.2,
+  "giroscopio": [0.02, -0.01, 0.00],
+  "acelerometro": [0.0, 0.0, 9.81],
+  "payload": {
+    "alt": 1234.5,
+    "hum": 65,
+    "co2": 450,
+    "tvoc": 120,
+    "magX": 25.4,
+    "magY": -12.8,
+    "magZ": 45.2,
+    "stat": "ok",
+    "time": 3600
+  }
+}
+```
+
+#### Payload LoRa (compacto)
+
+```
+T666,B85.0,T24.5,P1013,A1234,G0.02,-0.01,0.00,A0.0,0.0,9.81
+```
+
+## Validação e Testes
+
+### Checklist Pré-Voo
+
+- [ ] Todos sensores online (MPU9250, BMP280, SI7021, CCS811)
+- [ ] RTC sincronizado com NTP
+- [ ] Cartão SD formatado e funcional
+- [ ] Bateria com carga completa (4.2V)
+- [ ] LoRa transmitindo teste de beacon
+- [ ] WiFi conectado ao servidor OBSAT
+- [ ] Display mostrando telemetria
+- [ ] Isolamento térmico da bateria instalado
+
+## Estrutura de Dados
+
+### TelemetryData
+
+```cpp
+struct TelemetryData {
+    unsigned long timestamp;      // Unix timestamp (RTC)
+    unsigned long missionTime;    // Tempo desde início missão
+    float batteryVoltage;         // Tensão bateria (V)
+    float batteryPercentage;      // Carga bateria (%)
+    float temperature;            // Temperatura BMP280 (°C)
+    float temperatureSI;          // Temperatura SI7021 (°C)
+    float pressure;               // Pressão atmosférica (hPa)
+    float gyroX, gyroY, gyroZ;   // Giroscópio (rad/s)
+    float accelX, accelY, accelZ; // Acelerômetro (m/s²)
+    float altitude;               // Altitude calculada (m)
+    float humidity;               // Umidade relativa (%)
+    float co2;                    // CO2 (ppm)
+    float tvoc;                   // TVOC (ppb)
+    float magX, magY, magZ;      // Magnetômetro (µT)
+    uint8_t systemStatus;         // Status do sistema
+    uint16_t errorCount;          // Contador de erros
+    char payload[90];             // Payload missão (JSON)
+};
+```
+
+## Contribuindo
+
+Este projeto é parte da competição OBSAT MCTI 2025-2026. Contribuições são bem-vindas após o término da competição.
+
+## Equipe Orbitalis
+
+- Matheus Aparecido Souza Silva - Desenvolvedor
+- Luana Sthephany Rodrigues Mamed - Desenvolvedora
+- Prof. Aldo Diaz - Orientador Técnico
+
+Instituição: Universidade Federal de Goiás (UFG)
+Estado: Goiás
+Categoria: N3 (Ensino Superior)
+ID da Equipe: 
+
+## Referências
+
+- Edital OBSAT MCTI Modalidade Prática 3: https://obsat.org.br
+- Regulamentação ANATEL: Resolução nº 680/2017
+- ESP32 Technical Reference: Espressif Systems
+- LoRa Alliance: https://lora-alliance.org
+- MPU9250 Datasheet: InvenSense
+- CubeSat Design Specification Rev.14
