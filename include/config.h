@@ -78,26 +78,24 @@ struct ModeConfig {
     bool displayEnabled;
     bool serialLogsEnabled;
     bool sdLogsVerbose;
-    bool loraEnabled;        // ✅ NOVO: Controle LoRa
-    bool httpEnabled;        // ✅ NOVO: Controle HTTP
+    bool loraEnabled;       
+    bool httpEnabled;       
     uint32_t telemetrySendInterval;
     uint32_t storageSaveInterval;
     uint8_t wifiDutyCycle;
 };
 
-// ✅ PREFLIGHT: Tudo habilitado para testes
 const ModeConfig PREFLIGHT_CONFIG = {
     true,   // displayEnabled
     true,   // serialLogsEnabled
     true,   // sdLogsVerbose
-    false,   // loraEnabled - LoRa ATIVO
-    false,   // httpEnabled - HTTP ATIVO
-    30000,  // telemetrySendInterval (30s)
+    true,   // loraEnabled 
+    false,   // httpEnabled
+    5000,  // telemetrySendInterval (30s)
     60000,  // storageSaveInterval (1min)
     100     // wifiDutyCycle (sempre ligado)
 };
 
-// ✅ FLIGHT: Operação eficiente, ambos ativos
 const ModeConfig FLIGHT_CONFIG = {
     false,   // displayEnabled
     false,   // serialLogsEnabled
@@ -109,7 +107,6 @@ const ModeConfig FLIGHT_CONFIG = {
     5        // wifiDutyCycle (5%)
 };
 
-// ✅ SAFE: Modo degradado, APENAS LoRa (economia extrema)
 const ModeConfig SAFE_CONFIG = {
     false,   // displayEnabled
     true,    // serialLogsEnabled (manter debug)
@@ -174,8 +171,8 @@ const ModeConfig SAFE_CONFIG = {
 // ============================================================================
 // COMUNICAÇÃO - LORA (ANATEL COMPLIANCE)
 // ============================================================================
-#define LORA_MAX_TX_TIME_MS 2000
-#define LORA_DUTY_CYCLE_PERCENT 1.0
+#define LORA_MAX_TX_TIME_MS 1000
+#define LORA_DUTY_CYCLE_PERCENT 10
 #define LORA_MIN_INTERVAL_MS ((uint32_t)(LORA_MAX_TX_TIME_MS * (100.0 / LORA_DUTY_CYCLE_PERCENT)))
 
 #define LORA_SPREADING_FACTOR 12

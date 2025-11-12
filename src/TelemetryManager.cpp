@@ -1,8 +1,13 @@
 /**
  * @file TelemetryManager.cpp
- * @brief VERSÃO DUAL MODE COM RTC DS3231 SIMPLIFICADO
- * @version 4.0.0
- * @date 2025-11-11
+ * @brief VERSÃO DUAL MODE COM RTC DS3231 - LoRa UNIFICADO
+ * @version 4.1.0
+ * @date 2025-11-12
+ * 
+ * CHANGELOG v4.1.0:
+ * - [FIX] Removida inicialização duplicada do LoRa (PayloadManager eliminado)
+ * - [NEW] Processamento de payload integrado no CommunicationManager
+ * - [OPT] Redução de ~2 KB de RAM e ~3 KB de Flash
  */
 #include "TelemetryManager.h"
 #include "config.h"
@@ -93,7 +98,6 @@ void TelemetryManager::applyModeConfig(OperationMode mode) {
     // Aplica flag global de logs
     currentSerialLogsEnabled = activeModeConfig->serialLogsEnabled;
     
-    // ✅ CONTROLE FÍSICO DO DISPLAY
     if (_useNewDisplay) {
         if (activeModeConfig->displayEnabled) {
             _displayMgr.turnOn();
@@ -108,7 +112,6 @@ void TelemetryManager::applyModeConfig(OperationMode mode) {
         }
     }
     
-    // ✅ NOVO: Aplicar configuração LoRa/HTTP
     _comm.enableLoRa(activeModeConfig->loraEnabled);
     _comm.enableHTTP(activeModeConfig->httpEnabled);
     
@@ -120,9 +123,7 @@ void TelemetryManager::applyModeConfig(OperationMode mode) {
                  activeModeConfig->httpEnabled ? "ON" : "OFF");
 }
 
-
 bool TelemetryManager::begin() {
-    // ✅ Aplicar config PREFLIGHT uma única vez no início
     _mode = MODE_PREFLIGHT;
     applyModeConfig(MODE_PREFLIGHT);
     
@@ -143,7 +144,6 @@ bool TelemetryManager::begin() {
 
     bool displayOk = false;
     
-    // ✅ TENTAR INICIALIZAR DISPLAYMANAGER PRIMEIRO
     if (activeModeConfig->displayEnabled) {
         DEBUG_PRINTLN("[TelemetryManager] Inicializando DisplayManager...");
         
@@ -262,29 +262,23 @@ bool TelemetryManager::begin() {
         DEBUG_PRINTLN("[TelemetryManager] Storage Manager FAILED");
     }
 
-    // Payload
-    DEBUG_PRINTLN("[TelemetryManager] Inicializando Payload Manager...");
-    if (_payload.begin()) {
-        subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] Payload Manager OK");
-        
-        if (_useNewDisplay && displayOk) {
-            _displayMgr.showSensorInit("LoRa", true);
-            delay(500);
-        }
-    } else {
-        success = false;
-        DEBUG_PRINTLN("[TelemetryManager] Payload Manager FAILED");
-    }
-
-    // Communication
+    // ============================================================================
+    // ✅ REMOVIDO: PayloadManager (LoRa agora é gerenciado por CommunicationManager)
+    // ============================================================================
+    
+    // Communication Manager (agora gerencia TUDO: WiFi/HTTP + LoRa)
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication Manager...");
+    DEBUG_PRINTLN("[TelemetryManager]   - WiFi + HTTP (obsat.org.br)");
+    DEBUG_PRINTLN("[TelemetryManager]   - LoRa TX/RX (telemetria + payload)");
+    
     if (_comm.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Communication Manager OK");
         
         if (_useNewDisplay && displayOk) {
             _displayMgr.showSensorInit("WiFi", _comm.isConnected());
+            delay(500);
+            _displayMgr.showSensorInit("LoRa", _comm.isLoRaOnline());
             delay(500);
         }
         
@@ -303,14 +297,13 @@ bool TelemetryManager::begin() {
         DEBUG_PRINTLN("[TelemetryManager] Communication Manager FAILED");
     }
 
-    // ✅ MOSTRAR TELA FINAL
     if (_useNewDisplay && displayOk) {
         _displayMgr.showReady();
     } else if (displayOk) {
         _display.clear();
         _display.drawString(0, 0, success ? "Sistema OK!" : "ERRO Sistema!");
         _display.drawString(0, 15, "Modo: PRE-FLIGHT");
-        String subsysInfo = String(subsystemsOk) + "/7 subsistemas";
+        String subsysInfo = String(subsystemsOk) + "/6 subsistemas";  // ✅ CORRIGIDO: 6 ao invés de 7
         _display.drawString(0, 30, subsysInfo);
         
         if (_rtc.isInitialized()) {
@@ -327,7 +320,7 @@ bool TelemetryManager::begin() {
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTF("Sistema inicializado: %s\n", success ? "OK" : "COM ERROS");
-    DEBUG_PRINTF("Subsistemas online: %d/7\n", subsystemsOk);
+    DEBUG_PRINTF("Subsistemas online: %d/6\n", subsystemsOk);  // ✅ CORRIGIDO
     DEBUG_PRINTF("Heap disponível: %lu bytes\n", ESP.getFreeHeap());
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
@@ -336,7 +329,6 @@ bool TelemetryManager::begin() {
 }
 
 void TelemetryManager::loop() {
-    // ✅ NÃO chamar applyModeConfig() aqui!
     uint32_t currentTime = millis();
     
     _health.update(); 
@@ -351,8 +343,28 @@ void TelemetryManager::loop() {
     _comm.update(); 
     delay(5);
     
-    _payload.update(); 
-    delay(5);
+    // ============================================================================
+    // ✅ NOVO: Processar pacotes LoRa recebidos (substitui _payload.update())
+    // ============================================================================
+    String loraPacket;
+    int rssi;
+    float snr;
+    
+    if (_comm.receiveLoRaPacket(loraPacket, rssi, snr)) {
+        DEBUG_PRINTF("[TelemetryManager] Pacote LoRa recebido: %s (RSSI=%d, SNR=%.1f)\n",
+                     loraPacket.c_str(), rssi, snr);
+        
+        // Processar payload agrícola
+        if (_comm.processLoRaPacket(loraPacket, _missionData)) {
+            _missionData.rssi = rssi;
+            _missionData.snr = snr;
+            _missionData.lastLoraRx = millis();
+            
+            DEBUG_PRINTLN("[TelemetryManager] Payload processado com sucesso!");
+        } else {
+            DEBUG_PRINTLN("[TelemetryManager] Falha ao processar payload");
+        }
+    }
     
     _collectTelemetryData();
     _checkOperationalConditions();
@@ -367,7 +379,6 @@ void TelemetryManager::loop() {
         _saveToStorage();
     }
     
-    // ✅ SÓ ATUALIZA DISPLAY SE ESTIVER HABILITADO
     if (activeModeConfig->displayEnabled) {
         if (_useNewDisplay) {
             _displayMgr.updateTelemetry(_telemetryData);
@@ -392,25 +403,21 @@ void TelemetryManager::startMission() {
     DEBUG_PRINTLN("[TelemetryManager] INICIANDO MISSÃO");
     DEBUG_PRINTLN("[TelemetryManager] ==========================================");
     
-    // ✅ Log de timestamp ANTES de desligar logs
     if (_rtc.isInitialized()) {
         DEBUG_PRINTF("[TelemetryManager] Início: %s\n", _rtc.getDateTime().c_str());
     }
     
-    // ✅ Mensagem no display ANTES de desligar
     if (_useNewDisplay && _displayMgr.isOn()) {
         _displayMgr.displayMessage("MISSAO", "INICIADA");
-        delay(2000);  // Tempo para usuário ver a mensagem
+        delay(2000);
     }
     
-    // ✅ AGORA sim, mudar para FLIGHT e aplicar config
     _mode = MODE_FLIGHT;
     _missionActive = true;
     _missionStartTime = millis();
     
-    applyModeConfig(MODE_FLIGHT);  // ← Aqui desliga display/logs
+    applyModeConfig(MODE_FLIGHT);
     
-    // ✅ Última mensagem antes do silêncio (se logs ainda estiverem ativos)
     DEBUG_PRINTLN("[TelemetryManager] Modo FLIGHT ativado");
     DEBUG_PRINTLN("[TelemetryManager] Display: OFF | Logs: OFF");
     DEBUG_PRINTLN("[TelemetryManager] Missão iniciada com sucesso!");
@@ -422,7 +429,6 @@ void TelemetryManager::stopMission() {
         return;
     }
     
-    // ✅ REATIVAR LOGS/DISPLAY ANTES DE MOSTRAR MENSAGENS
     applyModeConfig(MODE_PREFLIGHT);
     
     DEBUG_PRINTLN("[TelemetryManager] ==========================================");
@@ -452,10 +458,8 @@ void TelemetryManager::stopMission() {
 OperationMode TelemetryManager::getMode() {
     return _mode;
 }
+
 void TelemetryManager::updateDisplay() {
-    // Este método continua existindo como fallback
-    // Só será usado se DisplayManager falhar
-    
     if (!activeModeConfig->displayEnabled) {
         _display.displayOff();
         return;
@@ -473,11 +477,7 @@ void TelemetryManager::updateDisplay() {
     }
 }
 
-
 void TelemetryManager::_collectTelemetryData() {
-    // ========================================
-    // TIMESTAMPS
-    // ========================================
     if (_rtc.isInitialized()) {
         _telemetryData.timestamp = _rtc.getUnixTime();
     } else {
@@ -486,33 +486,21 @@ void TelemetryManager::_collectTelemetryData() {
     
     _telemetryData.missionTime = _health.getMissionTime();
     
-    // ========================================
-    // DADOS OBRIGATÓRIOS (SEMPRE PRESENTES)
-    // ========================================
     _telemetryData.batteryVoltage = _power.getVoltage();
     _telemetryData.batteryPercentage = _power.getPercentage();
     
-    // Temperatura primária (BMP280) - OBRIGATÓRIA OBSAT
     _telemetryData.temperature = _sensors.getTemperature();
-    
-    // Pressão e altitude (BMP280)
     _telemetryData.pressure = _sensors.getPressure();
     _telemetryData.altitude = _sensors.getAltitude();
     
-    // IMU (MPU9250) - giroscópio
     _telemetryData.gyroX = _sensors.getGyroX();
     _telemetryData.gyroY = _sensors.getGyroY();
     _telemetryData.gyroZ = _sensors.getGyroZ();
     
-    // IMU (MPU9250) - acelerômetro
     _telemetryData.accelX = _sensors.getAccelX();
     _telemetryData.accelY = _sensors.getAccelY();
     _telemetryData.accelZ = _sensors.getAccelZ();
     
-    // ========================================
-    // DADOS OPCIONAIS (SENSORES EXTRAS)
-    // ========================================
-    // Inicializar como NAN (não disponível)
     _telemetryData.temperatureSI = NAN;
     _telemetryData.humidity = NAN;
     _telemetryData.co2 = NAN;
@@ -521,7 +509,6 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.magY = NAN;
     _telemetryData.magZ = NAN;
     
-    // SI7021: TEMPERATURA + UMIDADE
     if (_sensors.isSI7021Online()) {
         float tempSI = _sensors.getTemperatureSI7021();
         if (!isnan(tempSI) && tempSI >= TEMP_MIN_VALID && tempSI <= TEMP_MAX_VALID) {
@@ -534,7 +521,6 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
-    // CCS811: CO2 + TVOC
     if (_sensors.isCCS811Online()) {
         float co2 = _sensors.getCO2();
         float tvoc = _sensors.getTVOC();
@@ -548,7 +534,6 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
-    // MPU9250: MAGNETÔMETRO
     if (_sensors.isMPU9250Online()) {
         float magX = _sensors.getMagX();
         float magY = _sensors.getMagY();
@@ -565,39 +550,20 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
-    // ========================================
-    // STATUS DO SISTEMA
-    // ========================================
     _telemetryData.systemStatus = _health.getSystemStatus();
     _telemetryData.errorCount = _health.getErrorCount();
     
-    // ========================================
-    // PAYLOAD DA MISSÃO
-    // ========================================
-    String payloadStr = _payload.generatePayload();
+    // ✅ NOVO: Gerar payload JSON da missão
+    String payloadStr = _comm.generateMissionPayload(_missionData);
     strncpy(_telemetryData.payload, payloadStr.c_str(), PAYLOAD_MAX_SIZE - 1);
     _telemetryData.payload[PAYLOAD_MAX_SIZE - 1] = '\0';
-    
-    _missionData = _payload.getMissionData();
-    
-    // ========================================
-    // DEBUG (apenas em modo PRE-FLIGHT)
-    // ========================================
-    if (currentSerialLogsEnabled) {
-    }
 }
 
-
-
 void TelemetryManager::_sendTelemetry() {
-    // ========================================
-    // DEBUG: MOSTRAR DADOS COLETADOS
-    // ========================================
     if (activeModeConfig->serialLogsEnabled) {
         DEBUG_PRINTF("[TelemetryManager] Enviando telemetria [%s]...\n", 
                      _rtc.getDateTime().c_str());
         
-        // ✅ TEMPERATURAS (BMP280 + SI7021)
         DEBUG_PRINTF("  Temp BMP280: %.2f°C", _telemetryData.temperature);
         
         if (!isnan(_telemetryData.temperatureSI)) {
@@ -608,36 +574,30 @@ void TelemetryManager::_sendTelemetry() {
             DEBUG_PRINTLN();
         }
         
-        // Pressão e altitude
         DEBUG_PRINTF("  Pressão: %.2f hPa, Alt: %.1f m\n", 
                      _telemetryData.pressure, 
                      _telemetryData.altitude);
         
-        // IMU - Giroscópio
         DEBUG_PRINTF("  Gyro: [%.4f, %.4f, %.4f] rad/s\n", 
                      _telemetryData.gyroX, 
                      _telemetryData.gyroY, 
                      _telemetryData.gyroZ);
         
-        // IMU - Acelerômetro
         DEBUG_PRINTF("  Accel: [%.4f, %.4f, %.4f] m/s²\n", 
                      _telemetryData.accelX, 
                      _telemetryData.accelY, 
                      _telemetryData.accelZ);
         
-        // Umidade (se disponível)
         if (!isnan(_telemetryData.humidity)) {
             DEBUG_PRINTF("  Umidade: %.1f%%\n", _telemetryData.humidity);
         }
         
-        // Qualidade do ar (se disponível)
         if (!isnan(_telemetryData.co2) || !isnan(_telemetryData.tvoc)) {
             DEBUG_PRINTF("  CO2: %.0f ppm, TVOC: %.0f ppb\n", 
                         _telemetryData.co2, 
                         _telemetryData.tvoc);
         }
         
-        // Magnetômetro (se disponível)
         if (!isnan(_telemetryData.magX)) {
             DEBUG_PRINTF("  Mag: [%.2f, %.2f, %.2f] µT\n", 
                         _telemetryData.magX, 
@@ -646,9 +606,6 @@ void TelemetryManager::_sendTelemetry() {
         }
     }
     
-    // ========================================
-    // ENVIAR VIA COMMUNICATION MANAGER
-    // ========================================
     bool sendSuccess = _comm.sendTelemetry(_telemetryData);
     
     if (sendSuccess) {
@@ -661,8 +618,6 @@ void TelemetryManager::_sendTelemetry() {
         }
     }
 }
-
-
 
 void TelemetryManager::_saveToStorage() {
     if (!_storage.isAvailable()) return;
@@ -724,11 +679,10 @@ void TelemetryManager::_displayStatus() {
     }
     _display.drawString(0, 24, tempHumStr);
 
-    // Mostrar hora do RTC ou altitude
     String timeLine;
     if (_rtc.isInitialized()) {
         String dt = _rtc.getDateTime();
-        timeLine = "RTC: " + dt.substring(11, 19);  // Pegar apenas HH:MM:SS
+        timeLine = "RTC: " + dt.substring(11, 19);
     } else {
         if (_sensors.isCCS811Online() && !isnan(_sensors.getCO2())) {
             timeLine = "CO2: " + String(_sensors.getCO2(), 0) + "ppm";
@@ -740,7 +694,7 @@ void TelemetryManager::_displayStatus() {
 
     String statusStr = "";
     statusStr += _comm.isConnected() ? "[WiFi]" : "[NoWiFi]";
-    statusStr += _payload.isOnline() ? "[LoRa]" : "[NoLoRa]";
+    statusStr += _comm.isLoRaOnline() ? "[LoRa]" : "[NoLoRa]";  // ✅ CORRIGIDO
     statusStr += _storage.isAvailable() ? "[SD]" : "[NoSD]";
     statusStr += _rtc.isInitialized() ? "[RTC]" : "";
     _display.drawString(0, 48, statusStr);

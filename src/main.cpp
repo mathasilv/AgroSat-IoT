@@ -60,7 +60,6 @@ void processSerialCommands() {
             DEBUG_PRINTF("[Main] └─✗ Erro: Sistema não está em FLIGHT (modo atual: %d)\n", currentMode);
         }
     }
-    // ✅ NOVO: Comandos LoRa ON/OFF
     else if (cmd == "LORA ON") {
         telemetry.enableLoRa(true);
         DEBUG_PRINTLN("[Main] └─► LoRa HABILITADO");
@@ -69,7 +68,6 @@ void processSerialCommands() {
         telemetry.enableLoRa(false);
         DEBUG_PRINTLN("[Main] └─► LoRa DESABILITADO");
     }
-    // ✅ NOVO: Comandos HTTP ON/OFF
     else if (cmd == "HTTP ON") {
         telemetry.enableHTTP(true);
         DEBUG_PRINTLN("[Main] └─► HTTP HABILITADO");
@@ -126,8 +124,8 @@ void processSerialCommands() {
         DEBUG_PRINTLN("[Main] ║ MODE FLIGHT     - Modo eficiente       ║");
         DEBUG_PRINTLN("[Main] ║ MODE PREFLIGHT  - Debug completo       ║");
         DEBUG_PRINTLN("[Main] ║ MODE SAFE       - Modo degradado       ║");
-        DEBUG_PRINTLN("[Main] ║ LORA ON/OFF     - Controlar LoRa       ║");  // ✅ NOVO
-        DEBUG_PRINTLN("[Main] ║ HTTP ON/OFF     - Controlar HTTP       ║");  // ✅ NOVO
+        DEBUG_PRINTLN("[Main] ║ LORA ON/OFF     - Controlar LoRa       ║");
+        DEBUG_PRINTLN("[Main] ║ HTTP ON/OFF     - Controlar HTTP       ║"); 
         DEBUG_PRINTLN("[Main] ║ STATUS / ?      - Mostrar status       ║");
         DEBUG_PRINTLN("[Main] ║ RESTART / R     - Reiniciar ESP32      ║");
         DEBUG_PRINTLN("[Main] ║ HELP  / H       - Esta mensagem        ║");

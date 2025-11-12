@@ -1,3 +1,8 @@
+/**
+ * @file CommunicationManager.h
+ * @brief Sistema de comunicação dual com processamento de payload integrado
+ * @version 4.1.0
+ */
 #ifndef COMMUNICATION_MANAGER_H
 #define COMMUNICATION_MANAGER_H
 
@@ -43,6 +48,11 @@ public:
     void enableHTTP(bool enable);
     bool isLoRaEnabled() const { return _loraEnabled; }
     bool isHTTPEnabled() const { return _httpEnabled; }
+    
+    // ✅ NOVO: Processamento de payload (substitui PayloadManager)
+    bool processLoRaPacket(const String& packet, MissionData& data);
+    MissionData getLastMissionData();
+    String generateMissionPayload(const MissionData& data);
 
 private:
     // WiFi/HTTP
@@ -62,14 +72,22 @@ private:
     uint16_t _loraPacketsFailed;
     unsigned long _lastLoRaTransmission;
     
-    // ✅ NOVO: Flags de controle
+    // Flags de controle
     bool _loraEnabled;
     bool _httpEnabled;
+    
+    // ✅ NOVO: Dados de missão e controle de sequência
+    MissionData _lastMissionData;
+    uint16_t _expectedSeqNum;
     
     // Métodos privados
     String _createTelemetryJSON(const TelemetryData& data);
     String _createLoRaPayload(const TelemetryData& data);
     bool _sendHTTPPost(const String& jsonPayload);
+    
+    // ✅ NOVO: Processamento de payload
+    bool _parseAgroPacket(const String& packet, MissionData& data);
+    bool _validateChecksum(const String& packet);
 };
 
 #endif

@@ -1,17 +1,18 @@
 /**
  * @file StorageManager.h
- * @brief Gerenciador de armazenamento SD - COM SUPORTE RTC
- * @version 1.1.0
- * @date 2025-11-10
+ * @brief Gerenciador de armazenamento em SD Card
+ * @version 1.2.0
  */
 
-#ifndef STORAGE_MANAGER_H
-#define STORAGE_MANAGER_H
+#ifndef STORAGEMANAGER_H
+#define STORAGEMANAGER_H
 
 #include <Arduino.h>
-#include "config.h"
 #include <SD.h>
 #include <SPI.h>
+#include "config.h"
+
+class RTCManager;  // Forward declaration
 
 class StorageManager {
 public:
@@ -19,32 +20,35 @@ public:
     
     bool begin();
     
-    // Salvamento de dados
+    // ✅ NOVO: Injeção de dependência
+    void setRTCManager(RTCManager* rtcManager);
+    
+    // Armazenamento
     bool saveTelemetry(const TelemetryData& data);
     bool saveMissionData(const MissionData& data);
     bool logError(const String& errorMsg);
     
-    // Criação de arquivos
+    // Gerenciamento de arquivos
     bool createTelemetryFile();
     bool createMissionFile();
+    void listFiles();
     
     // Status
     bool isAvailable();
     uint64_t getFreeSpace();
     uint64_t getUsedSpace();
-    void listFiles();
-    void flush();
     
-    void setRTCManager(class RTCManager* rtc) { _rtcManager = rtc; }
+    void flush();
 
 private:
     bool _available;
-    class RTCManager* _rtcManager;
+    RTCManager* _rtcManager;  // ✅ Ponteiro para RTCManager
     
+    // Métodos privados
     File _openFile(const char* path);
     bool _checkFileSize(const char* path);
     String _telemetryToCSV(const TelemetryData& data);
     String _missionToCSV(const MissionData& data);
 };
 
-#endif // STORAGE_MANAGER_H
+#endif

@@ -25,43 +25,6 @@ PayloadManager::PayloadManager() :
     _missionData.lastLoraRx = 0;
 }
 
-bool PayloadManager::begin() {
-    DEBUG_PRINTLN("[PayloadManager] Inicializando módulo LoRa no VSPI...");
-    
-    // CRÍTICO: Inicializar VSPI com pinos do LoRa
-    spiLoRa.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
-    
-    // Configurar LoRa para usar SPIClass dedicado
-    LoRa.setSPI(spiLoRa);
-    LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
-    
-    // Inicializar LoRa com frequência configurada
-    if (!LoRa.begin(LORA_FREQUENCY)) {
-        DEBUG_PRINTLN("[PayloadManager] ERRO: Falha ao inicializar LoRa!");
-        _online = false;
-        return false;
-    }
-    
-    // Configurações LoRa otimizadas para longo alcance
-    LoRa.setSpreadingFactor(12);      // SF12 - máximo alcance
-    LoRa.setSignalBandwidth(125E3);   // 125 kHz
-    LoRa.setCodingRate4(8);           // CR 4/8 - máxima correção de erros
-    LoRa.setPreambleLength(8);        // Preâmbulo
-    LoRa.setSyncWord(0x34);           // Palavra de sincronização privada
-    LoRa.enableCrc();                 // Habilitar CRC
-    LoRa.setTxPower(20);              // Potência máxima (20 dBm)
-    
-    _online = true;
-    
-    DEBUG_PRINTF("[PayloadManager] LoRa OK - Freq: %.2f MHz, SF: 12\n", 
-                 LORA_FREQUENCY / 1E6);
-    
-    // Colocar em modo recepção contínua
-    LoRa.receive();
-    
-    return true;
-}
-
 void PayloadManager::update() {
     if (!_online) return;
     

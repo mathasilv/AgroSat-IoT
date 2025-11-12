@@ -1,18 +1,25 @@
 /**
  * @file StorageManager.cpp
  * @brief Implementação do gerenciador de armazenamento - COM RTC
- * @version 1.1.0
- * @date 2025-11-10
+ * @version 1.2.0
+ * @date 2025-11-12
+ * 
+ * CHANGELOG v1.2.0:
+ * - Corrigido header CSV com ISO8601 timestamp
+ * - Removido uso de métodos inexistentes do RTCManager
+ * - Padronizado uso de getDateTime() e getUnixTime()
+ * - Corrigido buffer overflow em _telemetryToCSV
+ * - Adicionada injeção de dependência do RTCManager
  */
 
 #include "StorageManager.h"
-#include "RTCManager.h"  // ✅ NOVO
+#include "RTCManager.h"
 
 SPIClass spiSD(HSPI);
 
 StorageManager::StorageManager() :
     _available(false),
-    _rtcManager(nullptr)  // ✅ NOVO
+    _rtcManager(nullptr)
 {
 }
 
@@ -61,6 +68,12 @@ bool StorageManager::begin() {
     return true;
 }
 
+// ✅ NOVO: Injeção de dependência do RTCManager
+void StorageManager::setRTCManager(RTCManager* rtcManager) {
+    _rtcManager = rtcManager;
+    DEBUG_PRINTLN("[StorageManager] RTCManager vinculado");
+}
+
 bool StorageManager::saveTelemetry(const TelemetryData& data) {
     if (!_available) return false;
     
@@ -105,11 +118,9 @@ bool StorageManager::saveMissionData(const MissionData& data) {
     return true;
 }
 
-// ============================================================================
-// ✅ MÉTODO ATUALIZADO COM RTC
-// ============================================================================
+// ✅ CORRIGIDO: Apenas usa getDateTime()
 bool StorageManager::logError(const String& errorMsg) {
-    if (!_available) return false;  // Manter _available (não _initialized)
+    if (!_available) return false;
     
     File file = SD.open(SD_ERROR_FILE, FILE_APPEND);
     if (!file) return false;
@@ -117,7 +128,7 @@ bool StorageManager::logError(const String& errorMsg) {
     String timestamp;
     
     if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-        timestamp = _rtcManager->getDateTime();  // CORRIGIDO: era getISO8601()
+        timestamp = _rtcManager->getDateTime();
     } else {
         timestamp = String(millis());
     }
@@ -132,7 +143,7 @@ bool StorageManager::logError(const String& errorMsg) {
     return true;
 }
 
-
+// ✅ CORRIGIDO: Header CSV com ISO8601
 bool StorageManager::createTelemetryFile() {
     if (!_available) return false;
     
@@ -149,15 +160,15 @@ bool StorageManager::createTelemetryFile() {
         return false;
     }
     
-    // ✅ HEADER CSV COMPLETO COM AMBAS TEMPERATURAS
-    file.print("ISO8601,");
+    // ✅ HEADER CSV COMPLETO COM ISO8601
+    file.print("ISO8601,");              // ✅ ADICIONADO
     file.print("UnixTimestamp,");
     file.print("MissionTime,");
     file.print("BatteryVoltage,");
     file.print("BatteryPercentage,");
-    file.print("TempBMP280,");          // ✅ Temperatura primária (BMP280)
-    file.print("TempSI7021,");          // ✅ Temperatura SI7021
-    file.print("TempDelta,");           // ✅ Diferença entre sensores
+    file.print("TempBMP280,");
+    file.print("TempSI7021,");
+    file.print("TempDelta,");
     file.print("Pressure,");
     file.print("Altitude,");
     file.print("GyroX,");
@@ -179,12 +190,11 @@ bool StorageManager::createTelemetryFile() {
     file.close();
     
     DEBUG_PRINTLN("[StorageManager] Arquivo de telemetria criado com sucesso");
-    DEBUG_PRINTLN("[StorageManager] Colunas: ISO8601, UnixTimestamp, MissionTime, BatteryV, Battery%, TempBMP280, TempSI7021, TempDelta, Pressure, Altitude, Gyro[3], Accel[3], Humidity, CO2, TVOC, Mag[3], Status, Errors, Payload");
     
     return true;
 }
 
-
+// ✅ CORRIGIDO: Header CSV com ISO8601
 bool StorageManager::createMissionFile() {
     if (!_available) return false;
     
@@ -201,7 +211,7 @@ bool StorageManager::createMissionFile() {
         return false;
     }
     
-    // ✅ HEADER CSV ATUALIZADO
+    // ✅ HEADER COM ISO8601
     file.println("ISO8601,UnixTimestamp,SoilMoisture,AmbientTemp,Humidity,IrrigationStatus,RSSI,SNR,PacketsReceived,PacketsLost,LastRx");
     
     file.close();
@@ -238,11 +248,6 @@ void StorageManager::listFiles() {
     }
 }
 
-void StorageManager::flush() {
-    // Força escrita no SD (não implementado diretamente no ESP32)
-    // Dados são escritos ao fechar arquivo
-}
-
 // ============================================================================
 // MÉTODOS PRIVADOS
 // ============================================================================
@@ -251,9 +256,7 @@ File StorageManager::_openFile(const char* path) {
     return SD.open(path, FILE_APPEND);
 }
 
-// ============================================================================
-// ✅ MÉTODO ATUALIZADO COM RTC
-// ============================================================================
+// ✅ CORRIGIDO: Usa getDateTime() para backup
 bool StorageManager::_checkFileSize(const char* path) {
     if (!SD.exists(path)) return false;
     
@@ -269,8 +272,12 @@ bool StorageManager::_checkFileSize(const char* path) {
         String backupPath;
         
         if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-            String timestamp = _rtcManager->getDateTime().substring(0, 10); // CORRIGIDO: era getDateString()
-            backupPath = String(path) + "." + timestamp + ".bak";
+            // Extrair apenas a data (primeiros 10 caracteres de "YYYY-MM-DD HH:MM:SS")
+            String dateTime = _rtcManager->getDateTime();
+            String dateOnly = dateTime.substring(0, 10);  // "YYYY-MM-DD"
+            dateOnly.replace("-", "");                     // "YYYYMMDD"
+            
+            backupPath = String(path) + "." + dateOnly + ".bak";
         } else {
             backupPath = String(path) + "." + String(millis()) + ".bak";
         }
@@ -283,6 +290,7 @@ bool StorageManager::_checkFileSize(const char* path) {
         
         DEBUG_PRINTF("[StorageManager] Arquivo rotacionado para: %s\n", backupPath.c_str());
         
+        // Recriar arquivo com header
         if (strcmp(path, SD_LOG_FILE) == 0) {
             createTelemetryFile();
         } else if (strcmp(path, SD_MISSION_FILE) == 0) {
@@ -293,19 +301,16 @@ bool StorageManager::_checkFileSize(const char* path) {
     return true;
 }
 
-
-// ============================================================================
-// ✅ MÉTODO ATUALIZADO COM TIMESTAMP RTC
-// ============================================================================
+// ✅ CORRIGIDO: Buffer expandido e formatação correta
 String StorageManager::_telemetryToCSV(const TelemetryData& data) {
-    char csvBuffer[512];  // Buffer estático (evitar fragmentação heap)
+    char csvBuffer[600];  // ✅ Aumentado de 512 para 600 bytes
     
     // ========================================
-    // TIMESTAMP
+    // TIMESTAMP ISO8601
     // ========================================
-    String timestamp = "N/A";
+    String iso8601 = "N/A";
     if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-        timestamp = _rtcManager->getDateTime();
+        iso8601 = _rtcManager->getDateTime();
     }
     
     // ========================================
@@ -317,7 +322,19 @@ String StorageManager::_telemetryToCSV(const TelemetryData& data) {
     }
     
     // ========================================
-    // FORMATAR CSV (TODOS OS CAMPOS)
+    // PREPARAR STRINGS TEMPORÁRIAS
+    // ========================================
+    String tempSI = isnan(data.temperatureSI) ? "" : String(data.temperatureSI, 2);
+    String delta = (isnan(data.temperature) || isnan(data.temperatureSI)) ? "" : String(tempDelta, 2);
+    String hum = isnan(data.humidity) ? "" : String(data.humidity, 2);
+    String co2 = isnan(data.co2) ? "" : String(data.co2, 0);
+    String tvoc = isnan(data.tvoc) ? "" : String(data.tvoc, 0);
+    String magX = isnan(data.magX) ? "" : String(data.magX, 2);
+    String magY = isnan(data.magY) ? "" : String(data.magY, 2);
+    String magZ = isnan(data.magZ) ? "" : String(data.magZ, 2);
+    
+    // ========================================
+    // FORMATAR CSV COMPLETO
     // ========================================
     snprintf(csvBuffer, sizeof(csvBuffer),
         "%s,"           // ISO8601 timestamp
@@ -326,8 +343,8 @@ String StorageManager::_telemetryToCSV(const TelemetryData& data) {
         "%.2f,"         // Battery voltage
         "%.1f,"         // Battery percentage
         "%.2f,"         // Temperature BMP280
-        "%s,"           // Temperature SI7021 (ou vazio)
-        "%s,"           // Temperature delta (ou vazio)
+        "%s,"           // Temperature SI7021
+        "%s,"           // Temperature delta
         "%.2f,"         // Pressure
         "%.1f,"         // Altitude
         "%.4f,"         // GyroX
@@ -336,25 +353,25 @@ String StorageManager::_telemetryToCSV(const TelemetryData& data) {
         "%.4f,"         // AccelX
         "%.4f,"         // AccelY
         "%.4f,"         // AccelZ
-        "%s,"           // Humidity (ou vazio)
-        "%s,"           // CO2 (ou vazio)
-        "%s,"           // TVOC (ou vazio)
-        "%s,"           // MagX (ou vazio)
-        "%s,"           // MagY (ou vazio)
-        "%s,"           // MagZ (ou vazio)
+        "%s,"           // Humidity
+        "%s,"           // CO2
+        "%s,"           // TVOC
+        "%s,"           // MagX
+        "%s,"           // MagY
+        "%s,"           // MagZ
         "%d,"           // System status
         "%d,"           // Error count
         "%s",           // Payload
         
-        // Valores
-        timestamp.c_str(),
+        // ✅ VALORES
+        iso8601.c_str(),
         (unsigned long)data.timestamp,
         (unsigned long)data.missionTime,
         data.batteryVoltage,
         data.batteryPercentage,
         data.temperature,
-        isnan(data.temperatureSI) ? "" : String(data.temperatureSI, 2).c_str(),
-        (isnan(data.temperature) || isnan(data.temperatureSI)) ? "" : String(tempDelta, 2).c_str(),
+        tempSI.c_str(),
+        delta.c_str(),
         data.pressure,
         data.altitude,
         data.gyroX,
@@ -363,12 +380,12 @@ String StorageManager::_telemetryToCSV(const TelemetryData& data) {
         data.accelX,
         data.accelY,
         data.accelZ,
-        isnan(data.humidity) ? "" : String(data.humidity, 2).c_str(),
-        isnan(data.co2) ? "" : String(data.co2, 0).c_str(),
-        isnan(data.tvoc) ? "" : String(data.tvoc, 0).c_str(),
-        isnan(data.magX) ? "" : String(data.magX, 2).c_str(),
-        isnan(data.magY) ? "" : String(data.magY, 2).c_str(),
-        isnan(data.magZ) ? "" : String(data.magZ, 2).c_str(),
+        hum.c_str(),
+        co2.c_str(),
+        tvoc.c_str(),
+        magX.c_str(),
+        magY.c_str(),
+        magZ.c_str(),
         data.systemStatus,
         data.errorCount,
         data.payload
@@ -377,30 +394,43 @@ String StorageManager::_telemetryToCSV(const TelemetryData& data) {
     return String(csvBuffer);
 }
 
-
-
-// ============================================================================
-// ✅ MÉTODO ATUALIZADO COM TIMESTAMP RTC
-// ============================================================================
+// ✅ CORRIGIDO: Usa getDateTime() e getUnixTime()
 String StorageManager::_missionToCSV(const MissionData& data) {
-    String csv = "";
+    char csvBuffer[256];
+    
+    String iso8601 = "N/A";
+    uint32_t unixTime = millis();
     
     if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-        csv += _rtcManager->getDateTime() + ",";  // CORRIGIDO: era getISO8601()
-    } else {
-        csv += "N/A,";
+        iso8601 = _rtcManager->getDateTime();
+        unixTime = _rtcManager->getUnixTime();
     }
     
-    csv += String(millis()) + ",";
-    csv += String(data.soilMoisture, 2) + ",";
-    csv += String(data.ambientTemp, 2) + ",";
-    csv += String(data.humidity, 2) + ",";
-    csv += String(data.irrigationStatus) + ",";
-    csv += String(data.rssi) + ",";
-    csv += String(data.snr, 2) + ",";
-    csv += String(data.packetsReceived) + ",";
-    csv += String(data.packetsLost) + ",";
-    csv += String(data.lastLoraRx);
+    snprintf(csvBuffer, sizeof(csvBuffer),
+        "%s,"       // ISO8601
+        "%lu,"      // UnixTimestamp
+        "%.2f,"     // SoilMoisture
+        "%.2f,"     // AmbientTemp
+        "%.2f,"     // Humidity
+        "%d,"       // IrrigationStatus
+        "%d,"       // RSSI
+        "%.2f,"     // SNR
+        "%d,"       // PacketsReceived
+        "%d,"       // PacketsLost
+        "%lu",      // LastRx
+        
+        iso8601.c_str(),
+        unixTime,
+        data.soilMoisture,
+        data.ambientTemp,
+        data.humidity,
+        data.irrigationStatus,
+        data.rssi,
+        data.snr,
+        data.packetsReceived,
+        data.packetsLost,
+        data.lastLoraRx
+    );
     
-    return csv;
+    return String(csvBuffer);
 }

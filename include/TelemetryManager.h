@@ -10,12 +10,11 @@
 #include <Wire.h>
 #include "config.h"
 #include "SSD1306Wire.h"
-#include "DisplayManager.h"  // ✅ ADICIONAR
+#include "DisplayManager.h"
 #include "SystemHealth.h"
 #include "PowerManager.h"
 #include "SensorManager.h"
 #include "StorageManager.h"
-#include "PayloadManager.h"
 #include "CommunicationManager.h"
 #include "RTCManager.h"
 
@@ -41,13 +40,12 @@ public:
 
 private:
     // Subsistemas
-    SSD1306Wire _display;            // MANTER (sistema legado)
-    DisplayManager _displayMgr;      // ✅ ADICIONAR (novo sistema)
+    SSD1306Wire _display;            
+    DisplayManager _displayMgr;      
     SystemHealth _health;
     PowerManager _power;
     SensorManager _sensors;
     StorageManager _storage;
-    PayloadManager _payload;
     CommunicationManager _comm;
     RTCManager _rtc;
     
@@ -67,8 +65,8 @@ private:
     unsigned long _lastHeapCheck;
     uint32_t _minHeapSeen;
     
-    bool _useNewDisplay;              // ✅ ADICIONAR (flag para escolher sistema)
-    
+    bool _useNewDisplay;           
+
     // Métodos privados
     void _collectTelemetryData();
     void _sendTelemetry();

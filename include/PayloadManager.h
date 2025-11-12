@@ -26,12 +26,6 @@ public:
     PayloadManager();
     
     /**
-     * @brief Inicializa módulo LoRa
-     * @return true se inicializado com sucesso
-     */
-    bool begin();
-    
-    /**
      * @brief Atualiza e processa pacotes LoRa recebidos
      */
     void update();

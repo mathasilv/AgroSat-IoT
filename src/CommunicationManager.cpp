@@ -1,13 +1,14 @@
 /**
  * @file CommunicationManager.cpp
- * @brief Comunicação DUAL MODE: LoRa + WiFi/HTTP (ÚNICO GERENCIADOR LORA)
- * @version 4.0.0
- * @date 2025-11-11
+ * @brief Comunicação DUAL MODE: LoRa + WiFi/HTTP + Processamento de Payload
+ * @version 4.1.0
+ * @date 2025-11-12
  * 
- * MUDANÇAS v4.0.0:
- * - LoRa gerenciado EXCLUSIVAMENTE aqui (PayloadManager removido)
- * - Duty cycle ANATEL compliance (200s entre TX)
- * - JSON serialization otimizada (buffer estático)
+ * MUDANÇAS v4.1.0:
+ * - [NEW] Métodos processLoRaPacket() e generateMissionPayload()
+ * - [FIX] LoRa gerenciado EXCLUSIVAMENTE aqui (PayloadManager removido)
+ * - [OPT] Duty cycle ANATEL compliance (200s entre TX)
+ * - [OPT] JSON serialization otimizada (buffer estático)
  */
 
 #include "CommunicationManager.h"
@@ -26,9 +27,12 @@ CommunicationManager::CommunicationManager() :
     _loraPacketsSent(0),
     _loraPacketsFailed(0),
     _lastLoRaTransmission(0),
-    _loraEnabled(true),      // ✅ NOVO: Iniciado como habilitado
-    _httpEnabled(true)       // ✅ NOVO: Iniciado como habilitado
+    _loraEnabled(true),
+    _httpEnabled(true),
+    _expectedSeqNum(0)  // ✅ NOVO: Controle de sequência de pacotes
 {
+    // ✅ NOVO: Inicializar dados da missão
+    memset(&_lastMissionData, 0, sizeof(MissionData));
 }
 
 bool CommunicationManager::begin() {
@@ -88,7 +92,7 @@ bool CommunicationManager::initLoRa() {
     
     // Teste inicial
     DEBUG_PRINT("[CommunicationManager] Enviando pacote de teste... ");
-    String testMsg = "AGROSAT_BOOT_v4";
+    String testMsg = "AGROSAT_BOOT_v4.1";
     if (sendLoRa(testMsg)) {
         DEBUG_PRINTLN("OK!");
     } else {
@@ -204,6 +208,152 @@ void CommunicationManager::getLoRaStatistics(uint16_t& sent, uint16_t& failed) {
 }
 
 // ============================================================================
+// ✅ NOVO: PROCESSAMENTO DE PAYLOAD DE MISSÃO (substitui PayloadManager)
+// ============================================================================
+bool CommunicationManager::processLoRaPacket(const String& packet, MissionData& data) {
+    if (!_validateChecksum(packet)) {
+        DEBUG_PRINTLN("[CommunicationManager] Checksum inválido");
+        return false;
+    }
+    
+    if (!_parseAgroPacket(packet, data)) {
+        DEBUG_PRINTLN("[CommunicationManager] Falha ao parsear pacote agrícola");
+        return false;
+    }
+    
+    _lastMissionData = data;
+    return true;
+}
+
+MissionData CommunicationManager::getLastMissionData() {
+    return _lastMissionData;
+}
+
+String CommunicationManager::generateMissionPayload(const MissionData& data) {
+    // Formato JSON compacto (máximo 90 bytes para PAYLOAD_MAX_SIZE)
+    // {"sm":45.2,"t":28.5,"h":65.3,"ir":1,"rs":-85,"sn":8.5,"rx":10,"ls":2}
+    
+    char buffer[PAYLOAD_MAX_SIZE];
+    snprintf(buffer, sizeof(buffer),
+        "{\"sm\":%.1f,\"t\":%.1f,\"h\":%.1f,\"ir\":%d,\"rs\":%d,\"sn\":%.1f,\"rx\":%d,\"ls\":%d}",
+        data.soilMoisture,
+        data.ambientTemp,
+        data.humidity,
+        data.irrigationStatus,
+        data.rssi,
+        data.snr,
+        data.packetsReceived,
+        data.packetsLost
+    );
+    
+    return String(buffer);
+}
+
+bool CommunicationManager::_parseAgroPacket(const String& packetData, MissionData& data) {
+    String packet = packetData;
+    
+    // Formato esperado: "AGRO,seq,sm,temp,hum,irr"
+    // Exemplo: "AGRO,123,45.2,28.5,65.3,1"
+    
+    if (!packet.startsWith("AGRO,")) {
+        DEBUG_PRINTLN("[CommunicationManager] Formato de pacote inválido (não começa com AGRO)");
+        return false;
+    }
+    
+    // Remover prefixo "AGRO,"
+    packet.remove(0, 5);
+    
+    // Parsear campos separados por vírgula
+    int commaIndex = 0;
+    int fieldIndex = 0;
+    String fields[6];
+    
+    while ((commaIndex = packet.indexOf(',')) != -1 && fieldIndex < 6) {
+        fields[fieldIndex++] = packet.substring(0, commaIndex);
+        packet.remove(0, commaIndex + 1);
+    }
+    
+    // Último campo (sem vírgula no final)
+    if (fieldIndex < 6 && packet.length() > 0) {
+        fields[fieldIndex++] = packet;
+    }
+    
+    // Validar número mínimo de campos
+    if (fieldIndex < 5) {
+        DEBUG_PRINTF("[CommunicationManager] Campos insuficientes: %d (mínimo 5)\n", fieldIndex);
+        return false;
+    }
+    
+    // Extrair e validar dados
+    uint16_t seqNum = fields[0].toInt();
+    data.soilMoisture = fields[1].toFloat();
+    data.ambientTemp = fields[2].toFloat();
+    data.humidity = fields[3].toFloat();
+    data.irrigationStatus = fields[4].toInt();
+    
+    // Validar limites físicos
+    if (data.soilMoisture < 0.0 || data.soilMoisture > 100.0) {
+        DEBUG_PRINTLN("[CommunicationManager] soilMoisture fora dos limites (0-100%)");
+        return false;
+    }
+    
+    if (data.ambientTemp < -50.0 || data.ambientTemp > 100.0) {
+        DEBUG_PRINTLN("[CommunicationManager] ambientTemp fora dos limites (-50 a 100°C)");
+        return false;
+    }
+    
+    if (data.humidity < 0.0 || data.humidity > 100.0) {
+        DEBUG_PRINTLN("[CommunicationManager] humidity fora dos limites (0-100%)");
+        return false;
+    }
+    
+    // Detectar pacotes perdidos (verificação de sequência)
+    if (seqNum != _expectedSeqNum) {
+        if (seqNum > _expectedSeqNum) {
+            uint16_t lost = seqNum - _expectedSeqNum;
+            data.packetsLost += lost;
+            DEBUG_PRINTF("[CommunicationManager] %d pacote(s) perdido(s) (esperado: %d, recebido: %d)\n", 
+                        lost, _expectedSeqNum, seqNum);
+        } else {
+            DEBUG_PRINTF("[CommunicationManager] Pacote duplicado ou fora de ordem (seq: %d)\n", seqNum);
+        }
+    }
+    
+    _expectedSeqNum = seqNum + 1;
+    
+    // Atualizar estatísticas
+    data.packetsReceived++;
+    data.lastLoraRx = millis();
+    
+    DEBUG_PRINTF("[CommunicationManager] Payload processado: SM=%.1f%%, T=%.1f°C, H=%.1f%%, IRR=%d\n",
+                 data.soilMoisture, data.ambientTemp, data.humidity, data.irrigationStatus);
+    
+    return true;
+}
+
+bool CommunicationManager::_validateChecksum(const String& packet) {
+    // Implementação simplificada - sempre válido
+    // Em produção, implementar checksum real (CRC16, CRC32, etc.)
+    // 
+    // Exemplo de implementação CRC16:
+    // uint16_t crc = 0xFFFF;
+    // for (size_t i = 0; i < packet.length() - 2; i++) {
+    //     crc ^= packet[i];
+    //     for (int j = 0; j < 8; j++) {
+    //         if (crc & 0x0001) {
+    //             crc = (crc >> 1) ^ 0xA001;
+    //         } else {
+    //             crc >>= 1;
+    //         }
+    //     }
+    // }
+    // uint16_t receivedCRC = (packet[packet.length()-2] << 8) | packet[packet.length()-1];
+    // return (crc == receivedCRC);
+    
+    return true;
+}
+
+// ============================================================================
 // WIFI/HTTP
 // ============================================================================
 void CommunicationManager::update() {
@@ -224,15 +374,8 @@ void CommunicationManager::update() {
         }
     }
     
-    // Processar pacotes LoRa recebidos (se necessário)
-    if (_loraInitialized) {
-        String packet;
-        int rssi;
-        float snr;
-        if (receiveLoRaPacket(packet, rssi, snr)) {
-            // PayloadManager pode consumir via polling
-        }
-    }
+    // ✅ Processamento de pacotes LoRa movido para TelemetryManager::loop()
+    // para evitar overhead desnecessário no update()
 }
 
 bool CommunicationManager::connectWiFi() {

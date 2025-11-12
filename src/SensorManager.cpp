@@ -14,8 +14,6 @@
 
 #include "SensorManager.h"
 #include <algorithm>
-#include <SHT2x.h>
-
 
 SensorManager::SensorManager() :
     _mpu9250(MPU9250_ADDRESS),
@@ -167,8 +165,6 @@ void SensorManager::_updateSI7021() {
     
     bool humiditySuccess = false;
     
-    // ✅ SOLUÇÃO: Tentar apenas 1x sem polling agressivo
-    // O erro 263 acontece no polling, então vamos evitar
     delay(50);  // Total 100ms após comando (garante conversão completa)
     
     Wire.requestFrom((uint8_t)SI7021_ADDRESS, (uint8_t)3);
@@ -213,7 +209,6 @@ void SensorManager::_updateSI7021() {
     error = Wire.endTransmission();
     if (error != 0) return;
     
-    // ✅ SOLUÇÃO: Aguardar tempo suficiente e ler apenas 1x
     delay(80);  // Tempo total garantido para conversão
     
     Wire.requestFrom((uint8_t)SI7021_ADDRESS, (uint8_t)2);
