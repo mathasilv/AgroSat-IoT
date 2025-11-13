@@ -1,13 +1,13 @@
 /**
  * @file config.h
- * @brief Configurações globais do CubeSat AgroSat-IoT - VERSÃO OTIMIZADA
- * @version 4.1.0
- * @date 2025-11-11
+ * @brief Configurações globais do CubeSat AgroSat-IoT - LORA SINCRONIZADO
+ * @version 4.2.1
+ * @date 2025-11-13
  * 
- * CHANGELOG v4.1.0:
- * - [NEW] Controle de LoRa e HTTP por modo operacional
- * - [NEW] Flags loraEnabled e httpEnabled nos ModeConfig
- * - [NEW] Comandos serial para controle: LORA ON/OFF, HTTP ON/OFF
+ * CHANGELOG v4.2.1:
+ * - [FIX] Parâmetros LoRa sincronizados para evitar CRC errors
+ * - [FIX] CRC desabilitado temporariamente para debug (reabilitar em produção)
+ * - [NEW] Configurações documentadas para receptor
  */
 
 #ifndef CONFIG_H
@@ -20,14 +20,16 @@
 // ============================================================================
 #define MISSION_NAME "AgroSat-IoT"
 #define TEAM_CATEGORY "N3"
-#define FIRMWARE_VERSION "4.1.0"
+#define FIRMWARE_VERSION "4.2.1"
 #define BUILD_DATE __DATE__
 #define BUILD_TIME __TIME__
 #define TEAM_ID 666
 
 // ============================================================================
-// HARDWARE (LoRa32 V2.1_1.6) E I/O
+// HARDWARE - TTGO LoRa32 V2.1 (T3 V1.6 equivalent)
 // ============================================================================
+
+// Display OLED
 #define OLED_SDA 21
 #define OLED_SCL 22
 #ifndef OLED_RST
@@ -35,23 +37,28 @@
 #endif
 #define OLED_ADDRESS 0x3C
 
+// LoRa Radio - Configuração oficial LilyGO para T3 V1.6
 #define LORA_SCK 5
 #define LORA_MISO 19
 #define LORA_MOSI 27
 #define LORA_CS 18
 #define LORA_RST 23
 #define LORA_DIO0 26
-#define LORA_FREQUENCY 915E6
+#define LORA_DIO1 33
+#define LORA_DIO2 32
 
+// SD Card
 #define SD_CS 13
 #define SD_MOSI 15
 #define SD_MISO 2
 #define SD_SCLK 14
 
+// Sensores I2C
 #define SENSOR_I2C_SDA 21
 #define SENSOR_I2C_SCL 22
 #define I2C_FREQUENCY 100000
 
+// Battery & LED
 #define BATTERY_PIN 35
 #define BATTERY_SAMPLES 16
 #define BATTERY_VREF 3.6
@@ -91,7 +98,7 @@ const ModeConfig PREFLIGHT_CONFIG = {
     true,   // sdLogsVerbose
     true,   // loraEnabled 
     false,   // httpEnabled
-    5000,  // telemetrySendInterval (30s)
+    5000,  // telemetrySendInterval (5s para testes)
     60000,  // storageSaveInterval (1min)
     100     // wifiDutyCycle (sempre ligado)
 };
@@ -169,17 +176,28 @@ const ModeConfig SAFE_CONFIG = {
 #define SENSOR_INIT_TIMEOUT 2000
 
 // ============================================================================
-// COMUNICAÇÃO - LORA (ANATEL COMPLIANCE)
+// COMUNICAÇÃO - LORA (CONFIGURAÇÃO SINCRONIZADA TRANSMISSOR-RECEPTOR)
 // ============================================================================
+
+// Frequência para Brasil (915 MHz ISM Band)
+#define LORA_FREQUENCY 915E6
+
+// ⚠️ IMPORTANTE: ESTES PARÂMETROS DEVEM SER IDÊNTICOS NO RECEPTOR!
+// Parâmetros otimizados para transmissão confiável
+#define LORA_SPREADING_FACTOR 7         // SF7 (maior velocidade, menor alcance) - AJUSTAR SE NECESSÁRIO
+#define LORA_SIGNAL_BANDWIDTH 125E3     // 125 kHz (padrão)
+#define LORA_CODING_RATE 5              // CR 4/5 (compromisso velocidade/proteção)
+#define LORA_TX_POWER 20                // 20 dBm (máximo para TTGO LoRa32)
+#define LORA_PREAMBLE_LENGTH 8          // 8 símbolos (padrão Arduino LoRa)
+#define LORA_SYNC_WORD 0x12             // 0x12 (padrão público Arduino LoRa)
+
+// CRC: HABILITAR EM PRODUÇÃO (desabilitado temporariamente para debug)
+#define LORA_CRC_ENABLED false          // false = desabilitado (debug), true = habilitado (produção)
+
+// ANATEL Duty Cycle Compliance
 #define LORA_MAX_TX_TIME_MS 1000
 #define LORA_DUTY_CYCLE_PERCENT 10
 #define LORA_MIN_INTERVAL_MS ((uint32_t)(LORA_MAX_TX_TIME_MS * (100.0 / LORA_DUTY_CYCLE_PERCENT)))
-
-#define LORA_SPREADING_FACTOR 12
-#define LORA_SIGNAL_BANDWIDTH 125E3
-#define LORA_CODING_RATE 8
-#define LORA_TX_POWER 20
-#define LORA_SYNC_WORD 0x34
 
 // ============================================================================
 // REDE/HTTP/COMUNICAÇÃO - OBSAT

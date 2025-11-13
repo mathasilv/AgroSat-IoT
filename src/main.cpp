@@ -230,7 +230,7 @@ void loop() {
     
     if (loopHeap < minHeapSeen) minHeapSeen = loopHeap;
     
-    // NOVO: Proteção SAFE MODE antes de crash
+    // Proteção SAFE MODE antes de crash crítico
     if (loopHeap < 8000) {
         DEBUG_PRINTF("[Main] Heap crítico: %lu bytes - SAFE MODE\n", loopHeap);
         telemetry.applyModeConfig(MODE_SAFE);
@@ -246,8 +246,8 @@ void loop() {
     telemetry.loop();
     processSerialCommands();
     printPeriodicStatus();
-    
-    // LED indicador
+
+    // LED indicador do modo
     static unsigned long lastBlink = 0;
     unsigned long currentTime = millis();
     
@@ -263,7 +263,6 @@ void loop() {
                 digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); 
                 break;
             case MODE_SAFE:
-                // Padrão triplo flash
                 if (currentTime % 3000 < 1000) digitalWrite(LED_BUILTIN, HIGH);
                 else digitalWrite(LED_BUILTIN, LOW);
                 break;

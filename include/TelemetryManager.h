@@ -36,7 +36,8 @@ public:
     void enableHTTP(bool enable) { _comm.enableHTTP(enable); }
     bool isLoRaEnabled() const { return _comm.isLoRaEnabled(); }
     bool isHTTPEnabled() const { return _comm.isHTTPEnabled(); }
-    
+        CommunicationManager& getCommunicationManager() {
+        return _comm;}
 
 private:
     // Subsistemas

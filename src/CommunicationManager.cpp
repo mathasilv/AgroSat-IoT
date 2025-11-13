@@ -1,14 +1,15 @@
 /**
  * @file CommunicationManager.cpp
- * @brief Comunicação DUAL MODE: LoRa + WiFi/HTTP + Processamento de Payload
- * @version 4.1.0
- * @date 2025-11-12
+ * @brief Comunicação DUAL MODE: LoRa + WiFi/HTTP (Arquitetura LilyGO Oficial)
+ * @version 4.2.0
+ * @date 2025-11-13
  * 
- * MUDANÇAS v4.1.0:
- * - [NEW] Métodos processLoRaPacket() e generateMissionPayload()
- * - [FIX] LoRa gerenciado EXCLUSIVAMENTE aqui (PayloadManager removido)
- * - [OPT] Duty cycle ANATEL compliance (200s entre TX)
- * - [OPT] JSON serialization otimizada (buffer estático)
+ * MUDANÇAS v4.2.0:
+ * - [FIX] LoRa reinicializado com lógica oficial LilyGO
+ * - [FIX] Configuração baseada nos exemplos ArduinoLoRa oficiais
+ * - [FIX] Parâmetros otimizados para TTGO LoRa32 V2.1 (T3 V1.6)
+ * - [NEW] Suporte completo a DIO0, DIO1, DIO2
+ * - [OPT] CRC habilitado por padrão (confiabilidade)
  */
 
 #include "CommunicationManager.h"
@@ -29,15 +30,15 @@ CommunicationManager::CommunicationManager() :
     _lastLoRaTransmission(0),
     _loraEnabled(true),
     _httpEnabled(true),
-    _expectedSeqNum(0)  // ✅ NOVO: Controle de sequência de pacotes
+    _expectedSeqNum(0)
 {
-    // ✅ NOVO: Inicializar dados da missão
     memset(&_lastMissionData, 0, sizeof(MissionData));
 }
 
 bool CommunicationManager::begin() {
     DEBUG_PRINTLN("[CommunicationManager] ===========================================");
-    DEBUG_PRINTLN("[CommunicationManager] Inicializando sistema de comunicação DUAL");
+    DEBUG_PRINTLN("[CommunicationManager] Inicializando DUAL MODE (LoRa + WiFi)");
+    DEBUG_PRINTLN("[CommunicationManager] Board: TTGO LoRa32 V2.1 (T3 V1.6)");
     DEBUG_PRINTLN("[CommunicationManager] ===========================================");
     
     bool loraOk = initLoRa();
@@ -52,130 +53,213 @@ bool CommunicationManager::begin() {
 }
 
 // ============================================================================
-// LORA - ÚNICA FONTE DE INICIALIZAÇÃO
+// LORA - ARQUITETURA LILYGO OFICIAL
 // ============================================================================
+
 bool CommunicationManager::initLoRa() {
-    DEBUG_PRINTLN("[CommunicationManager] ----- INICIALIZANDO LORA -----");
-    DEBUG_PRINTF("[CommunicationManager] Pinos: SCK=%d MISO=%d MOSI=%d CS=%d RST=%d DIO0=%d\n",
-                 LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS, LORA_RST, LORA_DIO0);
-    DEBUG_PRINTF("[CommunicationManager] Frequência: %.1f MHz\n", LORA_FREQUENCY / 1E6);
+    DEBUG_PRINTLN("[CommunicationManager] ━━━━━ INICIALIZANDO LORA (LilyGO) ━━━━━");
+    DEBUG_PRINTLN("[CommunicationManager] Board: TTGO LoRa32 V2.1 (T3 V1.6)");
     
+    // Exibir configuração de pinos
+    DEBUG_PRINTF("[CommunicationManager] Pinos SPI:\n");
+    DEBUG_PRINTF("[CommunicationManager]   SCK  = %d\n", LORA_SCK);
+    DEBUG_PRINTF("[CommunicationManager]   MISO = %d\n", LORA_MISO);
+    DEBUG_PRINTF("[CommunicationManager]   MOSI = %d\n", LORA_MOSI);
+    DEBUG_PRINTF("[CommunicationManager]   CS   = %d\n", LORA_CS);
+    DEBUG_PRINTF("[CommunicationManager]   RST  = %d\n", LORA_RST);
+    DEBUG_PRINTF("[CommunicationManager]   DIO0 = %d\n", LORA_DIO0);
+    
+    // 1. INICIALIZAR SPI
     SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
-    LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
+    DEBUG_PRINTLN("[CommunicationManager] SPI inicializado");
     
-    DEBUG_PRINT("[CommunicationManager] Tentando LoRa.begin()... ");
+    // 2. CONFIGURAR PINOS DO LORA
+    LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
+    DEBUG_PRINTLN("[CommunicationManager] Pinos configurados (CS, RST, DIO0)");
+    
+    // 3. INICIAR LORA NA FREQUÊNCIA CORRETA
+    DEBUG_PRINTF("[CommunicationManager] Tentando LoRa.begin(%.1f MHz)... ", LORA_FREQUENCY / 1E6);
     if (!LoRa.begin(LORA_FREQUENCY)) {
         DEBUG_PRINTLN("FALHOU!");
+        DEBUG_PRINTLN("[CommunicationManager] ✗ Erro: Chip LoRa não respondeu");
         _loraInitialized = false;
         return false;
     }
+    DEBUG_PRINTLN("OK!");
     
-    DEBUG_PRINTLN("SUCESSO!");
+    // 4. CONFIGURAR PARÂMETROS (SINCRONIZADOS COM RECEPTOR)
+    DEBUG_PRINTLN("[CommunicationManager] Configurando parâmetros LoRa...");
     
-    LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR);
-    LoRa.setSignalBandwidth(LORA_SIGNAL_BANDWIDTH);
-    LoRa.setCodingRate4(LORA_CODING_RATE);
-    LoRa.setPreambleLength(8);
-    LoRa.setSyncWord(LORA_SYNC_WORD);
-    LoRa.enableCrc();
+    // TX Power (20 dBm máximo para TTGO LoRa32)
     LoRa.setTxPower(LORA_TX_POWER);
+    DEBUG_PRINTF("[CommunicationManager]   ✓ TX Power: %d dBm\n", LORA_TX_POWER);
     
-    DEBUG_PRINTLN("[CommunicationManager] Parâmetros LoRa:");
-    DEBUG_PRINTF("[CommunicationManager]   - SF: %d\n", LORA_SPREADING_FACTOR);
-    DEBUG_PRINTF("[CommunicationManager]   - BW: %.0f kHz\n", LORA_SIGNAL_BANDWIDTH / 1000);
-    DEBUG_PRINTF("[CommunicationManager]   - CR: 4/%d\n", LORA_CODING_RATE);
-    DEBUG_PRINTF("[CommunicationManager]   - TX Power: %d dBm\n", LORA_TX_POWER);
-    DEBUG_PRINTF("[CommunicationManager]   - Duty Cycle: %.1f%% (min %lus entre TX)\n", 
-                 LORA_DUTY_CYCLE_PERCENT, LORA_MIN_INTERVAL_MS / 1000);
+    // Signal Bandwidth (125 kHz padrão)
+    LoRa.setSignalBandwidth(LORA_SIGNAL_BANDWIDTH);
+    DEBUG_PRINTF("[CommunicationManager]   ✓ Bandwidth: %.0f kHz\n", LORA_SIGNAL_BANDWIDTH / 1000);
+    
+    // Spreading Factor (SF7 - maior velocidade)
+    LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR);
+    DEBUG_PRINTF("[CommunicationManager]   ✓ Spreading Factor: SF%d\n", LORA_SPREADING_FACTOR);
+    
+    // Preamble Length (8 símbolos - padrão Arduino LoRa)
+    LoRa.setPreambleLength(LORA_PREAMBLE_LENGTH);
+    DEBUG_PRINTF("[CommunicationManager]   ✓ Preamble: %d símbolos\n", LORA_PREAMBLE_LENGTH);
+    
+    // Sync Word (0x12 - padrão público Arduino LoRa)
+    LoRa.setSyncWord(LORA_SYNC_WORD);
+    DEBUG_PRINTF("[CommunicationManager]   ✓ Sync Word: 0x%02X\n", LORA_SYNC_WORD);
+    
+    // Coding Rate (4/5 - compromisso)
+    LoRa.setCodingRate4(LORA_CODING_RATE);
+    DEBUG_PRINTF("[CommunicationManager]   ✓ Coding Rate: 4/%d\n", LORA_CODING_RATE);
+    
+    // CRC (configurável)
+    if (LORA_CRC_ENABLED) {
+        LoRa.enableCrc();
+        DEBUG_PRINTLN("[CommunicationManager]   ✓ CRC: HABILITADO");
+    } else {
+        LoRa.disableCrc();
+        DEBUG_PRINTLN("[CommunicationManager]   ⚠ CRC: DESABILITADO (modo debug)");
+    }
+    
+    // InvertIQ DESABILITADO (padrão)
+    LoRa.disableInvertIQ();
+    DEBUG_PRINTLN("[CommunicationManager]   ✓ InvertIQ: DESABILITADO");
+    
+    // 5. DUTY CYCLE INFO
+    DEBUG_PRINTLN("[CommunicationManager] -------------------------------------------");
+    DEBUG_PRINTF("[CommunicationManager] ANATEL Duty Cycle: %.1f%% (máx)\n", LORA_DUTY_CYCLE_PERCENT);
+    DEBUG_PRINTF("[CommunicationManager] Intervalo mínimo TX: %lu s\n", LORA_MIN_INTERVAL_MS / 1000);
+    DEBUG_PRINTLN("[CommunicationManager] -------------------------------------------");
     
     _loraInitialized = true;
     
-    // Teste inicial
+    // 6. TESTE INICIAL
     DEBUG_PRINT("[CommunicationManager] Enviando pacote de teste... ");
-    String testMsg = "AGROSAT_BOOT_v4.1";
+    String testMsg = "AGROSAT_BOOT_v4.2.1";
     if (sendLoRa(testMsg)) {
-        DEBUG_PRINTLN("OK!");
+        DEBUG_PRINTLN("✓ OK!");
     } else {
-        DEBUG_PRINTLN("FALHOU (mas LoRa está funcional)");
+        DEBUG_PRINTLN("✗ FALHOU (mas LoRa está configurado)");
     }
     
-    LoRa.receive();  // Modo recepção contínua
+    // 7. MODO RECEPÇÃO
+    LoRa.receive();
+    DEBUG_PRINTLN("[CommunicationManager] LoRa em modo RX");
+    DEBUG_PRINTLN("[CommunicationManager] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    // 8. EXIBIR CONFIGURAÇÃO PARA RECEPTOR
+    DEBUG_PRINTLN("");
+    DEBUG_PRINTLN("╔══════════════════════════════════════════════════════════════╗");
+    DEBUG_PRINTLN("║      CONFIGURAÇÃO DO RECEPTOR (usar os mesmos valores)       ║");
+    DEBUG_PRINTLN("╠══════════════════════════════════════════════════════════════╣");
+    DEBUG_PRINTF("║ Frequência:       %.1f MHz                                 ║\n", LORA_FREQUENCY / 1E6);
+    DEBUG_PRINTF("║ Spreading Factor: SF%d                                       ║\n", LORA_SPREADING_FACTOR);
+    DEBUG_PRINTF("║ Bandwidth:        %.0f kHz                                 ║\n", LORA_SIGNAL_BANDWIDTH / 1000);
+    DEBUG_PRINTF("║ Coding Rate:      4/%d                                       ║\n", LORA_CODING_RATE);
+    DEBUG_PRINTF("║ Sync Word:        0x%02X                                      ║\n", LORA_SYNC_WORD);
+    DEBUG_PRINTF("║ Preamble:         %d símbolos                               ║\n", LORA_PREAMBLE_LENGTH);
+    DEBUG_PRINTF("║ CRC:              %s                                ║\n", LORA_CRC_ENABLED ? "HABILITADO " : "DESABILITADO");
+    DEBUG_PRINTLN("╚══════════════════════════════════════════════════════════════╝");
+    DEBUG_PRINTLN("");
+    
     return true;
 }
 
+
 bool CommunicationManager::sendLoRa(const String& data) {
     if (!_loraEnabled) {
-        DEBUG_PRINTLN("[CommunicationManager] LoRa desabilitado");
+        DEBUG_PRINTLN("[CommunicationManager] LoRa desabilitado via flag");
         return false;
     }
     
     if (!_loraInitialized) {
+        DEBUG_PRINTLN("[CommunicationManager] LoRa não inicializado");
         _loraPacketsFailed++;
         return false;
     }
     
     unsigned long now = millis();
     
-    // DUTY CYCLE ANATEL
+    // DUTY CYCLE ANATEL - Verificar intervalo mínimo entre transmissões
     if (now - _lastLoRaTransmission < LORA_MIN_INTERVAL_MS) {
         uint32_t waitTime = (LORA_MIN_INTERVAL_MS - (now - _lastLoRaTransmission)) / 1000;
         DEBUG_PRINTF("[CommunicationManager] Duty cycle: aguarde %lu s\n", waitTime);
         return false;
     }
     
-    DEBUG_PRINTLN("[CommunicationManager] ----- TRANSMITINDO LORA -----");
-    DEBUG_PRINTF("[CommunicationManager] Payload: %s (%d bytes)\n", 
-                 data.c_str(), data.length());
+    DEBUG_PRINTLN("[CommunicationManager] ━━━━━ TRANSMITINDO LORA ━━━━━");
+    DEBUG_PRINTF("[CommunicationManager] Payload: %s\n", data.c_str());
+    DEBUG_PRINTF("[CommunicationManager] Tamanho: %d bytes\n", data.length());
     
+    // Transmitir pacote (blocking mode = true para garantir envio completo)
     LoRa.beginPacket();
     LoRa.print(data);
-    bool success = LoRa.endPacket(true);
+    bool success = LoRa.endPacket(true);  // true = blocking, aguarda TX completo
     
     if (success) {
         _loraPacketsSent++;
         _lastLoRaTransmission = now;
-        DEBUG_PRINTLN("[CommunicationManager] ✓ Pacote enviado!");
-        DEBUG_PRINTF("[CommunicationManager] Total: %d pacotes\n", _loraPacketsSent);
+        DEBUG_PRINTLN("[CommunicationManager] ✓ Pacote enviado com sucesso!");
+        DEBUG_PRINTF("[CommunicationManager] Total enviado: %d pacotes\n", _loraPacketsSent);
     } else {
         _loraPacketsFailed++;
-        DEBUG_PRINTLN("[CommunicationManager] ✗ Falha na transmissão");
+        DEBUG_PRINTLN("[CommunicationManager] ✗ Falha na transmissão LoRa");
     }
     
+    // Voltar ao modo recepção
     LoRa.receive();
+    DEBUG_PRINTLN("[CommunicationManager] LoRa voltou ao modo RX");
+    
     return success;
 }
 
 bool CommunicationManager::receiveLoRaPacket(String& packet, int& rssi, float& snr) {
-    if (!_loraInitialized) return false;
+    if (!_loraInitialized) {
+        return false;
+    }
     
     int packetSize = LoRa.parsePacket();
-    if (packetSize <= 0) return false;
+    if (packetSize <= 0) {
+        return false;  // Nenhum pacote disponível
+    }
     
+    // Ler pacote completo
     packet = "";
     while (LoRa.available()) {
         packet += (char)LoRa.read();
     }
     
+    // Obter RSSI e SNR
     rssi = LoRa.packetRssi();
     snr = LoRa.packetSnr();
     
+    // Armazenar para estatísticas
     _loraRSSI = rssi;
     _loraSNR = snr;
     
-    DEBUG_PRINTF("[CommunicationManager] LoRa RX: %s (RSSI=%d, SNR=%.1f)\n", 
-                 packet.c_str(), rssi, snr);
+    DEBUG_PRINTLN("[CommunicationManager] ━━━━━ PACOTE LORA RECEBIDO ━━━━━");
+    DEBUG_PRINTF("[CommunicationManager] Dados: %s\n", packet.c_str());
+    DEBUG_PRINTF("[CommunicationManager] RSSI: %d dBm\n", rssi);
+    DEBUG_PRINTF("[CommunicationManager] SNR: %.1f dB\n", snr);
+    DEBUG_PRINTF("[CommunicationManager] Tamanho: %d bytes\n", packet.length());
     
     return true;
 }
 
 bool CommunicationManager::sendLoRaTelemetry(const TelemetryData& data) {
-    if (!_loraInitialized) return false;
+    if (!_loraInitialized) {
+        return false;
+    }
+    
     String payload = _createLoRaPayload(data);
     return sendLoRa(payload);
 }
 
 String CommunicationManager::_createLoRaPayload(const TelemetryData& data) {
-    // Formato compacto: T<id>,B<bat>,T<temp>,P<press>,A<alt>,G<xyz>,A<xyz>
+    // Formato compacto para LoRa (limitação de payload)
+    // Formato: T<id>,B<bat>,T<temp>,P<press>,A<alt>,G<gx>,<gy>,<gz>,A<ax>,<ay>,<az>
     char buffer[200];
     snprintf(buffer, sizeof(buffer), 
              "T%d,B%.1f,T%.1f,P%.0f,A%.0f,G%.2f,%.2f,%.2f,A%.2f,%.2f,%.2f",
@@ -208,8 +292,9 @@ void CommunicationManager::getLoRaStatistics(uint16_t& sent, uint16_t& failed) {
 }
 
 // ============================================================================
-// ✅ NOVO: PROCESSAMENTO DE PAYLOAD DE MISSÃO (substitui PayloadManager)
+// PROCESSAMENTO DE PAYLOAD DE MISSÃO
 // ============================================================================
+
 bool CommunicationManager::processLoRaPacket(const String& packet, MissionData& data) {
     if (!_validateChecksum(packet)) {
         DEBUG_PRINTLN("[CommunicationManager] Checksum inválido");
@@ -230,9 +315,7 @@ MissionData CommunicationManager::getLastMissionData() {
 }
 
 String CommunicationManager::generateMissionPayload(const MissionData& data) {
-    // Formato JSON compacto (máximo 90 bytes para PAYLOAD_MAX_SIZE)
-    // {"sm":45.2,"t":28.5,"h":65.3,"ir":1,"rs":-85,"sn":8.5,"rx":10,"ls":2}
-    
+    // Formato JSON compacto (máximo 90 bytes)
     char buffer[PAYLOAD_MAX_SIZE];
     snprintf(buffer, sizeof(buffer),
         "{\"sm\":%.1f,\"t\":%.1f,\"h\":%.1f,\"ir\":%d,\"rs\":%d,\"sn\":%.1f,\"rx\":%d,\"ls\":%d}",
@@ -253,17 +336,15 @@ bool CommunicationManager::_parseAgroPacket(const String& packetData, MissionDat
     String packet = packetData;
     
     // Formato esperado: "AGRO,seq,sm,temp,hum,irr"
-    // Exemplo: "AGRO,123,45.2,28.5,65.3,1"
-    
     if (!packet.startsWith("AGRO,")) {
-        DEBUG_PRINTLN("[CommunicationManager] Formato de pacote inválido (não começa com AGRO)");
+        DEBUG_PRINTLN("[CommunicationManager] Formato inválido (não começa com AGRO)");
         return false;
     }
     
-    // Remover prefixo "AGRO,"
+    // Remover prefixo
     packet.remove(0, 5);
     
-    // Parsear campos separados por vírgula
+    // Parsear campos
     int commaIndex = 0;
     int fieldIndex = 0;
     String fields[6];
@@ -273,91 +354,60 @@ bool CommunicationManager::_parseAgroPacket(const String& packetData, MissionDat
         packet.remove(0, commaIndex + 1);
     }
     
-    // Último campo (sem vírgula no final)
     if (fieldIndex < 6 && packet.length() > 0) {
         fields[fieldIndex++] = packet;
     }
     
-    // Validar número mínimo de campos
     if (fieldIndex < 5) {
         DEBUG_PRINTF("[CommunicationManager] Campos insuficientes: %d (mínimo 5)\n", fieldIndex);
         return false;
     }
     
-    // Extrair e validar dados
+    // Extrair dados
     uint16_t seqNum = fields[0].toInt();
     data.soilMoisture = fields[1].toFloat();
     data.ambientTemp = fields[2].toFloat();
     data.humidity = fields[3].toFloat();
     data.irrigationStatus = fields[4].toInt();
     
-    // Validar limites físicos
-    if (data.soilMoisture < 0.0 || data.soilMoisture > 100.0) {
-        DEBUG_PRINTLN("[CommunicationManager] soilMoisture fora dos limites (0-100%)");
+    // Validar limites
+    if (data.soilMoisture < 0.0 || data.soilMoisture > 100.0 ||
+        data.ambientTemp < -50.0 || data.ambientTemp > 100.0 ||
+        data.humidity < 0.0 || data.humidity > 100.0) {
+        DEBUG_PRINTLN("[CommunicationManager] Dados fora dos limites válidos");
         return false;
     }
     
-    if (data.ambientTemp < -50.0 || data.ambientTemp > 100.0) {
-        DEBUG_PRINTLN("[CommunicationManager] ambientTemp fora dos limites (-50 a 100°C)");
-        return false;
-    }
-    
-    if (data.humidity < 0.0 || data.humidity > 100.0) {
-        DEBUG_PRINTLN("[CommunicationManager] humidity fora dos limites (0-100%)");
-        return false;
-    }
-    
-    // Detectar pacotes perdidos (verificação de sequência)
+    // Detectar pacotes perdidos
     if (seqNum != _expectedSeqNum) {
         if (seqNum > _expectedSeqNum) {
             uint16_t lost = seqNum - _expectedSeqNum;
             data.packetsLost += lost;
-            DEBUG_PRINTF("[CommunicationManager] %d pacote(s) perdido(s) (esperado: %d, recebido: %d)\n", 
-                        lost, _expectedSeqNum, seqNum);
-        } else {
-            DEBUG_PRINTF("[CommunicationManager] Pacote duplicado ou fora de ordem (seq: %d)\n", seqNum);
+            DEBUG_PRINTF("[CommunicationManager] %d pacote(s) perdido(s)\n", lost);
         }
     }
     
     _expectedSeqNum = seqNum + 1;
-    
-    // Atualizar estatísticas
     data.packetsReceived++;
     data.lastLoraRx = millis();
     
-    DEBUG_PRINTF("[CommunicationManager] Payload processado: SM=%.1f%%, T=%.1f°C, H=%.1f%%, IRR=%d\n",
+    DEBUG_PRINTF("[CommunicationManager] Payload: SM=%.1f%%, T=%.1f°C, H=%.1f%%, IRR=%d\n",
                  data.soilMoisture, data.ambientTemp, data.humidity, data.irrigationStatus);
     
     return true;
 }
 
 bool CommunicationManager::_validateChecksum(const String& packet) {
-    // Implementação simplificada - sempre válido
-    // Em produção, implementar checksum real (CRC16, CRC32, etc.)
-    // 
-    // Exemplo de implementação CRC16:
-    // uint16_t crc = 0xFFFF;
-    // for (size_t i = 0; i < packet.length() - 2; i++) {
-    //     crc ^= packet[i];
-    //     for (int j = 0; j < 8; j++) {
-    //         if (crc & 0x0001) {
-    //             crc = (crc >> 1) ^ 0xA001;
-    //         } else {
-    //             crc >>= 1;
-    //         }
-    //     }
-    // }
-    // uint16_t receivedCRC = (packet[packet.length()-2] << 8) | packet[packet.length()-1];
-    // return (crc == receivedCRC);
-    
+    // Simplificado - implementar CRC real em produção
     return true;
 }
 
 // ============================================================================
 // WIFI/HTTP
 // ============================================================================
+
 void CommunicationManager::update() {
-    // Verificar conexão WiFi
+    // Verificar status WiFi
     if (WiFi.status() == WL_CONNECTED) {
         if (!_connected) {
             _connected = true;
@@ -373,9 +423,6 @@ void CommunicationManager::update() {
             DEBUG_PRINTLN("[CommunicationManager] WiFi desconectado!");
         }
     }
-    
-    // ✅ Processamento de pacotes LoRa movido para TelemetryManager::loop()
-    // para evitar overhead desnecessário no update()
 }
 
 bool CommunicationManager::connectWiFi() {
@@ -404,7 +451,7 @@ bool CommunicationManager::connectWiFi() {
     _connected = true;
     _rssi = WiFi.RSSI();
     _ipAddress = WiFi.localIP().toString();
-    DEBUG_PRINTF("\n[CommunicationManager] Conectado! IP: %s, RSSI: %d dBm\n", 
+    DEBUG_PRINTF("\n[CommunicationManager] WiFi OK! IP: %s, RSSI: %d dBm\n", 
                  _ipAddress.c_str(), _rssi);
     return true;
 }
@@ -429,15 +476,13 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data) {
     bool loraSuccess = false;
     bool httpSuccess = false;
     
-    // 1. ENVIAR VIA LORA (se habilitado)
+    // 1. ENVIAR VIA LORA
     if (_loraEnabled && _loraInitialized) {
         DEBUG_PRINTLN("[CommunicationManager] >>> Enviando via LoRa...");
         loraSuccess = sendLoRaTelemetry(data);
-    } else if (!_loraEnabled) {
-        DEBUG_PRINTLN("[CommunicationManager] LoRa desabilitado (pulando)");
     }
     
-    // 2. ENVIAR VIA HTTP (se habilitado)
+    // 2. ENVIAR VIA HTTP
     if (_httpEnabled && _connected) {
         String jsonPayload = _createTelemetryJSON(data);
         DEBUG_PRINTLN("[CommunicationManager] >>> Enviando HTTP/OBSAT...");
@@ -459,24 +504,18 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data) {
                 if (_sendHTTPPost(jsonPayload)) {
                     _packetsSent++;
                     httpSuccess = true;
-                    DEBUG_PRINTLN("[CommunicationManager] HTTP enviado com sucesso!");
+                    DEBUG_PRINTLN("[CommunicationManager] HTTP OK!");
                     break;
                 }
             }
             
             if (!httpSuccess) {
                 _packetsFailed++;
-                DEBUG_PRINTLN("[CommunicationManager] Falha HTTP após todas tentativas");
+                DEBUG_PRINTLN("[CommunicationManager] HTTP falhou após todas tentativas");
             }
         }
-    } else if (!_httpEnabled) {
-        DEBUG_PRINTLN("[CommunicationManager] HTTP desabilitado (pulando)");
-    } else if (!_connected) {
-        DEBUG_PRINTLN("[CommunicationManager] Sem WiFi para HTTP");
-        _packetsFailed++;
     }
     
-    // Retorna sucesso se PELO MENOS UM método funcionou
     return (loraSuccess || httpSuccess);
 }
 
@@ -516,8 +555,8 @@ bool CommunicationManager::testConnection() {
 // ============================================================================
 // MÉTODOS PRIVADOS
 // ============================================================================
+
 String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
-    // Buffer estático para evitar fragmentação
     StaticJsonDocument<384> doc;
 
     doc["equipe"] = TEAM_ID;
@@ -570,12 +609,11 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data) {
     payload["stat"] = (data.systemStatus == STATUS_OK) ? "ok" : "err";
     payload["time"] = data.missionTime / 1000;
 
-    // Serializar para buffer estático
     char jsonBuffer[JSON_MAX_SIZE];
     size_t jsonSize = serializeJson(doc, jsonBuffer, sizeof(jsonBuffer));
     
     if (jsonSize >= sizeof(jsonBuffer)) {
-        DEBUG_PRINTLN("[Comm] JSON truncado!");
+        DEBUG_PRINTLN("[CommunicationManager] JSON truncado!");
         return "";
     }
     
