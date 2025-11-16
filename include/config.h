@@ -1,13 +1,15 @@
 /**
  * @file config.h
- * @brief Configurações globais do CubeSat AgroSat-IoT - LORA SINCRONIZADO
- * @version 4.2.1
- * @date 2025-11-13
+ * @brief Configurações globais do CubeSat AgroSat-IoT - Store-and-Forward LEO
+ * @version 6.0.0
+ * @date 2025-11-15
  * 
- * CHANGELOG v4.2.1:
- * - [FIX] Parâmetros LoRa sincronizados para evitar CRC errors
- * - [FIX] CRC desabilitado temporariamente para debug (reabilitar em produção)
- * - [NEW] Configurações documentadas para receptor
+ * CHANGELOG v6.0.0:
+ * - [NEW] Arquitetura Store-and-Forward completa para órbita LEO
+ * - [NEW] Gerenciamento de múltiplos nós terrestres com buffer inteligente
+ * - [NEW] Detecção de passagens orbitais e consolidação automática
+ * - [FIX] Campos temporais e espaciais para gestão de dados
+ * - [OPT] Política de priorização e TTL para nós
  */
 
 #ifndef CONFIG_H
@@ -15,21 +17,13 @@
 
 #include <Arduino.h>
 
-// ============================================================================
-// IDENTIFICAÇÃO DA MISSÃO
-// ============================================================================
 #define MISSION_NAME "AgroSat-IoT"
 #define TEAM_CATEGORY "N3"
-#define FIRMWARE_VERSION "4.2.1"
+#define FIRMWARE_VERSION "6.0.0"
 #define BUILD_DATE __DATE__
 #define BUILD_TIME __TIME__
 #define TEAM_ID 666
 
-// ============================================================================
-// HARDWARE - TTGO LoRa32 V2.1 (T3 V1.6 equivalent)
-// ============================================================================
-
-// Display OLED
 #define OLED_SDA 21
 #define OLED_SCL 22
 #ifndef OLED_RST
@@ -37,7 +31,6 @@
 #endif
 #define OLED_ADDRESS 0x3C
 
-// LoRa Radio - Configuração oficial LilyGO para T3 V1.6
 #define LORA_SCK 5
 #define LORA_MISO 19
 #define LORA_MOSI 27
@@ -47,18 +40,15 @@
 #define LORA_DIO1 33
 #define LORA_DIO2 32
 
-// SD Card
 #define SD_CS 13
 #define SD_MOSI 15
 #define SD_MISO 2
 #define SD_SCLK 14
 
-// Sensores I2C
 #define SENSOR_I2C_SDA 21
 #define SENSOR_I2C_SCL 22
 #define I2C_FREQUENCY 100000
 
-// Battery & LED
 #define BATTERY_PIN 35
 #define BATTERY_SAMPLES 16
 #define BATTERY_VREF 3.6
@@ -69,9 +59,6 @@
 #endif
 #define BUTTON_PIN 0
 
-// ============================================================================
-// MODOS OPERACIONAIS E CONFIGS DINÂMICAS
-// ============================================================================
 enum OperationMode : uint8_t {
     MODE_INIT = 0,
     MODE_PREFLIGHT = 1,
@@ -90,50 +77,54 @@ struct ModeConfig {
     uint32_t telemetrySendInterval;
     uint32_t storageSaveInterval;
     uint8_t wifiDutyCycle;
+    uint32_t loraRxWindowDuration;
+    uint32_t loraRxTxInterval;
 };
 
 const ModeConfig PREFLIGHT_CONFIG = {
-    true,   // displayEnabled
-    true,   // serialLogsEnabled
-    true,   // sdLogsVerbose
-    true,   // loraEnabled 
-    false,   // httpEnabled
-    5000,  // telemetrySendInterval (5s para testes)
-    60000,  // storageSaveInterval (1min)
-    100     // wifiDutyCycle (sempre ligado)
+    true,    
+    true,    
+    true,    
+    true,    
+    false,   
+    5000,    
+    60000,   
+    100,     
+    10000,   
+    30000    
 };
 
 const ModeConfig FLIGHT_CONFIG = {
-    false,   // displayEnabled
-    false,   // serialLogsEnabled
-    false,   // sdLogsVerbose
-    true,    // loraEnabled - LoRa ATIVO (missão)
-    true,    // httpEnabled - HTTP ATIVO (missão)
-    240000,  // telemetrySendInterval (4min - OBSAT)
-    240000,  // storageSaveInterval (4min)
-    5        // wifiDutyCycle (5%)
+    false,   
+    false,   
+    false,   
+    true,    
+    true,    
+    240000,  
+    240000,  
+    5,       
+    20000,   
+    60000    
 };
 
 const ModeConfig SAFE_CONFIG = {
-    false,   // displayEnabled
-    true,    // serialLogsEnabled (manter debug)
-    true,    // sdLogsVerbose
-    true,    // loraEnabled - LoRa ATIVO (comunicação crítica)
-    false,   // httpEnabled - HTTP DESLIGADO (economia)
-    120000,  // telemetrySendInterval (2min)
-    300000,  // storageSaveInterval (5min)
-    0        // wifiDutyCycle (desligar WiFi)
+    false,   
+    true,    
+    true,    
+    true,    
+    false,   
+    120000,  
+    300000,  
+    0,       
+    15000,   
+    45000    
 };
 
-// ============================================================================
-// CONFIGURAÇÃO DE SENSORES - PLACA PION REAL
-// ============================================================================
 #define USE_MPU9250
 #define USE_BMP280
 #define USE_SI7021
 #define USE_CCS811
 
-// Endereços I2C
 #define MPU9250_ADDRESS 0x69
 #define BMP280_ADDR_1 0x76
 #define BMP280_ADDR_2 0x77
@@ -142,7 +133,6 @@ const ModeConfig SAFE_CONFIG = {
 #define CCS811_ADDR_2 0x5B
 #define DS3231_ADDRESS 0x68
 
-// Intervalos de leitura
 #define CUSTOM_FILTER_SIZE 5
 #define SENSOR_READ_INTERVAL 1000
 #define CCS811_READ_INTERVAL 5000
@@ -150,9 +140,6 @@ const ModeConfig SAFE_CONFIG = {
 #define MPU9250_CALIBRATION_SAMPLES 100
 #define CCS811_WARMUP_TIME 20000
 
-// ============================================================================
-// LIMITES DE VALIDAÇÃO DE SENSORES
-// ============================================================================
 #define TEMP_MIN_VALID -50.0
 #define TEMP_MAX_VALID 100.0
 #define PRESSURE_MIN_VALID 300.0
@@ -170,38 +157,23 @@ const ModeConfig SAFE_CONFIG = {
 #define GYRO_MIN_VALID -2000.0
 #define GYRO_MAX_VALID 2000.0
 
-// ============================================================================
-// TIMEOUTS DE INICIALIZAÇÃO
-// ============================================================================
 #define SENSOR_INIT_TIMEOUT 2000
 
-// ============================================================================
-// COMUNICAÇÃO - LORA (CONFIGURAÇÃO SINCRONIZADA TRANSMISSOR-RECEPTOR)
-// ============================================================================
-
-// Frequência para Brasil (915 MHz ISM Band)
 #define LORA_FREQUENCY 915E6
-
-// ⚠️ IMPORTANTE: ESTES PARÂMETROS DEVEM SER IDÊNTICOS NO RECEPTOR!
-// Parâmetros otimizados para transmissão confiável
-#define LORA_SPREADING_FACTOR 7         // SF7 (maior velocidade, menor alcance) - AJUSTAR SE NECESSÁRIO
-#define LORA_SIGNAL_BANDWIDTH 125E3     // 125 kHz (padrão)
-#define LORA_CODING_RATE 5              // CR 4/5 (compromisso velocidade/proteção)
-#define LORA_TX_POWER 20                // 20 dBm (máximo para TTGO LoRa32)
-#define LORA_PREAMBLE_LENGTH 8          // 8 símbolos (padrão Arduino LoRa)
-#define LORA_SYNC_WORD 0x12             // 0x12 (padrão público Arduino LoRa)
-
-// CRC: HABILITAR EM PRODUÇÃO (desabilitado temporariamente para debug)
-#define LORA_CRC_ENABLED false          // false = desabilitado (debug), true = habilitado (produção)
-
-// ANATEL Duty Cycle Compliance
+#define LORA_SPREADING_FACTOR 7         
+#define LORA_SPREADING_FACTOR_SAFE 12   
+#define LORA_SIGNAL_BANDWIDTH 125E3     
+#define LORA_CODING_RATE 5              
+#define LORA_TX_POWER 20                
+#define LORA_PREAMBLE_LENGTH 8          
+#define LORA_SYNC_WORD 0x12             
+#define LORA_CRC_ENABLED true           
 #define LORA_MAX_TX_TIME_MS 1000
 #define LORA_DUTY_CYCLE_PERCENT 10
 #define LORA_MIN_INTERVAL_MS ((uint32_t)(LORA_MAX_TX_TIME_MS * (100.0 / LORA_DUTY_CYCLE_PERCENT)))
+#define LORA_TX_TIMEOUT_MS 2000         
+#define LORA_MAX_PAYLOAD_SIZE 255       
 
-// ============================================================================
-// REDE/HTTP/COMUNICAÇÃO - OBSAT
-// ============================================================================
 #define WIFI_SSID "MATHEUS "
 #define WIFI_PASSWORD "12213490"
 #define WIFI_TIMEOUT_MS 60000
@@ -212,15 +184,12 @@ const ModeConfig SAFE_CONFIG = {
 #define HTTP_ENDPOINT "/teste_post/envio.php"
 #define HTTP_TIMEOUT_MS 10000
 
-#define JSON_MAX_SIZE 512
-#define PAYLOAD_MAX_SIZE 90
+#define JSON_MAX_SIZE 768
+#define PAYLOAD_MAX_SIZE 180
 
 #define TELEMETRY_SEND_INTERVAL PREFLIGHT_CONFIG.telemetrySendInterval
 #define STORAGE_SAVE_INTERVAL PREFLIGHT_CONFIG.storageSaveInterval
 
-// ============================================================================
-// ARMAZENAMENTO & SISTEMA
-// ============================================================================
 #define SD_LOG_FILE "/telemetry.csv"
 #define SD_MISSION_FILE "/mission.csv"
 #define SD_ERROR_FILE "/errors.log"
@@ -240,16 +209,12 @@ const ModeConfig SAFE_CONFIG = {
 #define MIN_TEMPERATURE -80
 #define MAX_TEMPERATURE 85
 
-// NTP
 #define NTP_SERVER_PRIMARY   "pool.ntp.org"
 #define NTP_SERVER_SECONDARY "time.google.com"
 #define NTP_SERVER_TERTIARY  "time.cloudflare.com"
 #define TIMEZONE_STRING      "<-03>3"
 #define RTC_TIMEZONE_OFFSET -10800
 
-// ============================================================================
-// DEBUG (segue modo operacional)
-// ============================================================================
 #define DEBUG_SERIAL Serial
 #define DEBUG_BAUDRATE 115200
 extern bool currentSerialLogsEnabled;
@@ -257,14 +222,12 @@ extern bool currentSerialLogsEnabled;
 #define DEBUG_PRINTLN(x) if(currentSerialLogsEnabled){DEBUG_SERIAL.println(x);}
 #define DEBUG_PRINTF(...) if(currentSerialLogsEnabled){DEBUG_SERIAL.printf(__VA_ARGS__);}
 
-// ============================================================================
-// BUFFER CIRCULAR TELEMETRIA
-// ============================================================================
 #define TELEMETRY_BUFFER_SIZE 10
+#define MAX_GROUND_NODES 5              
+#define NODE_TTL_MS 300000              
+#define ORBITAL_PASS_TIMEOUT_MS 120000  
+#define MIN_PACKETS_FOR_FORWARD 1       
 
-// ============================================================================
-// ESTRUTURAS DE DADOS - COMPATÍVEL OBSAT
-// ============================================================================
 struct TelemetryData {
     unsigned long timestamp;
     unsigned long missionTime;
@@ -292,6 +255,8 @@ struct TelemetryData {
 };
 
 struct MissionData {
+    uint16_t nodeId;                    
+    uint16_t sequenceNumber;            
     float soilMoisture;
     float ambientTemp;
     float humidity;
@@ -300,7 +265,21 @@ struct MissionData {
     float snr;
     uint16_t packetsReceived;
     uint16_t packetsLost;
-    unsigned long lastLoraRx;
+    unsigned long lastLoraRx;           
+    unsigned long collectionTime;       
+    uint8_t priority;                   
+    bool forwarded;                     
+};
+
+struct GroundNodeBuffer {
+    MissionData nodes[MAX_GROUND_NODES];
+    uint8_t activeNodes;
+    unsigned long lastUpdate[MAX_GROUND_NODES];
+    unsigned long sessionStartTime;     
+    unsigned long sessionEndTime;       
+    uint16_t totalPacketsCollected;     
+    uint8_t passNumber;                 
+    bool inOrbitalPass;                 
 };
 
 enum SystemStatus : uint8_t {
@@ -315,4 +294,4 @@ enum SystemStatus : uint8_t {
     STATUS_WATCHDOG = 0x80
 };
 
-#endif // CONFIG_H
+#endif

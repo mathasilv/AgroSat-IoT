@@ -1,7 +1,7 @@
 /**
  * @file TelemetryManager.h
- * @brief VERSÃO COM DISPLAYMANAGER INTEGRADO
- * @version 2.3.0
+ * @brief VERSÃO COM STORE-AND-FORWARD LEO INTEGRADO
+ * @version 6.0.0
  */
 #ifndef TELEMETRYMANAGER_H
 #define TELEMETRYMANAGER_H
@@ -36,11 +36,9 @@ public:
     void enableHTTP(bool enable) { _comm.enableHTTP(enable); }
     bool isLoRaEnabled() const { return _comm.isLoRaEnabled(); }
     bool isHTTPEnabled() const { return _comm.isHTTPEnabled(); }
-        CommunicationManager& getCommunicationManager() {
-        return _comm;}
+    CommunicationManager& getCommunicationManager() { return _comm; }
 
 private:
-    // Subsistemas
     SSD1306Wire _display;            
     DisplayManager _displayMgr;      
     SystemHealth _health;
@@ -50,16 +48,13 @@ private:
     CommunicationManager _comm;
     RTCManager _rtc;
     
-    // Dados
     TelemetryData _telemetryData;
-    MissionData _missionData;
+    GroundNodeBuffer _groundNodeBuffer;
     
-    // Estado
     OperationMode _mode;
     bool _missionActive;
     uint32_t _missionStartTime;
     
-    // Timers
     unsigned long _lastTelemetrySend;
     unsigned long _lastStorageSave;
     unsigned long _lastDisplayUpdate;
@@ -68,17 +63,22 @@ private:
     
     bool _useNewDisplay;           
 
-    // Métodos privados
     void _collectTelemetryData();
     void _sendTelemetry();
     void _saveToStorage();
     void _checkOperationalConditions();
-    void _displayStatus();            // MANTER (legado)
-    void _displayTelemetry();         // MANTER (legado)
+    void _displayStatus();            
+    void _displayTelemetry();         
     void _displayError(const String& error);
     void _logHeapUsage(const String& component);
     void _monitorHeap();
     bool _initI2CBus();
+    
+    void _updateGroundNode(const MissionData& data);
+    void _cleanupStaleNodes(unsigned long maxAge = NODE_TTL_MS);
+    void _manageOrbitalPass();
+    void _prepareForward();
+    void _replaceLowestPriorityNode(const MissionData& newData);
 };
 
 #endif

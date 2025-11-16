@@ -1,7 +1,7 @@
 /**
  * @file CommunicationManager.h
- * @brief Sistema de comunicação dual com processamento de payload integrado
- * @version 4.1.0
+ * @brief Sistema de comunicação dual com Store-and-Forward LEO
+ * @version 6.0.0
  */
 #ifndef COMMUNICATION_MANAGER_H
 #define COMMUNICATION_MANAGER_H
@@ -21,7 +21,6 @@ public:
     bool begin();
     void update();
     
-    // WiFi
     bool connectWiFi();
     void disconnectWiFi();
     bool isConnected();
@@ -29,12 +28,11 @@ public:
     String getIPAddress();
     bool testConnection();
     
-    // Telemetria
-    bool sendTelemetry(const TelemetryData& data);
+    bool sendTelemetry(const TelemetryData& data, const GroundNodeBuffer& groundBuffer);
     void getStatistics(uint16_t& sent, uint16_t& failed, uint16_t& retries);
     
-    // LoRa
     bool initLoRa();
+    bool retryLoRaInit(uint8_t maxAttempts = 3);
     bool sendLoRa(const String& data);
     bool sendLoRaTelemetry(const TelemetryData& data);
     bool receiveLoRaPacket(String& packet, int& rssi, float& snr);
@@ -42,20 +40,20 @@ public:
     int getLoRaRSSI();
     float getLoRaSNR();
     void getLoRaStatistics(uint16_t& sent, uint16_t& failed);
+    void reconfigureLoRa(OperationMode mode);
     
-    // ✅ NOVO: Controle de transmissão
     void enableLoRa(bool enable);
     void enableHTTP(bool enable);
     bool isLoRaEnabled() const { return _loraEnabled; }
     bool isHTTPEnabled() const { return _httpEnabled; }
     
-    // ✅ NOVO: Processamento de payload (substitui PayloadManager)
     bool processLoRaPacket(const String& packet, MissionData& data);
     MissionData getLastMissionData();
     String generateMissionPayload(const MissionData& data);
+    String generateConsolidatedPayload(const GroundNodeBuffer& buffer);
+    void markNodesAsForwarded(GroundNodeBuffer& buffer);
 
 private:
-    // WiFi/HTTP
     bool _connected;
     int8_t _rssi;
     String _ipAddress;
@@ -64,7 +62,6 @@ private:
     uint16_t _totalRetries;
     unsigned long _lastConnectionAttempt;
     
-    // LoRa
     bool _loraInitialized;
     int _loraRSSI;
     float _loraSNR;
@@ -72,22 +69,21 @@ private:
     uint16_t _loraPacketsFailed;
     unsigned long _lastLoRaTransmission;
     
-    // Flags de controle
     bool _loraEnabled;
     bool _httpEnabled;
     
-    // ✅ NOVO: Dados de missão e controle de sequência
     MissionData _lastMissionData;
-    uint16_t _expectedSeqNum;
+    uint16_t _expectedSeqNum[MAX_GROUND_NODES];
     
-    // Métodos privados
-    String _createTelemetryJSON(const TelemetryData& data);
+    String _createTelemetryJSON(const TelemetryData& data, const GroundNodeBuffer& groundBuffer);
     String _createLoRaPayload(const TelemetryData& data);
+    String _createConsolidatedLoRaPayload(const TelemetryData& data, const GroundNodeBuffer& buffer);
     bool _sendHTTPPost(const String& jsonPayload);
     
-    // ✅ NOVO: Processamento de payload
     bool _parseAgroPacket(const String& packet, MissionData& data);
     bool _validateChecksum(const String& packet);
+    bool _validatePayloadSize(size_t size);
+    int _findNodeIndex(uint16_t nodeId);
 };
 
 #endif
