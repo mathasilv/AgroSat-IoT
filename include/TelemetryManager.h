@@ -1,84 +1,82 @@
 /**
  * @file TelemetryManager.h
- * @brief VERSÃO COM STORE-AND-FORWARD LEO INTEGRADO
- * @version 6.0.0
  */
-#ifndef TELEMETRYMANAGER_H
-#define TELEMETRYMANAGER_H
+#ifndef TELEMETRY_MANAGER_H
+#define TELEMETRY_MANAGER_H
 
 #include <Arduino.h>
-#include <Wire.h>
+#include <mutex>
 #include "config.h"
-#include "SSD1306Wire.h"
-#include "DisplayManager.h"
-#include "SystemHealth.h"
-#include "PowerManager.h"
-#include "SensorManager.h"
-#include "StorageManager.h"
 #include "CommunicationManager.h"
+#include "SensorManager.h"
+#include "PowerManager.h"
+#include "StorageManager.h"
+#include "SystemHealth.h"
+#include "DisplayManager.h"
 #include "RTCManager.h"
 
 class TelemetryManager {
 public:
     TelemetryManager();
+    
     bool begin();
     void loop();
+    
     void startMission();
     void stopMission();
     OperationMode getMode();
-    void updateDisplay();
-
+    
     void applyModeConfig(OperationMode mode);
+    void enableLoRa(bool enable) { _comm.enableLoRa(enable); }
+    void enableHTTP(bool enable) { _comm.enableHTTP(enable); }
+    bool isLoRaEnabled() { return _comm.isLoRaEnabled(); }
+    bool isHTTPEnabled() { return _comm.isHTTPEnabled(); }
+    
     void testLoRaTransmission();
     void sendCustomLoRa(const String& message);
     void printLoRaStats();
-    void enableLoRa(bool enable) { _comm.enableLoRa(enable); }
-    void enableHTTP(bool enable) { _comm.enableHTTP(enable); }
-    bool isLoRaEnabled() const { return _comm.isLoRaEnabled(); }
-    bool isHTTPEnabled() const { return _comm.isHTTPEnabled(); }
-    CommunicationManager& getCommunicationManager() { return _comm; }
+    void updateDisplay();
 
 private:
-    SSD1306Wire _display;            
-    DisplayManager _displayMgr;      
-    SystemHealth _health;
-    PowerManager _power;
-    SensorManager _sensors;
-    StorageManager _storage;
     CommunicationManager _comm;
+    SensorManager _sensors;
+    PowerManager _power;
+    StorageManager _storage;
+    SystemHealth _health;
+    DisplayManager _displayMgr;
     RTCManager _rtc;
     
-    TelemetryData _telemetryData;
-    GroundNodeBuffer _groundNodeBuffer;
+    std::mutex _bufferMutex;
     
     OperationMode _mode;
     bool _missionActive;
-    uint32_t _missionStartTime;
-    
+    unsigned long _missionStartTime;
     unsigned long _lastTelemetrySend;
     unsigned long _lastStorageSave;
     unsigned long _lastDisplayUpdate;
     unsigned long _lastHeapCheck;
     uint32_t _minHeapSeen;
+    bool _useNewDisplay;
     
-    bool _useNewDisplay;           
-
+    TelemetryData _telemetryData;
+    GroundNodeBuffer _groundNodeBuffer;
+    
+    bool _initI2CBus();
     void _collectTelemetryData();
     void _sendTelemetry();
     void _saveToStorage();
     void _checkOperationalConditions();
-    void _displayStatus();            
-    void _displayTelemetry();         
-    void _displayError(const String& error);
-    void _logHeapUsage(const String& component);
-    void _monitorHeap();
-    bool _initI2CBus();
-    
     void _updateGroundNode(const MissionData& data);
+    void _replaceLowestPriorityNode(const MissionData& newData);
     void _cleanupStaleNodes(unsigned long maxAge = NODE_TTL_MS);
     void _manageOrbitalPass();
     void _prepareForward();
-    void _replaceLowestPriorityNode(const MissionData& newData);
+    
+    void _displayStatus();
+    void _displayTelemetry();
+    void _displayError(const String& error);
+    void _logHeapUsage(const String& component);
+    void _monitorHeap();
 };
 
 #endif

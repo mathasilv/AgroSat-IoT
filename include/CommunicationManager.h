@@ -1,7 +1,7 @@
 /**
  * @file CommunicationManager.h
  * @brief Sistema de comunicação dual com Store-and-Forward LEO
- * @version 6.0.0
+ * @version 6.1.0
  */
 #ifndef COMMUNICATION_MANAGER_H
 #define COMMUNICATION_MANAGER_H
@@ -12,6 +12,8 @@
 #include <ArduinoJson.h>
 #include <LoRa.h>
 #include <SPI.h>
+#include <mutex>
+#include <vector>
 #include "config.h"
 
 class CommunicationManager {
@@ -51,7 +53,8 @@ public:
     MissionData getLastMissionData();
     String generateMissionPayload(const MissionData& data);
     String generateConsolidatedPayload(const GroundNodeBuffer& buffer);
-    void markNodesAsForwarded(GroundNodeBuffer& buffer);
+    void markNodesAsForwarded(GroundNodeBuffer& buffer, const std::vector<uint16_t>& nodeIds);
+    uint8_t calculatePriority(const MissionData& node);
 
 private:
     bool _connected;
@@ -72,12 +75,16 @@ private:
     bool _loraEnabled;
     bool _httpEnabled;
     
+    uint8_t _txFailureCount;
+    unsigned long _lastTxFailure;
+    uint8_t _currentSpreadingFactor;
+
     MissionData _lastMissionData;
     uint16_t _expectedSeqNum[MAX_GROUND_NODES];
     
     String _createTelemetryJSON(const TelemetryData& data, const GroundNodeBuffer& groundBuffer);
     String _createLoRaPayload(const TelemetryData& data);
-    String _createConsolidatedLoRaPayload(const TelemetryData& data, const GroundNodeBuffer& buffer);
+    String _createConsolidatedLoRaPayload(const TelemetryData& data, const GroundNodeBuffer& buffer, std::vector<uint16_t>& includedNodes);
     bool _sendHTTPPost(const String& jsonPayload);
     
     bool _parseAgroPacket(const String& packet, MissionData& data);

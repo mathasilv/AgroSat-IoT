@@ -29,7 +29,10 @@ CommunicationManager::CommunicationManager() :
     _loraPacketsFailed(0),
     _lastLoRaTransmission(0),
     _loraEnabled(true),
-    _httpEnabled(true)
+    _httpEnabled(true),
+    _txFailureCount(0),
+    _lastTxFailure(0),
+    _currentSpreadingFactor(LORA_SPREADING_FACTOR)  // ✅ ADICIONAR ESTA LINHA
 {
     memset(&_lastMissionData, 0, sizeof(MissionData));
     
@@ -37,6 +40,7 @@ CommunicationManager::CommunicationManager() :
         _expectedSeqNum[i] = 0;
     }
 }
+
 
 bool CommunicationManager::begin() {
     DEBUG_PRINTLN("[CommunicationManager] ===========================================");
@@ -99,6 +103,7 @@ bool CommunicationManager::initLoRa() {
     DEBUG_PRINTF("[CommunicationManager]   Bandwidth: %.0f kHz\n", LORA_SIGNAL_BANDWIDTH / 1000);
     
     LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR);
+    _currentSpreadingFactor = LORA_SPREADING_FACTOR;  // ✅ RASTREAR SF
     DEBUG_PRINTF("[CommunicationManager]   Spreading Factor: SF%d\n", LORA_SPREADING_FACTOR);
     
     LoRa.setPreambleLength(LORA_PREAMBLE_LENGTH);
@@ -129,7 +134,7 @@ bool CommunicationManager::initLoRa() {
     _loraInitialized = true;
     
     DEBUG_PRINT("[CommunicationManager] Enviando pacote de teste... ");
-    String testMsg = "AGROSAT_BOOT_v6.0.0";
+    String testMsg = "AGROSAT_BOOT_v6.1.0";
     if (sendLoRa(testMsg)) {
         DEBUG_PRINTLN("OK!");
     } else {
@@ -142,6 +147,7 @@ bool CommunicationManager::initLoRa() {
     
     return true;
 }
+
 
 bool CommunicationManager::retryLoRaInit(uint8_t maxAttempts) {
     DEBUG_PRINTF("[CommunicationManager] Tentando reinicializar LoRa (máx %d tentativas)...\n", maxAttempts);
@@ -207,6 +213,7 @@ bool CommunicationManager::sendLoRa(const String& data) {
     
     unsigned long now = millis();
     
+    // ANATEL duty cycle enforcement
     if (now - _lastLoRaTransmission < LORA_MIN_INTERVAL_MS) {
         uint32_t waitTime = LORA_MIN_INTERVAL_MS - (now - _lastLoRaTransmission);
         DEBUG_PRINTF("[CommunicationManager] Aguardando duty cycle: %lu ms\n", waitTime);
@@ -224,6 +231,11 @@ bool CommunicationManager::sendLoRa(const String& data) {
     DEBUG_PRINTF("[CommunicationManager] Payload: %s\n", data.c_str());
     DEBUG_PRINTF("[CommunicationManager] Tamanho: %d bytes\n", data.length());
     
+    // ✅ CORRIGIDO: Usar variável rastreada ao invés de getSpreadingFactor()
+    uint32_t txTimeout = (_currentSpreadingFactor >= 11) ? LORA_TX_TIMEOUT_MS_SAFE : LORA_TX_TIMEOUT_MS_NORMAL;
+    
+    DEBUG_PRINTF("[CommunicationManager] SF=%d, Timeout=%lu ms\n", _currentSpreadingFactor, txTimeout);
+    
     unsigned long txStartTime = millis();
     
     LoRa.beginPacket();
@@ -232,9 +244,9 @@ bool CommunicationManager::sendLoRa(const String& data) {
     
     unsigned long txDuration = millis() - txStartTime;
     
-    if (txDuration > LORA_TX_TIMEOUT_MS) {
-        DEBUG_PRINTF("[CommunicationManager] Timeout TX LoRa (%lu ms > %d ms)!\n", 
-                     txDuration, LORA_TX_TIMEOUT_MS);
+    if (txDuration > txTimeout) {
+        DEBUG_PRINTF("[CommunicationManager] Timeout TX LoRa (%lu ms > %lu ms)!\n", 
+                     txDuration, txTimeout);
         _loraPacketsFailed++;
         LoRa.receive();
         return false;
@@ -243,11 +255,22 @@ bool CommunicationManager::sendLoRa(const String& data) {
     if (success) {
         _loraPacketsSent++;
         _lastLoRaTransmission = now;
+        _txFailureCount = 0;
         DEBUG_PRINTF("[CommunicationManager] Pacote enviado (duração: %lu ms)\n", txDuration);
         DEBUG_PRINTF("[CommunicationManager] Total enviado: %d pacotes\n", _loraPacketsSent);
     } else {
         _loraPacketsFailed++;
+        _txFailureCount++;
+        _lastTxFailure = now;
         DEBUG_PRINTLN("[CommunicationManager] Falha na transmissão LoRa");
+        
+        // Backoff exponencial: 1s, 2s, 4s, 8s (max)
+        uint32_t backoff = min((uint32_t)(1000 * (1 << _txFailureCount)), (uint32_t)8000);
+        DEBUG_PRINTF("[CommunicationManager] Backoff: %lu ms\n", backoff);
+        
+        LoRa.receive();
+        delay(backoff);
+        return false;
     }
     
     delay(10);
@@ -275,6 +298,20 @@ bool CommunicationManager::receiveLoRaPacket(String& packet, int& rssi, float& s
     rssi = LoRa.packetRssi();
     snr = LoRa.packetSnr();
     
+    // Filtro de qualidade de sinal
+    const int MIN_RSSI = -120;    // dBm - limite físico do SX1276
+    const float MIN_SNR = -15.0;  // dB - abaixo disso é muito ruidoso
+    
+    if (rssi < MIN_RSSI) {
+        DEBUG_PRINTF("[CommunicationManager] Pacote descartado: RSSI muito baixo (%d dBm)\n", rssi);
+        return false;
+    }
+    
+    if (snr < MIN_SNR) {
+        DEBUG_PRINTF("[CommunicationManager] Pacote descartado: SNR muito baixo (%.1f dB)\n", snr);
+        return false;
+    }
+    
     _loraRSSI = rssi;
     _loraSNR = snr;
     
@@ -286,6 +323,7 @@ bool CommunicationManager::receiveLoRaPacket(String& packet, int& rssi, float& s
     
     return true;
 }
+
 
 bool CommunicationManager::sendLoRaTelemetry(const TelemetryData& data) {
     if (!_loraInitialized) {
@@ -311,38 +349,56 @@ String CommunicationManager::_createLoRaPayload(const TelemetryData& data) {
     return String(buffer);
 }
 
-String CommunicationManager::_createConsolidatedLoRaPayload(const TelemetryData& data, const GroundNodeBuffer& buffer) {
-    char loraBuffer[255];
+String CommunicationManager::_createConsolidatedLoRaPayload(
+    const TelemetryData& data, 
+    const GroundNodeBuffer& buffer,
+    std::vector<uint16_t>& includedNodes)
+{
+    char loraBuffer[LORA_MAX_PAYLOAD_SIZE];
     int offset = 0;
     
-    offset += snprintf(loraBuffer + offset, sizeof(loraBuffer) - offset,
+    // Header com dados do satélite
+    offset += snprintf(loraBuffer + offset, LORA_MAX_PAYLOAD_SIZE - offset,
                       "SAT%d|B%.0f|T%.0f|NODES|",
                       TEAM_ID, data.batteryPercentage, data.temperature);
     
+    includedNodes.clear(); // Resetar lista
     uint8_t nodesAdded = 0;
+    
     for (uint8_t i = 0; i < buffer.activeNodes && i < MAX_GROUND_NODES; i++) {
         const MissionData& node = buffer.nodes[i];
         
         if (!node.forwarded && node.nodeId > 0) {
-            int nodeLen = snprintf(loraBuffer + offset, sizeof(loraBuffer) - offset,
-                                  "N%u:%.0f:%.0f:%.0f:%u|",
-                                  node.nodeId,
-                                  node.soilMoisture,
-                                  node.ambientTemp,
-                                  node.humidity,
-                                  node.irrigationStatus);
+            // Calcular espaço necessário ANTES de escrever
+            int requiredLen = snprintf(NULL, 0, "N%u:%.0f:%.0f:%.0f:%u|",
+                                      node.nodeId,
+                                      node.soilMoisture,
+                                      node.ambientTemp,
+                                      node.humidity,
+                                      node.irrigationStatus);
             
-            if (offset + nodeLen >= 250) {
-                DEBUG_PRINTLN("[CommunicationManager] Payload LoRa cheio, truncando");
-                break;
+            // Verificar se cabe (deixar 5 bytes de margem para terminador)
+            if (offset + requiredLen >= LORA_MAX_PAYLOAD_SIZE - 5) {
+                DEBUG_PRINTF("[CommunicationManager] AVISO: Nó %u não coube no payload\n", node.nodeId);
+                break; // Parar mas NÃO marcar como enviado
             }
             
-            offset += nodeLen;
+            // Escrever no buffer
+            offset += snprintf(loraBuffer + offset, LORA_MAX_PAYLOAD_SIZE - offset,
+                              "N%u:%.0f:%.0f:%.0f:%u|",
+                              node.nodeId,
+                              node.soilMoisture,
+                              node.ambientTemp,
+                              node.humidity,
+                              node.irrigationStatus);
+            
+            includedNodes.push_back(node.nodeId); // Marcar como incluído
             nodesAdded++;
         }
     }
     
     if (nodesAdded == 0) {
+        DEBUG_PRINTLN("[CommunicationManager] Nenhum nó não-enviado disponível");
         return "";
     }
     
@@ -353,6 +409,7 @@ String CommunicationManager::_createConsolidatedLoRaPayload(const TelemetryData&
     
     return String(loraBuffer);
 }
+
 
 bool CommunicationManager::isLoRaOnline() {
     return _loraInitialized;
@@ -447,14 +504,26 @@ String CommunicationManager::generateConsolidatedPayload(const GroundNodeBuffer&
     return String(jsonBuffer);
 }
 
-void CommunicationManager::markNodesAsForwarded(GroundNodeBuffer& buffer) {
-    for (uint8_t i = 0; i < buffer.activeNodes; i++) {
-        buffer.nodes[i].forwarded = true;
+void CommunicationManager::markNodesAsForwarded(
+    GroundNodeBuffer& buffer, 
+    const std::vector<uint16_t>& nodeIds)
+{
+    uint8_t markedCount = 0;
+    
+    for (uint16_t nodeId : nodeIds) {
+        for (uint8_t i = 0; i < buffer.activeNodes; i++) {
+            if (buffer.nodes[i].nodeId == nodeId) {
+                buffer.nodes[i].forwarded = true;
+                markedCount++;
+                DEBUG_PRINTF("[CommunicationManager] Nó %u marcado como transmitido\n", nodeId);
+                break;
+            }
+        }
     }
     
-    DEBUG_PRINTF("[CommunicationManager] %d nó(s) marcado(s) como transmitido(s)\n",
-                 buffer.activeNodes);
+    DEBUG_PRINTF("[CommunicationManager] %d nó(s) marcado(s) como transmitido(s)\n", markedCount);
 }
+
 
 bool CommunicationManager::_validatePayloadSize(size_t size) {
     return (size > 0 && size <= LORA_MAX_PAYLOAD_SIZE);
@@ -490,18 +559,21 @@ void CommunicationManager::reconfigureLoRa(OperationMode mode) {
     switch (mode) {
         case MODE_PREFLIGHT:
             LoRa.setSpreadingFactor(7);
+            _currentSpreadingFactor = 7;  // ✅ ADICIONAR
             LoRa.setTxPower(17);
             DEBUG_PRINTLN("[CommunicationManager] LoRa: PRE-FLIGHT (SF7, 17dBm)");
             break;
             
         case MODE_FLIGHT:
             LoRa.setSpreadingFactor(10);
+            _currentSpreadingFactor = 10;  // ✅ ADICIONAR
             LoRa.setTxPower(20);
             DEBUG_PRINTLN("[CommunicationManager] LoRa: FLIGHT (SF10, 20dBm)");
             break;
             
         case MODE_SAFE:
             LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR_SAFE);
+            _currentSpreadingFactor = LORA_SPREADING_FACTOR_SAFE;  // ✅ ADICIONAR
             LoRa.setTxPower(20);
             DEBUG_PRINTLN("[CommunicationManager] LoRa: SAFE (SF12, 20dBm)");
             break;
@@ -514,6 +586,7 @@ void CommunicationManager::reconfigureLoRa(OperationMode mode) {
     delay(10);
     LoRa.receive();
 }
+
 
 bool CommunicationManager::_parseAgroPacket(const String& packetData, MissionData& data) {
     String packet = packetData;
@@ -550,6 +623,7 @@ bool CommunicationManager::_parseAgroPacket(const String& packetData, MissionDat
     data.humidity = fields[4].toFloat();
     data.irrigationStatus = fields[5].toInt();
     
+    // Validação de limites físicos
     if (data.soilMoisture < 0.0 || data.soilMoisture > 100.0 ||
         data.ambientTemp < -50.0 || data.ambientTemp > 100.0 ||
         data.humidity < 0.0 || data.humidity > 100.0) {
@@ -557,16 +631,30 @@ bool CommunicationManager::_parseAgroPacket(const String& packetData, MissionDat
         return false;
     }
     
+    // Detecção de pacotes perdidos com tratamento de wrap-around
     int nodeIndex = _findNodeIndex(data.nodeId);
     if (nodeIndex >= 0 && _expectedSeqNum[nodeIndex] > 0) {
         uint16_t expectedSeq = _expectedSeqNum[nodeIndex];
-        if (data.sequenceNumber != expectedSeq) {
-            if (data.sequenceNumber > expectedSeq) {
-                uint16_t lost = data.sequenceNumber - expectedSeq;
+        int16_t seqDiff = (int16_t)(data.sequenceNumber - expectedSeq);
+        
+        if (seqDiff > 0 && seqDiff < 1000) {
+            // Perda detectada (janela razoável)
+            uint16_t lost = seqDiff;
+            data.packetsLost += lost;
+            DEBUG_PRINTF("[CommunicationManager] Node %d: %d pacote(s) perdido(s)\n", 
+                        data.nodeId, lost);
+        } else if (seqDiff < -60000) {
+            // Wrap-around: 65535 → 0
+            uint16_t lost = (65536 + seqDiff);
+            if (lost < 100) { // Sanity check
                 data.packetsLost += lost;
-                DEBUG_PRINTF("[CommunicationManager] Node %d: %d pacote(s) perdido(s)\n", 
+                DEBUG_PRINTF("[CommunicationManager] Node %d: %d pacotes perdidos (wrap-around)\n", 
                             data.nodeId, lost);
             }
+        } else if (seqDiff < 0) {
+            DEBUG_PRINTF("[CommunicationManager] Node %d: pacote antigo (seq %d < %d), ignorando\n",
+                        data.nodeId, data.sequenceNumber, expectedSeq);
+            return false; // Rejeitar pacotes antigos
         }
     }
     
@@ -580,8 +668,46 @@ bool CommunicationManager::_parseAgroPacket(const String& packetData, MissionDat
     return true;
 }
 
+
 bool CommunicationManager::_validateChecksum(const String& packet) {
-    return true;
+    if (packet.length() < 5) {
+        DEBUG_PRINTLN("[CommunicationManager] Pacote muito curto para checksum");
+        return false;
+    }
+    
+    // Procurar asterisco que separa dados do checksum: AGRO,...*CC
+    int checksumPos = packet.lastIndexOf('*');
+    if (checksumPos < 0) {
+        DEBUG_PRINTLN("[CommunicationManager] Formato sem checksum, aceitando (compatibilidade)");
+        return true; // Permitir pacotes sem checksum para compatibilidade
+    }
+    
+    // Extrair dados e checksum
+    String data = packet.substring(0, checksumPos);
+    String checksumStr = packet.substring(checksumPos + 1);
+    
+    if (checksumStr.length() != 2) {
+        DEBUG_PRINTLN("[CommunicationManager] Checksum com formato inválido");
+        return false;
+    }
+    
+    // Calcular XOR checksum dos dados
+    uint8_t calcChecksum = 0;
+    for (size_t i = 0; i < data.length(); i++) {
+        calcChecksum ^= data.charAt(i);
+    }
+    
+    // Converter checksum recebido de hexadecimal
+    uint8_t receivedChecksum = (uint8_t)strtol(checksumStr.c_str(), NULL, 16);
+    
+    bool valid = (calcChecksum == receivedChecksum);
+    
+    if (!valid) {
+        DEBUG_PRINTF("[CommunicationManager] Checksum inválido: calc=0x%02X recv=0x%02X\n", 
+                     calcChecksum, receivedChecksum);
+    }
+    
+    return valid;
 }
 
 void CommunicationManager::update() {
@@ -657,10 +783,17 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data, const Ground
         DEBUG_PRINTLN("[CommunicationManager] >>> Transmitindo dados via LoRa...");
         
         if (groundBuffer.activeNodes > 0) {
-            String consolidatedPayload = _createConsolidatedLoRaPayload(data, groundBuffer);
+            std::vector<uint16_t> includedNodes;
+            String consolidatedPayload = _createConsolidatedLoRaPayload(data, groundBuffer, includedNodes);
             
             if (consolidatedPayload.length() > 0) {
                 loraSuccess = sendLoRa(consolidatedPayload);
+                
+                // Só marcar como enviados os nós que realmente foram incluídos
+                if (loraSuccess && includedNodes.size() > 0) {
+                    markNodesAsForwarded(const_cast<GroundNodeBuffer&>(groundBuffer), includedNodes);
+                    DEBUG_PRINTF("[CommunicationManager] %d nós enviados via LoRa\n", includedNodes.size());
+                }
             } else {
                 loraSuccess = sendLoRaTelemetry(data);
             }
@@ -674,7 +807,10 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data, const Ground
         DEBUG_PRINTLN("[CommunicationManager] >>> Enviando HTTP/OBSAT...");
         DEBUG_PRINTF("[CommunicationManager] JSON size: %d bytes\n", jsonPayload.length());
 
-        if (jsonPayload.length() > JSON_MAX_SIZE) {
+        if (jsonPayload.length() == 0) {
+            DEBUG_PRINTLN("[CommunicationManager] ERRO: Falha ao criar JSON");
+            _packetsFailed++;
+        } else if (jsonPayload.length() > JSON_MAX_SIZE) {
             DEBUG_PRINTF("[CommunicationManager] ERRO: JSON muito grande (%d > %d)\n", 
                         jsonPayload.length(), JSON_MAX_SIZE);
             _packetsFailed++;
@@ -704,6 +840,7 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data, const Ground
     
     return (loraSuccess || httpSuccess);
 }
+
 
 bool CommunicationManager::isConnected() {
     return _connected;
@@ -739,7 +876,7 @@ bool CommunicationManager::testConnection() {
 }
 
 String CommunicationManager::_createTelemetryJSON(const TelemetryData& data, const GroundNodeBuffer& groundBuffer) {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<JSON_MAX_SIZE> doc; // CORRIGIDO: usar constante correta
 
     doc["equipe"] = TEAM_ID;
     doc["bateria"] = (int)data.batteryPercentage;
@@ -770,7 +907,7 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data, con
         for (uint8_t i = 0; i < groundBuffer.activeNodes && i < MAX_GROUND_NODES; i++) {
             const MissionData& node = groundBuffer.nodes[i];
             
-            JsonObject nodeObj = nodesArray.createNestedObject();  // CORRIGIDO: createNestedObject() sem parâmetros
+            JsonObject nodeObj = nodesArray.createNestedObject();
             nodeObj["id"] = node.nodeId;
             nodeObj["sm"] = round(node.soilMoisture * 10) / 10;
             nodeObj["t"] = round(node.ambientTemp * 10) / 10;
@@ -806,15 +943,35 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data, con
     size_t jsonSize = serializeJson(doc, jsonBuffer, sizeof(jsonBuffer));
     
     if (jsonSize >= sizeof(jsonBuffer)) {
-        DEBUG_PRINTLN("[CommunicationManager] JSON truncado!");
+        DEBUG_PRINTLN("[CommunicationManager] ERRO: JSON truncado!");
         return "";
     }
+    
+    if (jsonSize == 0) {
+        DEBUG_PRINTLN("[CommunicationManager] ERRO: JSON vazio!");
+        return "";
+    }
+    
+    DEBUG_PRINTF("[CommunicationManager] JSON criado: %d bytes\n", jsonSize);
     
     return String(jsonBuffer);
 }
 
 
+
 bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
+    // Validação de payload vazio
+    if (jsonPayload.length() == 0 || jsonPayload == "{}" || jsonPayload == "null") {
+        DEBUG_PRINTLN("[CommunicationManager] ERRO: Payload HTTP vazio ou inválido, abortando");
+        return false;
+    }
+    
+    if (jsonPayload.length() > JSON_MAX_SIZE) {
+        DEBUG_PRINTF("[CommunicationManager] ERRO: Payload muito grande (%d > %d bytes)\n",
+                     jsonPayload.length(), JSON_MAX_SIZE);
+        return false;
+    }
+    
     HTTPClient http;
     
     String url = String("https://") + HTTP_SERVER + HTTP_ENDPOINT;
@@ -823,6 +980,9 @@ bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
     http.addHeader("Content-Type", "application/json");
+    
+    DEBUG_PRINTF("[CommunicationManager] POST para: %s\n", url.c_str());
+    DEBUG_PRINTF("[CommunicationManager] Payload: %s\n", jsonPayload.c_str());
     
     int httpCode = http.POST(jsonPayload);
     bool success = false;
@@ -854,10 +1014,42 @@ bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
             }
         }
     } else {
-        DEBUG_PRINTF("[CommunicationManager] Erro: %s\n", 
+        DEBUG_PRINTF("[CommunicationManager] Erro HTTP: %s\n", 
                     http.errorToString(httpCode).c_str());
     }
     
     http.end();
     return success;
 }
+
+uint8_t CommunicationManager::calculatePriority(const MissionData& node) {
+    uint8_t priority = 0;
+    
+    // RSSI: melhor sinal = maior prioridade
+    if (node.rssi > -80) {
+        priority += 3;
+    } else if (node.rssi > -100) {
+        priority += 2;
+    } else {
+        priority += 1;
+    }
+    
+    // Dados críticos: irrigação ativa = maior prioridade
+    if (node.irrigationStatus == 1) {
+        priority += 2;
+    }
+    
+    // Umidade crítica: muito seca ou muito úmida
+    if (node.soilMoisture < 20.0 || node.soilMoisture > 80.0) {
+        priority += 2;
+    }
+    
+    // Pacotes perdidos: muitas perdas = menor prioridade (link ruim)
+    if (node.packetsLost > 10) {
+        priority = (priority > 1) ? priority - 1 : 0;
+    }
+    
+    // Cast explícito para evitar erro de tipo
+    return (priority > 10) ? (uint8_t)10 : priority;
+}
+

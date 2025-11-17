@@ -17,7 +17,6 @@ bool currentSerialLogsEnabled = PREFLIGHT_CONFIG.serialLogsEnabled;
 const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
 
 TelemetryManager::TelemetryManager() :
-    _display(OLED_ADDRESS),
     _mode(MODE_INIT),
     _lastTelemetrySend(0),
     _lastStorageSave(0),
@@ -107,19 +106,15 @@ void TelemetryManager::applyModeConfig(OperationMode mode) {
     
     currentSerialLogsEnabled = activeModeConfig->serialLogsEnabled;
     
+    // ✅ CORRIGIDO: Usar apenas DisplayManager
     if (_useNewDisplay) {
         if (activeModeConfig->displayEnabled) {
             _displayMgr.turnOn();
         } else {
             _displayMgr.turnOff();
         }
-    } else {
-        if (!activeModeConfig->displayEnabled) {
-            _display.displayOff();
-        } else {
-            _display.displayOn();
-        }
     }
+    // ❌ REMOVER: Código do display legado
     
     _comm.enableLoRa(activeModeConfig->loraEnabled);
     _comm.enableHTTP(activeModeConfig->httpEnabled);
@@ -131,6 +126,7 @@ void TelemetryManager::applyModeConfig(OperationMode mode) {
                  activeModeConfig->loraEnabled ? "ON" : "OFF",
                  activeModeConfig->httpEnabled ? "ON" : "OFF");
 }
+
 
 bool TelemetryManager::begin() {
     _mode = MODE_PREFLIGHT;
@@ -149,8 +145,10 @@ bool TelemetryManager::begin() {
     _minHeapSeen = initialHeap;
     DEBUG_PRINTF("[TelemetryManager] Heap inicial: %lu bytes\n", initialHeap);
 
+    // ========== INICIALIZAÇÃO DO BARRAMENTO I2C ==========
     _initI2CBus();
 
+    // ========== DISPLAY MANAGER ==========
     bool displayOk = false;
     
     if (activeModeConfig->displayEnabled) {
@@ -163,29 +161,17 @@ bool TelemetryManager::begin() {
             delay(2000);
             DEBUG_PRINTLN("[TelemetryManager] DisplayManager OK");
         } else {
-            DEBUG_PRINTLN("[TelemetryManager] DisplayManager FAILED, tentando sistema legado...");
+            DEBUG_PRINTLN("[TelemetryManager] DisplayManager FAILED (não-crítico)");
             _useNewDisplay = false;
-            
-            delay(100);
-            if (_display.init()) {
-                _display.flipScreenVertically();
-                _display.setFont(ArialMT_Plain_10);
-                _display.clear();
-                _display.drawString(0, 0, "AgroSat-IoT");
-                _display.drawString(0, 15, "Initializing...");
-                _display.display();
-                displayOk = true;
-                DEBUG_PRINTLN("[TelemetryManager] Display legado OK");
-            } else {
-                DEBUG_PRINTLN("[TelemetryManager] Display FAILED (não-crítico)");
-            }
         }
         delay(500);
     }
 
+    // ========== INICIALIZAÇÃO DE SUBSISTEMAS ==========
     bool success = true;
     uint8_t subsystemsOk = 0;
 
+    // RTC MANAGER
     DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC Manager...");
     if (_rtc.begin(&Wire)) {
         subsystemsOk++;
@@ -204,6 +190,7 @@ bool TelemetryManager::begin() {
         }
     }
 
+    // SYSTEM HEALTH
     DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
     if (_health.begin()) {
         subsystemsOk++;
@@ -218,6 +205,7 @@ bool TelemetryManager::begin() {
         DEBUG_PRINTLN("[TelemetryManager] System Health FAILED");
     }
 
+    // POWER MANAGER
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Power Manager...");
     if (_power.begin()) {
         subsystemsOk++;
@@ -232,6 +220,7 @@ bool TelemetryManager::begin() {
         DEBUG_PRINTLN("[TelemetryManager] Power Manager FAILED");
     }
 
+    // SENSOR MANAGER
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
     if (_sensors.begin()) {
         subsystemsOk++;
@@ -252,6 +241,7 @@ bool TelemetryManager::begin() {
         DEBUG_PRINTLN("[TelemetryManager] Sensor Manager FAILED");
     }
 
+    // STORAGE MANAGER
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Storage Manager...");
     if (_storage.begin()) {
         subsystemsOk++;
@@ -266,6 +256,7 @@ bool TelemetryManager::begin() {
         DEBUG_PRINTLN("[TelemetryManager] Storage Manager FAILED");
     }
     
+    // COMMUNICATION MANAGER
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication Manager...");
     DEBUG_PRINTLN("[TelemetryManager]   - WiFi + HTTP (obsat.org.br)");
     DEBUG_PRINTLN("[TelemetryManager]   - LoRa RX/TX (Store-and-Forward)");
@@ -281,11 +272,13 @@ bool TelemetryManager::begin() {
             delay(500);
         }
         
+        // SINCRONIZAÇÃO NTP (SE WIFI DISPONÍVEL)
         if (_rtc.isInitialized() && _comm.isConnected()) {
             DEBUG_PRINTLN("[TelemetryManager] WiFi disponível, sincronizando RTC com NTP...");
             
             if (_rtc.syncWithNTP()) {
                 DEBUG_PRINTLN("[TelemetryManager] RTC sincronizado com NTP");
+                DEBUG_PRINTF("[TelemetryManager] Hora atualizada: %s\n", _rtc.getDateTime().c_str());
             } else {
                 DEBUG_PRINTLN("[TelemetryManager] Falha na sincronização NTP (não-crítico)");
             }
@@ -295,36 +288,32 @@ bool TelemetryManager::begin() {
         DEBUG_PRINTLN("[TelemetryManager] Communication Manager FAILED");
     }
 
+    // ========== TELA FINAL ==========
     if (_useNewDisplay && displayOk) {
         _displayMgr.showReady();
-    } else if (displayOk) {
-        _display.clear();
-        _display.drawString(0, 0, success ? "Sistema OK!" : "ERRO Sistema!");
-        _display.drawString(0, 15, "Modo: PRE-FLIGHT");
-        String subsysInfo = String(subsystemsOk) + "/6 subsistemas";
-        _display.drawString(0, 30, subsysInfo);
-        
-        if (_rtc.isInitialized()) {
-            String dt = _rtc.getDateTime();
-            String timeOnly = dt.substring(11, 19);
-            _display.drawString(0, 45, "RTC: " + timeOnly);
-        } else {
-            _display.drawString(0, 45, "RTC: OFF");
-        }
-        
-        _display.display();
+        delay(2000);
     }
     
+    // ========== RESUMO DE INICIALIZAÇÃO ==========
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTF("Sistema inicializado: %s\n", success ? "OK" : "COM ERROS");
     DEBUG_PRINTF("Subsistemas online: %d/6\n", subsystemsOk);
-    DEBUG_PRINTF("Heap disponível: %lu bytes\n", ESP.getFreeHeap());
+    
+    uint32_t postInitHeap = ESP.getFreeHeap();
+    DEBUG_PRINTF("Heap disponível: %lu bytes\n", postInitHeap);
+    DEBUG_PRINTF("Heap usado: %lu bytes\n", initialHeap - postInitHeap);
+    
+    if (postInitHeap < _minHeapSeen) {
+        _minHeapSeen = postInitHeap;
+    }
+    
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
     
     return success;
 }
+
 
 void TelemetryManager::loop() {
     uint32_t currentTime = millis();
@@ -421,7 +410,6 @@ void TelemetryManager::loop() {
         } else {
             if (currentTime - _lastDisplayUpdate >= 2000) {
                 _lastDisplayUpdate = currentTime;
-                updateDisplay();
             }
         }
     }
@@ -430,6 +418,8 @@ void TelemetryManager::loop() {
 }
 
 void TelemetryManager::_updateGroundNode(const MissionData& data) {
+    std::lock_guard<std::mutex> lock(_bufferMutex);
+    
     int existingIndex = -1;
     
     for (uint8_t i = 0; i < _groundNodeBuffer.activeNodes; i++) {
@@ -454,6 +444,7 @@ void TelemetryManager::_updateGroundNode(const MissionData& data) {
             existingNode = data;
             existingNode.lastLoraRx = millis();
             existingNode.forwarded = false;
+            existingNode.priority = _comm.calculatePriority(data); // ✅ CORRIGIDO: sem underscore
             
             _groundNodeBuffer.lastUpdate[existingIndex] = millis();
             _groundNodeBuffer.totalPacketsCollected++;
@@ -474,6 +465,7 @@ void TelemetryManager::_updateGroundNode(const MissionData& data) {
             _groundNodeBuffer.nodes[newIndex] = data;
             _groundNodeBuffer.nodes[newIndex].lastLoraRx = millis();
             _groundNodeBuffer.nodes[newIndex].forwarded = false;
+            _groundNodeBuffer.nodes[newIndex].priority = _comm.calculatePriority(data); // ✅ CORRIGIDO
             
             _groundNodeBuffer.lastUpdate[newIndex] = millis();
             _groundNodeBuffer.activeNodes++;
@@ -486,6 +478,8 @@ void TelemetryManager::_updateGroundNode(const MissionData& data) {
         }
     }
 }
+
+
 
 void TelemetryManager::_replaceLowestPriorityNode(const MissionData& newData) {
     uint8_t replaceIndex = 0;
@@ -540,6 +534,8 @@ void TelemetryManager::_cleanupStaleNodes(unsigned long maxAge) {
 }
 
 void TelemetryManager::_manageOrbitalPass() {
+    std::lock_guard<std::mutex> lock(_bufferMutex); // PROTEÇÃO THREAD-SAFE
+    
     unsigned long now = millis();
     
     if (_groundNodeBuffer.activeNodes == 0) {
@@ -554,6 +550,7 @@ void TelemetryManager::_manageOrbitalPass() {
         }
     }
     
+    // INÍCIO DE PASSAGEM ORBITAL
     if (!_groundNodeBuffer.inOrbitalPass && timeSinceLastPacket < 600000) {
         _groundNodeBuffer.inOrbitalPass = true;
         _groundNodeBuffer.sessionStartTime = _rtc.isInitialized() ? _rtc.getUnixTime() : (millis() / 1000);
@@ -561,8 +558,16 @@ void TelemetryManager::_manageOrbitalPass() {
         
         DEBUG_PRINTF("[TelemetryManager] ========== INICIO PASSAGEM #%u ==========\n",
                      _groundNodeBuffer.passNumber);
+        
+        // OTIMIZAR LORA PARA COLETA
+        _comm.reconfigureLoRa(MODE_FLIGHT);
+        LoRa.setSpreadingFactor(10); // SF maior para longo alcance
+        LoRa.receive(); // Priorizar modo RX
+        
+        DEBUG_PRINTLN("[TelemetryManager] LoRa otimizado: SF10, modo RX prioritário");
     }
     
+    // FIM DE PASSAGEM ORBITAL
     if (_groundNodeBuffer.inOrbitalPass && timeSinceLastPacket > ORBITAL_PASS_TIMEOUT_MS) {
         _groundNodeBuffer.inOrbitalPass = false;
         _groundNodeBuffer.sessionEndTime = _rtc.isInitialized() ? _rtc.getUnixTime() : (millis() / 1000);
@@ -575,9 +580,16 @@ void TelemetryManager::_manageOrbitalPass() {
         DEBUG_PRINTF("[TelemetryManager] Nós coletados: %u\n", _groundNodeBuffer.activeNodes);
         DEBUG_PRINTF("[TelemetryManager] Pacotes totais: %u\n", _groundNodeBuffer.totalPacketsCollected);
         
+        // VOLTAR AO MODO NORMAL
+        _comm.reconfigureLoRa(MODE_FLIGHT);
+        LoRa.setSpreadingFactor(7); // SF menor para TX rápido
+        
+        DEBUG_PRINTLN("[TelemetryManager] LoRa voltou ao modo normal (SF7)");
+        
         _prepareForward();
     }
 }
+
 
 void TelemetryManager::_prepareForward() {
     for (uint8_t i = 0; i < _groundNodeBuffer.activeNodes; i++) {
@@ -655,23 +667,6 @@ OperationMode TelemetryManager::getMode() {
     return _mode;
 }
 
-void TelemetryManager::updateDisplay() {
-    if (!activeModeConfig->displayEnabled) {
-        _display.displayOff();
-        return;
-    }
-    
-    if (_mode == MODE_ERROR) {
-        _displayError("Sistema com erro");
-        return;
-    }
-    
-    if (_mode == MODE_PREFLIGHT) {
-        _displayStatus();
-    } else {
-        _displayTelemetry();
-    }
-}
 
 void TelemetryManager::_collectTelemetryData() {
     if (_rtc.isInitialized()) {
@@ -828,77 +823,6 @@ void TelemetryManager::_checkOperationalConditions() {
         DEBUG_PRINTF("[TelemetryManager] CRÍTICO: Heap baixo: %lu bytes\n", currentHeap); 
         _health.reportError(STATUS_WATCHDOG, "Critical low memory"); 
     }
-}
-
-void TelemetryManager::_displayStatus() {
-    _display.clear();
-    _display.setFont(ArialMT_Plain_10);
-    
-    String line1 = "PRE-FLIGHT MODE";
-    _display.drawString(0, 0, line1);
-
-    String batteryStr = "Bat: " + String(_power.getPercentage(), 0) + "% (" + String(_power.getVoltage(), 2) + "V)";
-    _display.drawString(0, 12, batteryStr);
-
-    String tempHumStr;
-    if (_sensors.isSI7021Online() && !isnan(_sensors.getHumidity())) {
-        tempHumStr = "Temp: " + String(_sensors.getTemperature(), 1) + "C Hum: " + String(_sensors.getHumidity(), 0) + "%";
-    } else {
-        tempHumStr = "Temp: " + String(_sensors.getTemperature(), 1) + "C Press: " + String(_sensors.getPressure(), 0) + "hPa";
-    }
-    _display.drawString(0, 24, tempHumStr);
-
-    String timeLine;
-    if (_rtc.isInitialized()) {
-        String dt = _rtc.getDateTime();
-        timeLine = "RTC: " + dt.substring(11, 19);
-    } else {
-        timeLine = "Nodes: " + String(_groundNodeBuffer.activeNodes);
-    }
-    _display.drawString(0, 36, timeLine);
-
-    String statusStr = "";
-    statusStr += _comm.isConnected() ? "[WiFi]" : "[NoWiFi]";
-    statusStr += _comm.isLoRaOnline() ? "[LoRa]" : "[NoLoRa]";
-    statusStr += _storage.isAvailable() ? "[SD]" : "[NoSD]";
-    _display.drawString(0, 48, statusStr);
-
-    _display.display();
-}
-
-void TelemetryManager::_displayTelemetry() {
-    _display.clear();
-    _display.setFont(ArialMT_Plain_10);
-
-    unsigned long missionTimeSec = _telemetryData.missionTime / 1000;
-    unsigned long minutes = missionTimeSec / 60;
-    unsigned long seconds = missionTimeSec % 60;
-    String timeStr = String(minutes) + ":" + (seconds < 10 ? "0" + String(seconds) : String(seconds));
-    _display.drawString(0, 0, "Mission: " + timeStr);
-
-    String batStr = "Bat: " + String(_power.getPercentage(), 0) + "%";
-    _display.drawString(0, 12, batStr);
-
-    String nodesStr = "Nodes: " + String(_groundNodeBuffer.activeNodes) + "/" + String(MAX_GROUND_NODES);
-    _display.drawString(0, 24, nodesStr);
-
-    String passStr = "Pass: #" + String(_groundNodeBuffer.passNumber);
-    _display.drawString(0, 36, passStr);
-
-    String pktStr = "Pkts: " + String(_groundNodeBuffer.totalPacketsCollected);
-    _display.drawString(0, 48, pktStr);
-
-    _display.display();
-}
-
-void TelemetryManager::_displayError(const String& error) {
-    _display.clear();
-    _display.setFont(ArialMT_Plain_10);
-    _display.drawString(0, 0, "ERRO:");
-    _display.drawString(0, 15, error);
-    String heapInfo = "Heap: " + String(ESP.getFreeHeap() / 1024) + "KB";
-    _display.drawString(0, 30, heapInfo);
-    _display.display();
 }
 
 void TelemetryManager::_logHeapUsage(const String& component) {

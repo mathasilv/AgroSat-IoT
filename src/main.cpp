@@ -5,6 +5,7 @@
  * @date 2025-11-11
  */
 #include <Arduino.h>
+#include <esp_task_wdt.h>
 #include "config.h"
 #include "TelemetryManager.h"
 
@@ -205,6 +206,12 @@ void setup() {
         }
     }
     
+    // ✅ WATCHDOG TIMER
+    DEBUG_PRINTLN("[Main] Configurando Watchdog Timer...");
+    esp_task_wdt_init(WATCHDOG_TIMEOUT, true);  // 60 segundos, auto-reset
+    esp_task_wdt_add(NULL);  // Adicionar task atual
+    DEBUG_PRINTF("[Main] Watchdog habilitado: %d segundos\n", WATCHDOG_TIMEOUT);
+    
     uint32_t postInitHeap = ESP.getFreeHeap();
     DEBUG_PRINTF("[Main] Heap após init: %lu bytes (usado: %lu bytes)\n", 
                  postInitHeap, bootHeap - postInitHeap);
@@ -226,28 +233,39 @@ void setup() {
 }
 
 void loop() {
+    esp_task_wdt_reset();
+    
+    // Monitorar heap para detecção precoce de problemas
     uint32_t loopHeap = ESP.getFreeHeap();
     
-    if (loopHeap < minHeapSeen) minHeapSeen = loopHeap;
+    if (loopHeap < minHeapSeen) {
+        minHeapSeen = loopHeap;
+    }
     
-    // Proteção SAFE MODE antes de crash crítico
+    // ========== PROTEÇÃO CONTRA HEAP CRÍTICO ==========
     if (loopHeap < 8000) {
-        DEBUG_PRINTF("[Main] Heap crítico: %lu bytes - SAFE MODE\n", loopHeap);
+        DEBUG_PRINTF("[Main] ⚠️  Heap crítico: %lu bytes - Ativando SAFE MODE\n", loopHeap);
         telemetry.applyModeConfig(MODE_SAFE);
     }
     
+    // ========== PROTEÇÃO CONTRA CRASH IMINENTE ==========
     if (loopHeap < 5000) { 
-        DEBUG_PRINTF("[Main] CRÍTICO: Heap muito baixo: %lu bytes\n", loopHeap); 
-        DEBUG_PRINTLN("[Main] Reiniciando sistema..."); 
-        delay(1000); 
+        DEBUG_PRINTF("[Main] 🚨 CRÍTICO: Heap muito baixo: %lu bytes\n", loopHeap); 
+        DEBUG_PRINTLN("[Main] Sistema será reiniciado em 3 segundos..."); 
+        delay(3000); 
         ESP.restart(); 
     }
     
+    // ========== LOOP PRINCIPAL DE TELEMETRIA ==========
     telemetry.loop();
+    
+    // ========== PROCESSAMENTO DE COMANDOS SERIAL ==========
     processSerialCommands();
+    
+    // ========== STATUS PERIÓDICO ==========
     printPeriodicStatus();
 
-    // LED indicador do modo
+    // ========== CONTROLE DE LED (INDICADOR DE MODO) ==========
     static unsigned long lastBlink = 0;
     unsigned long currentTime = millis();
     
@@ -257,26 +275,48 @@ void loop() {
         
         switch (currentMode) {
             case MODE_PREFLIGHT: 
+                // LED constante em PRE-FLIGHT
                 digitalWrite(LED_BUILTIN, HIGH); 
                 break;
+                
             case MODE_FLIGHT: 
+                // LED piscando 1Hz em FLIGHT
                 digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); 
                 break;
+                
             case MODE_SAFE:
-                if (currentTime % 3000 < 1000) digitalWrite(LED_BUILTIN, HIGH);
-                else digitalWrite(LED_BUILTIN, LOW);
+                // LED piscando rápido (3s on, 2s off) em SAFE
+                if ((currentTime / 1000) % 5 < 3) {
+                    digitalWrite(LED_BUILTIN, HIGH);
+                } else {
+                    digitalWrite(LED_BUILTIN, LOW);
+                }
                 break;
+                
             case MODE_POSTFLIGHT:
-                if (currentTime % 2000 < 1000) digitalWrite(LED_BUILTIN, HIGH);
-                else digitalWrite(LED_BUILTIN, LOW);
+                // LED piscando 0.5Hz em POST-FLIGHT
+                if ((currentTime / 1000) % 2 == 0) {
+                    digitalWrite(LED_BUILTIN, HIGH);
+                } else {
+                    digitalWrite(LED_BUILTIN, LOW);
+                }
                 break;
+                
             case MODE_ERROR:
-                if (currentTime % 200 < 100) digitalWrite(LED_BUILTIN, HIGH);
-                else digitalWrite(LED_BUILTIN, LOW);
+                // LED piscando muito rápido em ERROR
+                if ((currentTime / 100) % 2 == 0) {
+                    digitalWrite(LED_BUILTIN, HIGH);
+                } else {
+                    digitalWrite(LED_BUILTIN, LOW);
+                }
                 break;
+                
             default: 
                 digitalWrite(LED_BUILTIN, LOW); 
                 break;
         }
     }
+    
+    // Pequeno delay para estabilidade
+    delay(10);
 }
