@@ -69,7 +69,6 @@ private:
     void _updateGroundNode(const MissionData& data);
     void _replaceLowestPriorityNode(const MissionData& newData);
     void _cleanupStaleNodes(unsigned long maxAge = NODE_TTL_MS);
-    void _manageOrbitalPass();
     void _prepareForward();
     
     void _displayStatus();

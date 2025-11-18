@@ -533,64 +533,6 @@ void TelemetryManager::_cleanupStaleNodes(unsigned long maxAge) {
     }
 }
 
-void TelemetryManager::_manageOrbitalPass() {
-    std::lock_guard<std::mutex> lock(_bufferMutex); // PROTEÇÃO THREAD-SAFE
-    
-    unsigned long now = millis();
-    
-    if (_groundNodeBuffer.activeNodes == 0) {
-        return;
-    }
-    
-    unsigned long timeSinceLastPacket = ULONG_MAX;
-    for (uint8_t i = 0; i < _groundNodeBuffer.activeNodes; i++) {
-        unsigned long age = now - _groundNodeBuffer.lastUpdate[i];
-        if (age < timeSinceLastPacket) {
-            timeSinceLastPacket = age;
-        }
-    }
-    
-    // INÍCIO DE PASSAGEM ORBITAL
-    if (!_groundNodeBuffer.inOrbitalPass && timeSinceLastPacket < 600000) {
-        _groundNodeBuffer.inOrbitalPass = true;
-        _groundNodeBuffer.sessionStartTime = _rtc.isInitialized() ? _rtc.getUnixTime() : (millis() / 1000);
-        _groundNodeBuffer.passNumber++;
-        
-        DEBUG_PRINTF("[TelemetryManager] ========== INICIO PASSAGEM #%u ==========\n",
-                     _groundNodeBuffer.passNumber);
-        
-        // OTIMIZAR LORA PARA COLETA
-        _comm.reconfigureLoRa(MODE_FLIGHT);
-        LoRa.setSpreadingFactor(10); // SF maior para longo alcance
-        LoRa.receive(); // Priorizar modo RX
-        
-        DEBUG_PRINTLN("[TelemetryManager] LoRa otimizado: SF10, modo RX prioritário");
-    }
-    
-    // FIM DE PASSAGEM ORBITAL
-    if (_groundNodeBuffer.inOrbitalPass && timeSinceLastPacket > ORBITAL_PASS_TIMEOUT_MS) {
-        _groundNodeBuffer.inOrbitalPass = false;
-        _groundNodeBuffer.sessionEndTime = _rtc.isInitialized() ? _rtc.getUnixTime() : (millis() / 1000);
-        
-        unsigned long passDuration = _groundNodeBuffer.sessionEndTime - _groundNodeBuffer.sessionStartTime;
-        
-        DEBUG_PRINTF("[TelemetryManager] ========== FIM PASSAGEM #%u ==========\n",
-                     _groundNodeBuffer.passNumber);
-        DEBUG_PRINTF("[TelemetryManager] Duração: %lu s\n", passDuration);
-        DEBUG_PRINTF("[TelemetryManager] Nós coletados: %u\n", _groundNodeBuffer.activeNodes);
-        DEBUG_PRINTF("[TelemetryManager] Pacotes totais: %u\n", _groundNodeBuffer.totalPacketsCollected);
-        
-        // VOLTAR AO MODO NORMAL
-        _comm.reconfigureLoRa(MODE_FLIGHT);
-        LoRa.setSpreadingFactor(7); // SF menor para TX rápido
-        
-        DEBUG_PRINTLN("[TelemetryManager] LoRa voltou ao modo normal (SF7)");
-        
-        _prepareForward();
-    }
-}
-
-
 void TelemetryManager::_prepareForward() {
     for (uint8_t i = 0; i < _groundNodeBuffer.activeNodes; i++) {
         _groundNodeBuffer.nodes[i].forwarded = false;
