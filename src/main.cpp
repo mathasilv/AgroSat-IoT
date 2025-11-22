@@ -178,49 +178,57 @@ void printPeriodicStatus() {
 }
 
 void setup() {
-    Serial.begin(DEBUG_BAUDRATE); 
-    delay(500);
+    Serial.begin(DEBUG_BAUDRATE);
+    delay(1000);
     
-    uint32_t bootHeap = ESP.getFreeHeap(); 
-    minHeapSeen = bootHeap;
-    
-    pinMode(LED_BUILTIN, OUTPUT); 
+    pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, LOW);
     
+    DEBUG_PRINTLN("");
     DEBUG_PRINTLN("[Main] ========================================");
     DEBUG_PRINTLN("[Main] INICIALIZANDO SISTEMA DE TELEMETRIA");
     DEBUG_PRINTLN("[Main] ========================================");
     DEBUG_PRINTLN("");
-    DEBUG_PRINTF("[Main] Heap antes da init: %lu bytes\n", ESP.getFreeHeap());
+    
+    uint32_t heapBeforeInit = ESP.getFreeHeap();
+    minHeapSeen = heapBeforeInit;
+    DEBUG_PRINTF("[Main] Heap antes da init: %lu bytes\n", heapBeforeInit);
+    
+    // ✅ CRÍTICO: Configurar watchdog ANTES de inicializar subsistemas
+    DEBUG_PRINTLN("[Main] Configurando Watchdog Timer...");
+    esp_task_wdt_init(120, true);  // ✅ 120 SEGUNDOS (suficiente para calibração MPU9250)
+    esp_task_wdt_add(NULL);
+    DEBUG_PRINTLN("[Main] Watchdog habilitado: 120 segundos");
+    
+    // ✅ Reset antes de começar inicialização
+    esp_task_wdt_reset();
     
     if (!telemetry.begin()) {
         DEBUG_PRINTLN("[Main] ERRO CRÍTICO: Falha na inicialização!");
-        DEBUG_PRINTLN("[Main] Sistema entrará em modo de erro.");
-        DEBUG_PRINTF("[Main] Heap no erro: %lu bytes\n", ESP.getFreeHeap());
-        
-        while (true) { 
-            digitalWrite(LED_BUILTIN, HIGH); 
-            delay(100); 
-            digitalWrite(LED_BUILTIN, LOW); 
-            delay(100); 
-        }
+        DEBUG_PRINTLN("[Main] Sistema continuará em modo degradado...");
     }
     
-    // ✅ WATCHDOG TIMER
-    DEBUG_PRINTLN("[Main] Configurando Watchdog Timer...");
-    esp_task_wdt_init(WATCHDOG_TIMEOUT, true);  // 60 segundos, auto-reset
-    esp_task_wdt_add(NULL);  // Adicionar task atual
-    DEBUG_PRINTF("[Main] Watchdog habilitado: %d segundos\n", WATCHDOG_TIMEOUT);
+    // ✅ Reset após inicialização
+    esp_task_wdt_reset();
     
-    uint32_t postInitHeap = ESP.getFreeHeap();
+    uint32_t heapAfterInit = ESP.getFreeHeap();
+    if (heapAfterInit < minHeapSeen) {
+        minHeapSeen = heapAfterInit;
+    }
+    
     DEBUG_PRINTF("[Main] Heap após init: %lu bytes (usado: %lu bytes)\n", 
-                 postInitHeap, bootHeap - postInitHeap);
+                 heapAfterInit, heapBeforeInit - heapAfterInit);
     
-    if (postInitHeap < minHeapSeen) minHeapSeen = postInitHeap;
+    DEBUG_PRINTLN("[Main] Aguardando estabilização dos subsistemas...");
+    for (int i = 3; i > 0; i--) {
+        DEBUG_PRINTF("[Main] Iniciando em %d...\n", i);
+        esp_task_wdt_reset();
+        delay(1000);
+    }
     
-    waitForBoot(); 
-    bootComplete = true;
+    DEBUG_PRINTF("[Main] Sistema pronto! Heap mínimo no boot: %lu bytes\n", minHeapSeen);
     
+    DEBUG_PRINTLN("");
     DEBUG_PRINTLN("[Main] ========================================");
     DEBUG_PRINTLN("[Main] SISTEMA OPERACIONAL");
     DEBUG_PRINTLN("[Main] Modo: PRE-FLIGHT");
@@ -228,9 +236,8 @@ void setup() {
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("[Main] >>> DIGITE 'HELP' PARA LISTA DE COMANDOS <<<");
     DEBUG_PRINTLN("");
-    
-    digitalWrite(LED_BUILTIN, HIGH);
 }
+
 
 void loop() {
     esp_task_wdt_reset();

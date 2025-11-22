@@ -87,11 +87,11 @@ const ModeConfig PREFLIGHT_CONFIG = {
     true,    
     true,    
     false,   
-    5000,    
+    15000,    
     60000,   
-    100,     
-    10000,   
-    30000    
+    0,     
+    0,   
+    15000    
 };
 
 const ModeConfig FLIGHT_CONFIG = {
@@ -100,24 +100,24 @@ const ModeConfig FLIGHT_CONFIG = {
     false,   
     true,    
     true,    
-    240000,  
-    240000,  
-    5,       
-    20000,   
-    60000    
+    30000,  
+    5000,  
+    0,       
+    0,   
+    30000    
 };
 
 const ModeConfig SAFE_CONFIG = {
-    false,   
-    true,    
-    true,    
-    true,    
-    false,   
-    120000,  
-    300000,  
-    0,       
-    15000,   
-    45000    
+    false,    // Display OFF
+    true,     // Logs ON (debug crítico)
+    true,     // SD verbose ON
+    true,     // LoRa ON (modo seguro SF12)
+    false,    // HTTP OFF
+    60000,    // Telemetria a cada 60s (conservar energia)
+    300000,   // SD a cada 5 minutos
+    0,        // WiFi OFF
+    0,        // RX sempre ativo
+    60000     // TX a cada 60s
 };
 
 #define USE_MPU9250
@@ -169,7 +169,7 @@ const ModeConfig SAFE_CONFIG = {
 #define LORA_SYNC_WORD 0x12             
 #define LORA_CRC_ENABLED true           
 #define LORA_MAX_TX_TIME_MS 400
-#define LORA_DUTY_CYCLE_PERCENT 10
+#define LORA_DUTY_CYCLE_PERCENT 2.86
 #define LORA_MIN_INTERVAL_MS 14000
 #define LORA_TX_TIMEOUT_MS 2000         
 #define LORA_MAX_PAYLOAD_SIZE 255       
@@ -226,10 +226,11 @@ extern bool currentSerialLogsEnabled;
 #define DEBUG_PRINTF(...) if(currentSerialLogsEnabled){DEBUG_SERIAL.printf(__VA_ARGS__);}
 
 #define TELEMETRY_BUFFER_SIZE 10
-#define MAX_GROUND_NODES 5              
-#define NODE_TTL_MS 300000              
-#define ORBITAL_PASS_TIMEOUT_MS 120000  
-#define MIN_PACKETS_FOR_FORWARD 1       
+#define MAX_GROUND_NODES 8              
+#define NODE_TTL_MS 1800000              
+#define NODE_INACTIVITY_TIMEOUT_MS 600000 
+
+// ========== ESTRUTURAS DE DADOS ==========
 
 struct TelemetryData {
     unsigned long timestamp;
@@ -258,8 +259,8 @@ struct TelemetryData {
 };
 
 struct MissionData {
-    uint16_t nodeId;                    
-    uint16_t sequenceNumber;            
+    uint16_t nodeId;
+    uint16_t sequenceNumber;
     float soilMoisture;
     float ambientTemp;
     float humidity;
@@ -268,21 +269,17 @@ struct MissionData {
     float snr;
     uint16_t packetsReceived;
     uint16_t packetsLost;
-    unsigned long lastLoraRx;           
-    unsigned long collectionTime;       
-    uint8_t priority;                   
-    bool forwarded;                     
+    unsigned long lastLoraRx;
+    unsigned long collectionTime;
+    uint8_t priority;
+    bool forwarded;
 };
 
 struct GroundNodeBuffer {
     MissionData nodes[MAX_GROUND_NODES];
     uint8_t activeNodes;
     unsigned long lastUpdate[MAX_GROUND_NODES];
-    unsigned long sessionStartTime;     
-    unsigned long sessionEndTime;       
-    uint16_t totalPacketsCollected;     
-    uint8_t passNumber;                 
-    bool inOrbitalPass;                 
+    uint16_t totalPacketsCollected;
 };
 
 enum SystemStatus : uint8_t {

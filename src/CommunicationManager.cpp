@@ -559,23 +559,23 @@ void CommunicationManager::reconfigureLoRa(OperationMode mode) {
     switch (mode) {
         case MODE_PREFLIGHT:
             LoRa.setSpreadingFactor(7);
-            _currentSpreadingFactor = 7;  // ✅ ADICIONAR
+            _currentSpreadingFactor = 7;
             LoRa.setTxPower(17);
-            DEBUG_PRINTLN("[CommunicationManager] LoRa: PRE-FLIGHT (SF7, 17dBm)");
+            DEBUG_PRINTLN("[CommunicationManager] LoRa: PRE-FLIGHT (SF7, 17dBm - HAB mode)");
             break;
             
         case MODE_FLIGHT:
-            LoRa.setSpreadingFactor(10);
-            _currentSpreadingFactor = 10;  // ✅ ADICIONAR
-            LoRa.setTxPower(20);
-            DEBUG_PRINTLN("[CommunicationManager] LoRa: FLIGHT (SF10, 20dBm)");
+            LoRa.setSpreadingFactor(7);  // ✅ SF7 para balão (line-of-sight perfeita)
+            _currentSpreadingFactor = 7;
+            LoRa.setTxPower(17);          // ✅ 17dBm suficiente (>500km @ 31km alt)
+            DEBUG_PRINTLN("[CommunicationManager] LoRa: FLIGHT (SF7, 17dBm - HAB mode)");
             break;
             
         case MODE_SAFE:
             LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR_SAFE);
-            _currentSpreadingFactor = LORA_SPREADING_FACTOR_SAFE;  // ✅ ADICIONAR
-            LoRa.setTxPower(20);
-            DEBUG_PRINTLN("[CommunicationManager] LoRa: SAFE (SF12, 20dBm)");
+            _currentSpreadingFactor = LORA_SPREADING_FACTOR_SAFE;
+            LoRa.setTxPower(20);  // Máxima potência em emergência
+            DEBUG_PRINTLN("[CommunicationManager] LoRa: SAFE (SF12, 20dBm - Emergency mode)");
             break;
             
         default:
@@ -876,7 +876,7 @@ bool CommunicationManager::testConnection() {
 }
 
 String CommunicationManager::_createTelemetryJSON(const TelemetryData& data, const GroundNodeBuffer& groundBuffer) {
-    StaticJsonDocument<JSON_MAX_SIZE> doc; // CORRIGIDO: usar constante correta
+    StaticJsonDocument<JSON_MAX_SIZE> doc;
 
     doc["equipe"] = TEAM_ID;
     doc["bateria"] = (int)data.batteryPercentage;
@@ -914,12 +914,15 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data, con
             nodeObj["h"] = round(node.humidity * 10) / 10;
             nodeObj["ir"] = node.irrigationStatus;
             nodeObj["rs"] = node.rssi;
+            nodeObj["snr"] = round(node.snr * 10) / 10;
+            nodeObj["seq"] = node.sequenceNumber;
         }
         
-        payload["pass"] = groundBuffer.passNumber;
-        payload["pkts"] = groundBuffer.totalPacketsCollected;
+        payload["total_nodes"] = groundBuffer.activeNodes;
+        payload["total_pkts"] = groundBuffer.totalPacketsCollected;
     }
     
+    // Dados do balão
     if (!isnan(data.altitude) && data.altitude >= 0) {
         payload["alt"] = round(data.altitude * 10) / 10;
     }
@@ -956,8 +959,6 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data, con
     
     return String(jsonBuffer);
 }
-
-
 
 bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
     // Validação de payload vazio
