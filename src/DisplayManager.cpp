@@ -3,15 +3,21 @@
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-#define SCREEN_DURATION 3000
+#define LINE_HEIGHT 8
+#define MAX_LINES 8
+#define CHAR_WIDTH 6
+#define UPDATE_INTERVAL 1000
 
 DisplayManager::DisplayManager() :
     _display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RST),
     _currentState(DISPLAY_BOOT),
     _lastTelemetryScreen(DISPLAY_TELEMETRY_1),
     _lastScreenChange(0),
-    _screenInterval(SCREEN_DURATION),
-    _isDisplayOn(false)
+    _screenInterval(UPDATE_INTERVAL),
+    _isDisplayOn(false),
+    _scrollOffset(0),
+    _lastUpdateTime(0),
+    _initLineCount(0)
 {
 }
 
@@ -26,6 +32,7 @@ bool DisplayManager::begin() {
     _display.clearDisplay();
     _display.setTextColor(SSD1306_WHITE);
     _display.setTextSize(1);
+    _display.setTextWrap(false);
     _display.display();
     
     _isDisplayOn = true;
@@ -57,104 +64,119 @@ void DisplayManager::turnOn() {
 }
 
 // ========================================
-// TELA DE BOOT - SEM CABEÇALHO
+// TELA DE BOOT
 // ========================================
 void DisplayManager::showBoot() {
     if (!_isDisplayOn) return;
     
     _currentState = DISPLAY_BOOT;
     _display.clearDisplay();
-    
-    _display.setTextSize(3);
-    _display.setCursor(5, 8);
-    _display.println("Agro");
-    _display.setCursor(15, 32);
-    _display.println("Sat");
-    
     _display.setTextSize(1);
-    _display.setCursor(25, 58);
-    _display.println("HAB v6.0");
+    
+    _display.setCursor(0, 0);
+    _display.println("===================");
+    
+    _display.setCursor(0, 10);
+    _display.println("  AgroSat-IoT HAB");
+    
+    _display.setCursor(0, 20);
+    _display.println("  Equipe Orbitalis");
+    
+    _display.setCursor(0, 30);
+    _display.println("===================");
+    
+    _display.setCursor(0, 42);
+    _display.println("Firmware: v6.0.1");
+    
+    _display.setCursor(0, 54);
+    _display.println("Inicializando...");
     
     _display.display();
 }
 
 // ========================================
-// INICIALIZAÇÃO DE SENSORES - COMPACTO
+// INICIALIZAÇÃO DE SENSORES
 // ========================================
 void DisplayManager::showSensorInit(const char* sensorName, bool status) {
     if (!_isDisplayOn) return;
     
     _currentState = DISPLAY_INIT_SENSORS;
     
-    static uint8_t line = 0;
-    
-    if (line == 0) {
+    // Primeira chamada - limpar e cabeçalho
+    if (_initLineCount == 0) {
         _display.clearDisplay();
         _display.setTextSize(1);
         _display.setCursor(0, 0);
-        _display.println("Init Sensors:");
-        line = 1;
+        _display.println("--- INIT SENSORS ---");
+        _initLineCount = 1;
     }
     
-    if (line >= 8) {
+    // Resetar se ultrapassar limite
+    if (_initLineCount >= MAX_LINES) {
         _display.clearDisplay();
         _display.setCursor(0, 0);
-        _display.println("Init Sensors:");
-        line = 1;
+        _display.println("--- INIT SENSORS ---");
+        _initLineCount = 1;
     }
     
     _display.setTextSize(1);
-    _display.setCursor(0, line * 8);
-    _display.print(sensorName);
-    _display.print(":");
+    _display.setCursor(0, _initLineCount * LINE_HEIGHT);
     
+    char buffer[22];
     if (status) {
-        _display.println("OK");
+        snprintf(buffer, sizeof(buffer), "%-10s [OK]", sensorName);
     } else {
-        _display.println("FAIL");
+        snprintf(buffer, sizeof(buffer), "%-10s [FAIL]", sensorName);
     }
     
-    line++;
+    _display.println(buffer);
+    _initLineCount++;
+    
     _display.display();
-    delay(200);
+    delay(400);  // Tempo de visualização
 }
 
 // ========================================
-// CALIBRAÇÃO - BARRA GRANDE
+// CALIBRAÇÃO COM BARRA DE PROGRESSO
 // ========================================
 void DisplayManager::showCalibration(uint8_t progress) {
     if (!_isDisplayOn) return;
     
     _currentState = DISPLAY_CALIBRATION;
     _display.clearDisplay();
-    
     _display.setTextSize(1);
-    _display.setCursor(10, 5);
-    _display.println("CALIBRANDO IMU");
     
-    _display.setCursor(5, 20);
-    _display.println("Rotacione em");
-    _display.setCursor(5, 30);
-    _display.println("todos os eixos");
+    // Cabeçalho
+    _display.setCursor(0, 0);
+    _display.println("CALIBRANDO MPU9250");
     
-    // Barra de progresso grande
-    uint16_t barX = 10;
-    uint16_t barY = 46;
-    uint16_t barWidth = 108;
-    uint16_t barHeight = 12;
+    // Instrução
+    _display.setCursor(0, 12);
+    _display.println("Rotacione em todos");
+    _display.setCursor(0, 20);
+    _display.println("os eixos (X,Y,Z)");
+    
+    // Barra de progresso
+    const uint8_t barX = 4;
+    const uint8_t barY = 36;
+    const uint8_t barWidth = 120;
+    const uint8_t barHeight = 14;
     
     if (progress > 100) progress = 100;
     
+    // Borda dupla da barra
     _display.drawRect(barX, barY, barWidth, barHeight, SSD1306_WHITE);
+    _display.drawRect(barX + 1, barY + 1, barWidth - 2, barHeight - 2, SSD1306_WHITE);
     
-    uint16_t fillWidth = ((barWidth - 4) * progress) / 100;
+    // Preenchimento
+    uint8_t fillWidth = ((barWidth - 6) * progress) / 100;
     if (fillWidth > 0) {
-        _display.fillRect(barX + 2, barY + 2, fillWidth, barHeight - 4, SSD1306_WHITE);
+        _display.fillRect(barX + 3, barY + 3, fillWidth, barHeight - 6, SSD1306_WHITE);
     }
     
-    _display.setTextSize(1);
-    _display.setCursor(55, 44);
-    _display.printf("%d%%", progress);
+    // Percentual abaixo da barra
+    _display.setCursor(54, 54);
+    _display.printf("%3d%%", progress);
     
     _display.display();
 }
@@ -163,19 +185,32 @@ void DisplayManager::showCalibrationResult(float offsetX, float offsetY, float o
     if (!_isDisplayOn) return;
     
     _display.clearDisplay();
-    
-    _display.setTextSize(2);
-    _display.setCursor(15, 10);
-    _display.println("CALIBR.");
-    _display.setCursor(30, 30);
-    _display.println("OK!");
-    
     _display.setTextSize(1);
-    _display.setCursor(10, 52);
-    _display.printf("Mag:%.0f,%.0f,%.0f", offsetX, offsetY, offsetZ);
+    
+    _display.setCursor(0, 0);
+    _display.println("CALIBRACAO OK!");
+    
+    _display.setCursor(0, 14);
+    _display.println("-------------------");
+    
+    char offsetStr[22];
+    _display.setCursor(0, 24);
+    snprintf(offsetStr, sizeof(offsetStr), "Mag X:%.0f uT", offsetX);
+    _display.println(offsetStr);
+    
+    _display.setCursor(0, 34);
+    snprintf(offsetStr, sizeof(offsetStr), "Mag Y:%.0f uT", offsetY);
+    _display.println(offsetStr);
+    
+    _display.setCursor(0, 44);
+    snprintf(offsetStr, sizeof(offsetStr), "Mag Z:%.0f uT", offsetZ);
+    _display.println(offsetStr);
+    
+    _display.setCursor(0, 56);
+    _display.println("Continuando...");
     
     _display.display();
-    delay(2000);
+    delay(1200);  // 1.2s é suficiente
 }
 
 // ========================================
@@ -186,13 +221,23 @@ void DisplayManager::showReady() {
     
     _currentState = DISPLAY_READY;
     _display.clearDisplay();
-    
-    _display.setTextSize(3);
-    _display.setCursor(15, 15);
-    _display.println("READY");
-    
     _display.setTextSize(1);
-    _display.setCursor(30, 50);
+    
+    _initLineCount = 0;  // Reset contador
+    
+    _display.setCursor(0, 0);
+    _display.println("===================");
+    
+    _display.setCursor(0, 14);
+    _display.println("  SISTEMA PRONTO");
+    
+    _display.setCursor(0, 28);
+    _display.println("===================");
+    
+    _display.setCursor(0, 42);
+    _display.println("Iniciando missao...");
+    
+    _display.setCursor(0, 54);
     _display.println("Aguarde...");
     
     _display.display();
@@ -203,230 +248,191 @@ void DisplayManager::showReady() {
 }
 
 // ========================================
-// ATUALIZAÇÃO DE TELEMETRIA
+// TELEMETRIA CONTÍNUA
 // ========================================
 void DisplayManager::updateTelemetry(const TelemetryData& data) {
     if (!_isDisplayOn) return;
     
     uint32_t currentTime = millis();
     
-    if (currentTime - _lastScreenChange >= _screenInterval) {
-        _lastScreenChange = currentTime;
-        
-        switch (_currentState) {
-            case DISPLAY_TELEMETRY_1: _currentState = DISPLAY_TELEMETRY_2; break;
-            case DISPLAY_TELEMETRY_2: _currentState = DISPLAY_TELEMETRY_3; break;
-            case DISPLAY_TELEMETRY_3: _currentState = DISPLAY_TELEMETRY_4; break;
-            case DISPLAY_TELEMETRY_4: _currentState = DISPLAY_STATUS; break;
-            case DISPLAY_STATUS:      _currentState = DISPLAY_TELEMETRY_1; break;
-            default:                  _currentState = DISPLAY_TELEMETRY_1;
-        }
+    if (currentTime - _lastUpdateTime < UPDATE_INTERVAL) {
+        return;
     }
+    _lastUpdateTime = currentTime;
     
-    switch (_currentState) {
-        case DISPLAY_TELEMETRY_1: _showTelemetry1(data); break;
-        case DISPLAY_TELEMETRY_2: _showTelemetry2(data); break;
-        case DISPLAY_TELEMETRY_3: _showTelemetry3(data); break;
-        case DISPLAY_TELEMETRY_4: _showTelemetry4(data); break;
-        case DISPLAY_STATUS:      _showStatus(data); break;
-        default: break;
-    }
-}
-
-// ========================================
-// TELA 1: TEMPERATURA - SEM CABEÇALHO
-// ========================================
-void DisplayManager::_showTelemetry1(const TelemetryData& data) {
     _display.clearDisplay();
     _display.setTextSize(1);
+    _display.setTextWrap(false);
     
-    // Linha 1: BMP280
-    _display.setCursor(0, 0);
-    _display.printf("BMP: %.2f C", data.temperature);
+    static const uint8_t MAX_DISPLAY_LINES = 30;
+    String lines[MAX_DISPLAY_LINES];
+    uint8_t lineCount = 0;
     
-    // Linha 2: SI7021
-    _display.setCursor(0, 12);
-    if (!isnan(data.temperatureSI)) {
-        _display.printf("SI7: %.2f C", data.temperatureSI);
-    } else {
-        _display.println("SI7: N/A");
-    }
+    // Cabeçalho
+    lines[lineCount++] = "=== AgroSat HAB ===";
     
-    // Linha 3: Delta
-    _display.setCursor(0, 24);
-    if (!isnan(data.temperatureSI)) {
-        float delta = data.temperature - data.temperatureSI;
-        _display.printf("Delta: %.2f C", delta);
-    }
-    
-    // Linha 4: Pressão
-    _display.setCursor(0, 40);
-    _display.printf("P: %.0f hPa", data.pressure);
-    
-    // Linha 5: Altitude
-    _display.setCursor(0, 52);
-    _display.printf("Alt: %.0f m", data.altitude);
-    
-    _display.display();
-}
-
-// ========================================
-// TELA 2: GIROSCÓPIO - SEM CABEÇALHO
-// ========================================
-void DisplayManager::_showTelemetry2(const TelemetryData& data) {
-    _display.clearDisplay();
-    _display.setTextSize(1);
-    
-    _display.setCursor(0, 0);
-    _display.println("GYRO (rad/s)");
-    
-    _display.setCursor(0, 16);
-    _display.printf("X: %+.3f", data.gyroX);
-    
-    _display.setCursor(0, 30);
-    _display.printf("Y: %+.3f", data.gyroY);
-    
-    _display.setCursor(0, 44);
-    _display.printf("Z: %+.3f", data.gyroZ);
-    
-    _display.display();
-}
-
-// ========================================
-// TELA 3: ACELERÔMETRO - SEM CABEÇALHO
-// ========================================
-void DisplayManager::_showTelemetry3(const TelemetryData& data) {
-    _display.clearDisplay();
-    _display.setTextSize(1);
-    
-    _display.setCursor(0, 0);
-    _display.println("ACCEL (m/s2)");
-    
-    _display.setCursor(0, 16);
-    _display.printf("X: %+.2f", data.accelX);
-    
-    _display.setCursor(0, 30);
-    _display.printf("Y: %+.2f", data.accelY);
-    
-    _display.setCursor(0, 44);
-    _display.printf("Z: %+.2f", data.accelZ);
-    
-    _display.display();
-}
-
-// ========================================
-// TELA 4: QUALIDADE DO AR - SEM CABEÇALHO
-// ========================================
-void DisplayManager::_showTelemetry4(const TelemetryData& data) {
-    _display.clearDisplay();
-    _display.setTextSize(1);
-    
-    _display.setCursor(0, 0);
-    _display.println("AMBIENTE");
-    
-    // Umidade
-    _display.setCursor(0, 14);
-    if (!isnan(data.humidity)) {
-        _display.printf("Umid: %.1f %%", data.humidity);
-    } else {
-        _display.println("Umid: N/A");
-    }
-    
-    // CO2
-    _display.setCursor(0, 28);
-    if (!isnan(data.co2)) {
-        _display.printf("CO2: %.0f ppm", data.co2);
-    } else {
-        _display.println("CO2: N/A");
-    }
-    
-    // TVOC
-    _display.setCursor(0, 42);
-    if (!isnan(data.tvoc)) {
-        _display.printf("TVOC: %.0f ppb", data.tvoc);
-    } else {
-        _display.println("TVOC: N/A");
-    }
-    
-    // Magnetômetro (magnitude)
-    _display.setCursor(0, 56);
-    if (!isnan(data.magX)) {
-        float magMag = sqrt(data.magX*data.magX + data.magY*data.magY + data.magZ*data.magZ);
-        _display.printf("Mag: %.0f uT", magMag);
-    } else {
-        _display.println("Mag: N/A");
-    }
-    
-    _display.display();
-}
-
-// ========================================
-// TELA 5: STATUS - SEM CABEÇALHO
-// ========================================
-void DisplayManager::_showStatus(const TelemetryData& data) {
-    _display.clearDisplay();
-    _display.setTextSize(1);
-    
-    // Linha 1: Bateria
-    _display.setCursor(0, 0);
-    _display.printf("Bat: %.2fV", data.batteryVoltage);
-    
-    _display.setCursor(0, 12);
-    _display.printf("     %.0f %%", data.batteryPercentage);
-    
-    // Linha 3: Uptime
-    _display.setCursor(0, 26);
+    // Tempo e bateria
     uint32_t seconds = data.missionTime / 1000;
     uint32_t minutes = seconds / 60;
     uint32_t hours = minutes / 60;
     seconds %= 60;
     minutes %= 60;
     
-    if (hours > 0) {
-        _display.printf("Up: %02luh%02lum", hours, minutes);
-    } else {
-        _display.printf("Up: %02lum%02lus", minutes, seconds);
+    char timeStr[32];
+    snprintf(timeStr, sizeof(timeStr), "Up:%02luh%02lum%02lus", hours, minutes, seconds);
+    lines[lineCount++] = String(timeStr);
+    
+    char batStr[32];
+    snprintf(batStr, sizeof(batStr), "Bat:%.2fV %.0f%%", data.batteryVoltage, data.batteryPercentage);
+    lines[lineCount++] = String(batStr);
+    
+    lines[lineCount++] = "-------------------";
+    
+    // Temperatura
+    char tempStr[32];
+    snprintf(tempStr, sizeof(tempStr), "T:%.1fC", data.temperature);
+    lines[lineCount++] = String(tempStr);
+    
+    if (!isnan(data.temperatureSI)) {
+        char tempSIStr[32];
+        snprintf(tempSIStr, sizeof(tempSIStr), "T_SI:%.1fC", data.temperatureSI);
+        lines[lineCount++] = String(tempSIStr);
     }
     
-    // Linha 4: Status
-    _display.setCursor(0, 40);
+    // Pressão e altitude
+    char pressStr[32];
+    snprintf(pressStr, sizeof(pressStr), "P:%.0fhPa", data.pressure);
+    lines[lineCount++] = String(pressStr);
+    
+    char altStr[32];
+    snprintf(altStr, sizeof(altStr), "Alt:%.0fm", data.altitude);
+    lines[lineCount++] = String(altStr);
+    
+    // Umidade
+    if (!isnan(data.humidity)) {
+        char humStr[32];
+        snprintf(humStr, sizeof(humStr), "Hum:%.0f%%", data.humidity);
+        lines[lineCount++] = String(humStr);
+    }
+    
+    // Qualidade do ar
+    if (!isnan(data.co2)) {
+        char co2Str[32];
+        snprintf(co2Str, sizeof(co2Str), "CO2:%.0fppm", data.co2);
+        lines[lineCount++] = String(co2Str);
+    }
+    
+    if (!isnan(data.tvoc)) {
+        char tvocStr[32];
+        snprintf(tvocStr, sizeof(tvocStr), "VOC:%.0fppb", data.tvoc);
+        lines[lineCount++] = String(tvocStr);
+    }
+    
+    lines[lineCount++] = "-------------------";
+    
+    // Acelerômetro
+    char accelStr[32];
+    snprintf(accelStr, sizeof(accelStr), "Ax:%.1f", data.accelX);
+    lines[lineCount++] = String(accelStr);
+    
+    snprintf(accelStr, sizeof(accelStr), "Ay:%.1f", data.accelY);
+    lines[lineCount++] = String(accelStr);
+    
+    snprintf(accelStr, sizeof(accelStr), "Az:%.1f", data.accelZ);
+    lines[lineCount++] = String(accelStr);
+    
+    // Giroscópio
+    char gyroStr[32];
+    snprintf(gyroStr, sizeof(gyroStr), "Gx:%.2f", data.gyroX);
+    lines[lineCount++] = String(gyroStr);
+    
+    snprintf(gyroStr, sizeof(gyroStr), "Gy:%.2f", data.gyroY);
+    lines[lineCount++] = String(gyroStr);
+    
+    snprintf(gyroStr, sizeof(gyroStr), "Gz:%.2f", data.gyroZ);
+    lines[lineCount++] = String(gyroStr);
+    
+    // Magnetômetro
+    if (!isnan(data.magX)) {
+        char magStr[32];
+        snprintf(magStr, sizeof(magStr), "Mx:%.0f", data.magX);
+        lines[lineCount++] = String(magStr);
+        
+        snprintf(magStr, sizeof(magStr), "My:%.0f", data.magY);
+        lines[lineCount++] = String(magStr);
+        
+        snprintf(magStr, sizeof(magStr), "Mz:%.0f", data.magZ);
+        lines[lineCount++] = String(magStr);
+    }
+    
+    lines[lineCount++] = "-------------------";
+    
+    // Status
     if (data.systemStatus == STATUS_OK) {
-        _display.println("Status: OK");
+        lines[lineCount++] = "Stat:OK";
     } else {
-        _display.printf("Err: 0x%02X", data.systemStatus);
+        char statStr[32];
+        snprintf(statStr, sizeof(statStr), "Err:0x%02X", data.systemStatus);
+        lines[lineCount++] = String(statStr);
     }
     
-    // Linha 5: Memória
-    _display.setCursor(0, 54);
-    _display.printf("Mem: %lu KB", ESP.getFreeHeap() / 1024);
+    // Memória
+    char memStr[32];
+    snprintf(memStr, sizeof(memStr), "Mem:%luKB", ESP.getFreeHeap() / 1024);
+    lines[lineCount++] = String(memStr);
+    
+    // Renderização com rolagem
+    const uint8_t visibleLines = MAX_LINES;
+    static uint8_t scrollPosition = 0;
+    
+    if (lineCount > visibleLines) {
+        scrollPosition++;
+        if (scrollPosition > lineCount - visibleLines) {
+            scrollPosition = 0;
+        }
+    } else {
+        scrollPosition = 0;
+    }
+    
+    for (uint8_t i = 0; i < visibleLines && (scrollPosition + i) < lineCount; i++) {
+        _display.setCursor(0, i * LINE_HEIGHT);
+        _display.print(lines[scrollPosition + i]);
+    }
     
     _display.display();
 }
 
-// ========================================
-// UTILITÁRIOS - REMOVIDO _drawHeader()
-// ========================================
-void DisplayManager::_drawProgressBar(uint8_t progress, const char* label) {
-    // Não usado mais (integrado em showCalibration)
-}
+// Funções legadas (não usadas)
+void DisplayManager::_showTelemetry1(const TelemetryData& data) {}
+void DisplayManager::_showTelemetry2(const TelemetryData& data) {}
+void DisplayManager::_showTelemetry3(const TelemetryData& data) {}
+void DisplayManager::_showTelemetry4(const TelemetryData& data) {}
+void DisplayManager::_showStatus(const TelemetryData& data) {}
+void DisplayManager::_drawProgressBar(uint8_t progress, const char* label) {}
 
+// ========================================
+// MENSAGENS UTILITÁRIAS
+// ========================================
 void DisplayManager::displayMessage(const char* title, const char* msg) {
     if (!_isDisplayOn) return;
     
     _display.clearDisplay();
+    _display.setTextSize(1);
     
-    // Título grande centralizado
-    _display.setTextSize(2);
+    _display.setCursor(0, 0);
+    _display.println("===================");
+    
     uint8_t titleLen = strlen(title);
-    uint8_t titleX = (128 - titleLen * 12) / 2;
-    _display.setCursor(titleX, 10);
+    uint8_t titleX = (21 - titleLen) / 2;
+    _display.setCursor(titleX * CHAR_WIDTH, 14);
     _display.println(title);
     
-    // Mensagem pequena centralizada
-    _display.setTextSize(1);
+    _display.setCursor(0, 28);
+    _display.println("===================");
+    
     uint8_t msgLen = strlen(msg);
-    uint8_t msgX = (128 - msgLen * 6) / 2;
-    _display.setCursor(msgX, 40);
+    uint8_t msgX = (21 - msgLen) / 2;
+    _display.setCursor(msgX * CHAR_WIDTH, 42);
     _display.println(msg);
     
     _display.display();

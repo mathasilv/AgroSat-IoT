@@ -1,7 +1,7 @@
 /**
  * @file DisplayManager.h
- * @brief Gerenciador de display OLED SSD1306 128x64
- * @version 7.0.0 - HAB Edition
+ * @brief Gerenciador de display OLED SSD1306 128x64 - Versão Serial Monitor
+ * @version 7.2.0 - Calibração com Feedback Visual
  */
 #ifndef DISPLAY_MANAGER_H
 #define DISPLAY_MANAGER_H
@@ -12,7 +12,6 @@
 #include <Adafruit_SSD1306.h>
 #include "config.h"
 
-// Estados do display
 enum DisplayState {
     DISPLAY_BOOT,
     DISPLAY_INIT_SENSORS,
@@ -53,12 +52,13 @@ private:
     DisplayState _currentState;
     DisplayState _lastTelemetryScreen;
     unsigned long _lastScreenChange;
+    unsigned long _lastUpdateTime;
     uint32_t _screenInterval;
+    uint8_t _scrollOffset;
+    uint8_t _initLineCount;
     bool _isDisplayOn;
     
-    void _drawHeader(const char* title);
     void _drawProgressBar(uint8_t progress, const char* label);
-    
     void _showTelemetry1(const TelemetryData& data);
     void _showTelemetry2(const TelemetryData& data);
     void _showTelemetry3(const TelemetryData& data);

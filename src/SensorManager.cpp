@@ -14,6 +14,7 @@
 
 #include "SensorManager.h"
 #include <algorithm>
+#include "DisplayManager.h"
 
 SensorManager::SensorManager() :
     _mpu9250(MPU9250_ADDRESS),
@@ -144,15 +145,24 @@ void SensorManager::_updateBMP280() {
     float temp = _bmp280.readTemperature();
     float press = _bmp280.readPressure();
 
-    // Validar temperatura e pressão separadamente
-    bool tempValid = !isnan(temp) && temp >= TEMP_MIN_VALID && temp <= TEMP_MAX_VALID;
-    bool pressValid = !isnan(press) && press >= PRESSURE_MIN_VALID * 100 && press <= PRESSURE_MAX_VALID * 100;
-
-    if (tempValid) {
+    // ✅ Validar temperatura separadamente
+    if (_validateTemperature(temp)) {
         _temperatureBMP = temp;
+        _bmp280TempValid = true;
+        _bmp280TempFailures = 0;
     } else {
         _temperatureBMP = NAN;
+        _bmp280TempValid = false;
+        _bmp280TempFailures++;
+        
+        if (_bmp280TempFailures >= MAX_TEMP_FAILURES) {
+            DEBUG_PRINTLN("[SensorManager] BMP280: Temperatura com falhas consecutivas");
+        }
     }
+
+    bool pressValid = !isnan(press) && 
+                      press >= PRESSURE_MIN_VALID * 100 && 
+                      press <= PRESSURE_MAX_VALID * 100;
 
     if (pressValid) {
         _pressure = press / 100.0;
@@ -361,16 +371,20 @@ bool SensorManager::_initMPU9250() {
     } else {
         DEBUG_PRINTLN("[SensorManager] Magnetometro OK, iniciando calibração...");
         
-        // Calibração manual de magnetômetro (hard iron)
-        // Coletar min/max durante 10 segundos
+        // ========================================
+        // CALIBRAÇÃO COM FEEDBACK VISUAL
+        // ========================================
         float magMin[3] = {9999.0, 9999.0, 9999.0};
         float magMax[3] = {-9999.0, -9999.0, -9999.0};
         
         DEBUG_PRINTLN("[SensorManager] Rotacione o CubeSat lentamente em todos os eixos...");
+        
         uint32_t startTime = millis();
         uint16_t samples = 0;
+        const uint32_t calibrationTime = 10000;  // 10 segundos
         
-        while (millis() - startTime < 10000) {  // 10 segundos
+        // ✅ LOOP COM FEEDBACK VISUAL
+        while (millis() - startTime < calibrationTime) {
             xyzFloat mag = _mpu9250.getMagValues();
             
             if (!isnan(mag.x) && !isnan(mag.y) && !isnan(mag.z)) {
@@ -385,16 +399,33 @@ bool SensorManager::_initMPU9250() {
                 samples++;
             }
             
-            delay(50);
-            
-            // Feedback visual
-            if ((millis() - startTime) % 2000 == 0) {
-                DEBUG_PRINTF("[SensorManager] Calibrando... %lus / 10s (%d samples)\n", 
-                            (millis() - startTime) / 1000, samples);
+            // ✅ ATUALIZAR DISPLAY A CADA 100ms
+            static uint32_t lastDisplayUpdate = 0;
+            if (millis() - lastDisplayUpdate >= 100) {
+                lastDisplayUpdate = millis();
+                
+                uint8_t progress = ((millis() - startTime) * 100) / calibrationTime;
+                
+                // ✅ CHAMAR displayManager SE DISPONÍVEL
+                // NOTA: Você precisa passar a referência do DisplayManager aqui
+                // Opção 1: Passar via parâmetro no begin()
+                // Opção 2: Usar ponteiro global (não recomendado mas funcional)
+                extern DisplayManager* g_displayManagerPtr;  // Declarar no main.cpp
+                if (g_displayManagerPtr && g_displayManagerPtr->isOn()) {
+                    g_displayManagerPtr->showCalibration(progress);
+                }
+                
+                // Feedback serial
+                if ((millis() - startTime) % 2000 < 100) {
+                    DEBUG_PRINTF("[SensorManager] Calibrando... %lus / 10s (%d samples)\n", 
+                                (millis() - startTime) / 1000, samples);
+                }
             }
+            
+            delay(50);  // 50ms entre leituras
         }
         
-        // Calcular offsets (hard iron compensation)
+        // Calcular offsets
         if (samples > 100) {
             _magOffsetX = (magMax[0] + magMin[0]) / 2.0;
             _magOffsetY = (magMax[1] + magMin[1]) / 2.0;
@@ -404,6 +435,12 @@ bool SensorManager::_initMPU9250() {
             DEBUG_PRINTF("[SensorManager] Offsets: X=%.2f Y=%.2f Z=%.2f µT\n", 
                         _magOffsetX, _magOffsetY, _magOffsetZ);
             DEBUG_PRINTF("[SensorManager] Samples coletados: %d\n", samples);
+            
+            // ✅ MOSTRAR RESULTADO NO DISPLAY
+            extern DisplayManager* g_displayManagerPtr;
+            if (g_displayManagerPtr && g_displayManagerPtr->isOn()) {
+                g_displayManagerPtr->showCalibrationResult(_magOffsetX, _magOffsetY, _magOffsetZ);
+            }
         } else {
             DEBUG_PRINTLN("[SensorManager] Calibração insuficiente, usando offsets zero");
             _magOffsetX = 0.0;
@@ -417,6 +454,7 @@ bool SensorManager::_initMPU9250() {
     xyzFloat testRead = _mpu9250.getGValues();
     return !isnan(testRead.x);
 }
+
 
 bool SensorManager::_initBMP280() {
     uint8_t addresses[] = {BMP280_ADDR_1, BMP280_ADDR_2};
@@ -527,56 +565,83 @@ bool SensorManager::_initSI7021() {
 bool SensorManager::_initCCS811() {
     DEBUG_PRINTLN("[SensorManager] Inicializando CCS811...");
     
-    uint8_t addresses[] = {CCS811_ADDR_1, CCS811_ADDR_2};
+    // ✅ USAR DIRETAMENTE O DEFINE DO CONFIG.H
+    Wire.beginTransmission(CCS811_ADDR_1);  // Já definido como 0x5A
+    uint8_t error = Wire.endTransmission();
     
-    for (uint8_t i = 0; i < 2; i++) {
-        DEBUG_PRINTF("[SensorManager] Testando CCS811 em 0x%02X\n", addresses[i]);
-        
-        Wire.beginTransmission(addresses[i]);
-        uint8_t error = Wire.endTransmission();
-        
-        if (error != 0) {
-            DEBUG_PRINTF("[SensorManager] CCS811 não responde em 0x%02X\n", addresses[i]);
-            continue;
-        }
-        
-        if (_ccs811.begin(addresses[i])) {
-            DEBUG_PRINTLN("[SensorManager] CCS811: Aguardando warmup (20s)...");
-            
-            uint32_t startTime = millis();
-            
-            // WARMUP OBRIGATÓRIO 20s
-            while (!_ccs811.available() && (millis() - startTime < CCS811_WARMUP_TIME)) {
-                delay(500);
-                if ((millis() - startTime) % 5000 == 0) {
-                    DEBUG_PRINTF("[SensorManager] Warmup: %lus / 20s\n", 
-                                (millis() - startTime) / 1000);
-                }
-            }
-            
-            if (_ccs811.available()) {
-                DEBUG_PRINTLN("[SensorManager] CCS811 disponível!");
-                
-                // Compensação ambiental com BMP280/SI7021
-                if (_bmp280Online || _si7021Online) {
-                    float temp = _bmp280Online ? _bmp280.readTemperature() : 25.0;
-                    float hum = _si7021Online ? 50.0 : 50.0;  // Ler SI7021 se disponível
-                    
-                    _ccs811.setEnvironmentalData(hum, temp);
-                    DEBUG_PRINTF("[SensorManager] CCS811: Compensação T=%.1f°C H=%.1f%%\n", 
-                                temp, hum);
-                }
-                
-                return true;
-            } else {
-                DEBUG_PRINTLN("[SensorManager] CCS811: Timeout warmup");
-            }
+    if (error != 0) {
+        DEBUG_PRINTF("[SensorManager] CCS811 não responde em 0x%02X\n", CCS811_ADDR_1);
+        return false;
+    }
+    
+    if (!_ccs811.begin(CCS811_ADDR_1)) {  // ← Usar CCS811_ADDR_1 diretamente
+        DEBUG_PRINTLN("[SensorManager] CCS811: Falha no begin()");
+        return false;
+    }
+    
+    DEBUG_PRINTLN("[SensorManager] CCS811: Aguardando warmup (20s)...");
+    
+    uint32_t startTime = millis();
+    
+    // WARMUP OBRIGATÓRIO 20s
+    while (!_ccs811.available() && (millis() - startTime < CCS811_WARMUP_TIME)) {
+        delay(500);
+        if ((millis() - startTime) % 5000 == 0) {
+            DEBUG_PRINTF("[SensorManager] Warmup: %lus / 20s\n", 
+                        (millis() - startTime) / 1000);
         }
     }
     
-    DEBUG_PRINTLN("[SensorManager] CCS811: Não inicializado");
-    return false;
+    if (!_ccs811.available()) {
+        DEBUG_PRINTLN("[SensorManager] CCS811: Timeout warmup");
+        return false;
+    }
+    
+    DEBUG_PRINTLN("[SensorManager] CCS811 disponível!");
+    
+    if (_bmp280Online || _si7021Online) {
+        float temp = 25.0;  // Padrão
+        float hum = 50.0;   // Padrão
+        
+        // Ler temperatura do BMP280 se disponível
+        if (_bmp280Online) {
+            float tempRead = _bmp280.readTemperature();
+            if (!isnan(tempRead) && tempRead >= TEMP_MIN_VALID && tempRead <= TEMP_MAX_VALID) {
+                temp = tempRead;
+            }
+        }
+        
+        if (_si7021Online) {
+            Wire.beginTransmission(SI7021_ADDRESS);
+            Wire.write(0xF5);  // Measure RH
+            if (Wire.endTransmission() == 0) {
+                delay(20);
+                Wire.requestFrom((uint8_t)SI7021_ADDRESS, (uint8_t)2);
+                
+                if (Wire.available() >= 2) {
+                    uint8_t msb = Wire.read();
+                    uint8_t lsb = Wire.read();
+                    uint16_t rawHum = (msb << 8) | lsb;
+                    
+                    if (rawHum != 0xFFFF && rawHum != 0x0000) {
+                        float humRead = ((125.0 * rawHum) / 65536.0) - 6.0;
+                        
+                        if (humRead >= HUMIDITY_MIN_VALID && humRead <= HUMIDITY_MAX_VALID) {
+                            hum = humRead;
+                        }
+                    }
+                }
+            }
+        }
+        
+        _ccs811.setEnvironmentalData(hum, temp);
+        DEBUG_PRINTF("[SensorManager] CCS811: Compensação T=%.1f°C H=%.1f%%\n", 
+                    temp, hum);
+    }
+    
+    return true;
 }
+
 
 bool SensorManager::_validateMPUReadings(float gx, float gy, float gz,
                                           float ax, float ay, float az,

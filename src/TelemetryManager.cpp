@@ -1,21 +1,21 @@
 /**
  * @file TelemetryManager.cpp
  * @brief VERSÃO OTIMIZADA PARA BALÃO METEOROLÓGICO (HAB)
- * @version 7.0.0 - HAB Edition
- * @date 2025-11-17
+ * @version 7.1.0 - HAB Edition + Display Calibração
+ * @date 2025-11-24
  * 
- * CHANGELOG v7.0.0 HAB:
- * - [REMOVED] Lógica de passagens orbitais (não aplicável para balão)
- * - [REMOVED] Detecção de órbita LEO (movimento lento de balão)
- * - [NEW] Modo de coleta contínua simplificado
- * - [OPT] Forward imediato ao receber dados (sem esperar "próxima passagem")
- * - [OPT] SF7 otimizado para line-of-sight balão (31km altitude)
+ * CHANGELOG v7.1.0:
+ * - [FIX] Calibração com feedback visual em tempo real
+ * - [FIX] Sequência de inicialização sem sobreposição
+ * - [FIX] Ponteiro global para DisplayManager
+ * - [OPT] Delays reduzidos para boot mais rápido
  */
 #include "TelemetryManager.h"
 #include "config.h"
 
 bool currentSerialLogsEnabled = PREFLIGHT_CONFIG.serialLogsEnabled;
 const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
+DisplayManager* g_displayManagerPtr = nullptr;  // ✅ Ponteiro global
 
 TelemetryManager::TelemetryManager() :
     _displayMgr(), 
@@ -143,12 +143,13 @@ bool TelemetryManager::begin() {
 
     _initI2CBus();
 
-    // ========== DISPLAY MANAGER - INICIALIZAR PRIMEIRO ==========
+    // ========================================
+    // DISPLAY MANAGER - INICIALIZAR PRIMEIRO
+    // ========================================
     bool displayOk = false;
     
     if (activeModeConfig->displayEnabled) {
         DEBUG_PRINTLN("[TelemetryManager] Inicializando DisplayManager...");
-
         esp_task_wdt_reset();
         
         if (_displayMgr.begin()) {
@@ -156,13 +157,16 @@ bool TelemetryManager::begin() {
             displayOk = true;
             DEBUG_PRINTLN("[TelemetryManager] DisplayManager OK");
             
-            esp_task_wdt_reset();
+            // ✅ REGISTRAR PONTEIRO GLOBAL
+            g_displayManagerPtr = &_displayMgr;
             
+            esp_task_wdt_reset();
             _displayMgr.showBoot();
             delay(2000);
         } else {
             DEBUG_PRINTLN("[TelemetryManager] DisplayManager FAILED (não-crítico)");
             _useNewDisplay = false;
+            g_displayManagerPtr = nullptr;
         }
         
         delay(500);
@@ -171,7 +175,9 @@ bool TelemetryManager::begin() {
     bool success = true;
     uint8_t subsystemsOk = 0;
 
+    // ========================================
     // RTC MANAGER
+    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC Manager...");
     esp_task_wdt_reset();
     
@@ -182,20 +188,23 @@ bool TelemetryManager::begin() {
         
         if (_useNewDisplay && displayOk) {
             _displayMgr.showSensorInit("RTC", true);
-            delay(500);
         }
     } else {
         DEBUG_PRINTLN("[TelemetryManager] RTC Manager FAILED (não-crítico)");
         if (_useNewDisplay && displayOk) {
             _displayMgr.showSensorInit("RTC", false);
-            delay(500);
         }
     }
 
+    // ========================================
+    // BUTTON HANDLER
+    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando gerenciador de botão...");
     _button.begin();
 
+    // ========================================
     // SYSTEM HEALTH
+    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
     esp_task_wdt_reset();
     
@@ -205,14 +214,15 @@ bool TelemetryManager::begin() {
         
         if (_useNewDisplay && displayOk) {
             _displayMgr.showSensorInit("Health", true);
-            delay(500);
         }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] System Health FAILED");
     }
 
+    // ========================================
     // POWER MANAGER
+    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Power Manager...");
     esp_task_wdt_reset();
     
@@ -222,50 +232,49 @@ bool TelemetryManager::begin() {
         
         if (_useNewDisplay && displayOk) {
             _displayMgr.showSensorInit("Power", true);
-            delay(500);
         }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] Power Manager FAILED");
     }
 
-    // ========== SENSOR MANAGER COM FEEDBACK VISUAL ==========
-    DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
-    esp_task_wdt_reset();
-    
-    // ✅ MOSTRAR MENSAGEM DE CALIBRAÇÃO NO DISPLAY (ANTES DO BEGIN)
-    if (_useNewDisplay && displayOk) {
-        _displayMgr.displayMessage("CALIBRACAO", "Rotacione IMU...");
-        delay(1000);
-    }
-    
-    // ✅ CHAMAR begin() SEM PARÂMETROS (como está originalmente)
-    if (_sensors.begin()) {
-        subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] Sensor Manager OK");
-        
-        // ✅ MOSTRAR RESULTADO DA CALIBRAÇÃO NO DISPLAY (APÓS O BEGIN)
-        if (_useNewDisplay && displayOk) {
-            // A calibração já aconteceu dentro do begin()
-            _displayMgr.displayMessage("CALIBRADO!", "MPU9250 OK");
-            delay(1500);
-            
-            // Mostrar status de cada sensor
-            _displayMgr.showSensorInit("MPU9250", _sensors.isMPU9250Online());
-            delay(500);
-            _displayMgr.showSensorInit("BMP280", _sensors.isBMP280Online());
-            delay(500);
-            _displayMgr.showSensorInit("SI7021", _sensors.isSI7021Online());
-            delay(500);
-            _displayMgr.showSensorInit("CCS811", _sensors.isCCS811Online());
-            delay(1000);
-        }
-    } else {
-        success = false;
-        DEBUG_PRINTLN("[TelemetryManager] Sensor Manager FAILED");
-    }
+    // ========================================
+    // SENSOR MANAGER (COM CALIBRAÇÃO VISUAL)
+    // ========================================
+DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
+DEBUG_PRINTLN("[TelemetryManager] (Calibração do magnetômetro incluída)");
+esp_task_wdt_reset();
 
+// ✅ O begin() dos sensores JÁ FAZ A CALIBRAÇÃO COM FEEDBACK VISUAL
+if (_sensors.begin()) {
+    subsystemsOk++;
+    DEBUG_PRINTLN("[TelemetryManager] Sensor Manager OK");
+    
+    // ✅ LIMPAR TELA EXPLICITAMENTE APÓS CALIBRAÇÃO
+    if (_useNewDisplay && displayOk) {
+        delay(500);  // Aguardar visualização do resultado
+        
+        // ✅ LIMPAR A TELA ANTES DE MOSTRAR STATUS DOS SENSORES
+        _displayMgr.clear();
+        delay(100);  // Pequena pausa para garantir limpeza
+        
+        // ✅ RESETAR O CONTADOR DE LINHAS (importante!)
+        // Isso força o showSensorInit a começar do zero
+        
+        // Mostrar status de cada sensor
+        _displayMgr.showSensorInit("MPU9250", _sensors.isMPU9250Online());
+        _displayMgr.showSensorInit("BMP280", _sensors.isBMP280Online());
+        _displayMgr.showSensorInit("SI7021", _sensors.isSI7021Online());
+        _displayMgr.showSensorInit("CCS811", _sensors.isCCS811Online());
+    }
+} else {
+    success = false;
+    DEBUG_PRINTLN("[TelemetryManager] Sensor Manager FAILED");
+}
+
+    // ========================================
     // STORAGE MANAGER
+    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Storage Manager...");
     esp_task_wdt_reset();
     
@@ -275,14 +284,15 @@ bool TelemetryManager::begin() {
         
         if (_useNewDisplay && displayOk) {
             _displayMgr.showSensorInit("Storage", true);
-            delay(500);
         }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] Storage Manager FAILED");
     }
     
+    // ========================================
     // COMMUNICATION MANAGER
+    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication Manager...");
     DEBUG_PRINTLN("[TelemetryManager]   - LoRa RX/TX Contínuo (HAB Mode)");
     DEBUG_PRINTLN("[TelemetryManager]   - Antena Direcional Terrestre");
@@ -294,16 +304,17 @@ bool TelemetryManager::begin() {
         
         if (_useNewDisplay && displayOk) {
             _displayMgr.showSensorInit("LoRa", _comm.isLoRaOnline());
-            delay(500);
         }
     } else {
         success = false;
         DEBUG_PRINTLN("[TelemetryManager] Communication Manager FAILED");
     }
 
+    // ========================================
+    // TELA SISTEMA PRONTO
+    // ========================================
     if (_useNewDisplay && displayOk) {
         _displayMgr.showReady();
-        delay(2000);
     }
     
     DEBUG_PRINTLN("");
@@ -327,7 +338,6 @@ bool TelemetryManager::begin() {
     return success;
 }
 
-
 // ========== LOOP SIMPLIFICADO PARA BALÃO ==========
 void TelemetryManager::loop() {
     uint32_t currentTime = millis();
@@ -343,7 +353,6 @@ void TelemetryManager::loop() {
     delay(5);
     _handleButtonEvents();
     delay(5);
-
     
     // ========== RECEPÇÃO E PROCESSAMENTO DE PACOTES LORA ==========
     String loraPacket;
@@ -384,14 +393,12 @@ void TelemetryManager::loop() {
             DEBUG_PRINTF("[TelemetryManager]   Prioridade: %d | RX Total: %u | Perdidos: %u\n",
                          receivedData.priority, receivedData.packetsReceived, receivedData.packetsLost);
             
-            // Salvar no SD imediatamente
             if (_storage.isAvailable()) {
                 if (_storage.saveMissionData(receivedData)) {
                     DEBUG_PRINTLN("[TelemetryManager] Dados salvos no SD");
                 }
             }
             
-            // Atualizar display
             if (_useNewDisplay && _displayMgr.isOn()) {
                 char nodeInfo[32];
                 snprintf(nodeInfo, sizeof(nodeInfo), "N%u:%.0f%% %ddBm", 
@@ -405,9 +412,9 @@ void TelemetryManager::loop() {
     }
     
     static unsigned long lastCleanup = 0;
-    if (currentTime - lastCleanup > 600000) { // A cada 10 minutos
+    if (currentTime - lastCleanup > 600000) {
         lastCleanup = currentTime;
-        _cleanupStaleNodes(NODE_TTL_MS); // 30 minutos de TTL
+        _cleanupStaleNodes(NODE_TTL_MS);
         
         DEBUG_PRINTLN("[TelemetryManager] ━━━━━ STATUS DO BUFFER ━━━━━");
         DEBUG_PRINTF("[TelemetryManager] Nós ativos: %d/%d\n", 
@@ -416,13 +423,10 @@ void TelemetryManager::loop() {
                      _groundNodeBuffer.totalPacketsCollected);
     }
     
-    // Coletar telemetria do balão
     _collectTelemetryData();
-    
-    // Verificar condições operacionais
     _checkOperationalConditions();
     
-    // ========== TRANSMISSÃO DE TELEMETRIA ==========
+    // Transmissão de telemetria
     if (currentTime - _lastTelemetrySend >= activeModeConfig->telemetrySendInterval) {
         _lastTelemetrySend = currentTime;
         
@@ -450,7 +454,7 @@ void TelemetryManager::loop() {
         DEBUG_PRINTLN("[TelemetryManager] ════════════════════════════════════");
     }
     
-    // Salvar no SD periodicamente
+    // Salvar no SD
     if (currentTime - _lastStorageSave >= activeModeConfig->storageSaveInterval) {
         _lastStorageSave = currentTime;
         _saveToStorage();
@@ -461,7 +465,7 @@ void TelemetryManager::loop() {
         _displayMgr.updateTelemetry(_telemetryData);
     }
     
-    // ========== MONITORAMENTO DE HEAP ==========
+    // Monitoramento de heap
     static unsigned long lastHeapCheck = 0;
     if (currentTime - lastHeapCheck >= 30000) {
         lastHeapCheck = currentTime;
@@ -493,7 +497,6 @@ void TelemetryManager::_updateGroundNode(const MissionData& data) {
     
     int existingIndex = -1;
     
-    // Procurar se nó já existe no buffer
     for (uint8_t i = 0; i < _groundNodeBuffer.activeNodes; i++) {
         if (_groundNodeBuffer.nodes[i].nodeId == data.nodeId) {
             existingIndex = i;
@@ -502,14 +505,12 @@ void TelemetryManager::_updateGroundNode(const MissionData& data) {
     }
     
     if (existingIndex >= 0) {
-        // Nó já existe - atualizar
         MissionData& existingNode = _groundNodeBuffer.nodes[existingIndex];
         
         if (data.sequenceNumber > existingNode.sequenceNumber) {
             DEBUG_PRINTF("[TelemetryManager] Node %u ATUALIZADO (seq %u → %u)\n", 
                          data.nodeId, existingNode.sequenceNumber, data.sequenceNumber);
             
-            // Detectar pacotes perdidos
             if (data.sequenceNumber > existingNode.sequenceNumber + 1) {
                 uint16_t lost = data.sequenceNumber - existingNode.sequenceNumber - 1;
                 DEBUG_PRINTF("[TelemetryManager] %u pacote(s) perdido(s)\n", lost);
@@ -517,7 +518,7 @@ void TelemetryManager::_updateGroundNode(const MissionData& data) {
             
             existingNode = data;
             existingNode.lastLoraRx = millis();
-            existingNode.forwarded = false; 
+            existingNode.forwarded = false;
             existingNode.priority = _comm.calculatePriority(data);
             
             _groundNodeBuffer.lastUpdate[existingIndex] = millis();
@@ -534,7 +535,6 @@ void TelemetryManager::_updateGroundNode(const MissionData& data) {
         }
         
     } else {
-        // Nó novo
         if (_groundNodeBuffer.activeNodes < MAX_GROUND_NODES) {
             uint8_t newIndex = _groundNodeBuffer.activeNodes;
             _groundNodeBuffer.nodes[newIndex] = data;
@@ -549,7 +549,6 @@ void TelemetryManager::_updateGroundNode(const MissionData& data) {
             DEBUG_PRINTF("[TelemetryManager] Node %u NOVO (slot %d) | Total: %d/%d\n", 
                          data.nodeId, newIndex, _groundNodeBuffer.activeNodes, MAX_GROUND_NODES);
         } else {
-            // Buffer cheio - substituir nó de menor prioridade
             _replaceLowestPriorityNode(data);
         }
     }
@@ -596,7 +595,6 @@ void TelemetryManager::_cleanupStaleNodes(unsigned long maxAge) {
             DEBUG_PRINTF("[TelemetryManager] Removendo Node %u (inativo há %lu min)\n",
                          _groundNodeBuffer.nodes[i].nodeId, age / 60000);
             
-            // Compactar buffer
             for (uint8_t j = i; j < _groundNodeBuffer.activeNodes - 1; j++) {
                 _groundNodeBuffer.nodes[j] = _groundNodeBuffer.nodes[j + 1];
                 _groundNodeBuffer.lastUpdate[j] = _groundNodeBuffer.lastUpdate[j + 1];
@@ -717,7 +715,6 @@ void TelemetryManager::stopMission() {
     DEBUG_PRINTLN("[TelemetryManager] Missão HAB encerrada com sucesso!");
 }
 
-
 OperationMode TelemetryManager::getMode() {
     return _mode;
 }
@@ -733,9 +730,9 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.batteryVoltage = _power.getVoltage();
     _telemetryData.batteryPercentage = _power.getPercentage();
     
-    _telemetryData.temperature = _sensors.getTemperature();           // Temperatura com fallback automático
-    _telemetryData.temperatureBMP = _sensors.getTemperatureBMP280();  // ← ADICIONADO: BMP280 RAW
-    _telemetryData.temperatureSI = NAN;                               // Será preenchido abaixo se SI7021 estiver online
+    _telemetryData.temperature = _sensors.getTemperature();
+    _telemetryData.temperatureBMP = _sensors.getTemperatureBMP280();
+    _telemetryData.temperatureSI = NAN;
     
     _telemetryData.pressure = _sensors.getPressure();
     _telemetryData.altitude = _sensors.getAltitude();
@@ -746,7 +743,6 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.accelY = _sensors.getAccelY();
     _telemetryData.accelZ = _sensors.getAccelZ();
     
-    // Inicializar sensores opcionais como NAN
     _telemetryData.humidity = NAN;
     _telemetryData.co2 = NAN;
     _telemetryData.tvoc = NAN;
@@ -754,7 +750,6 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.magY = NAN;
     _telemetryData.magZ = NAN;
     
-    // SI7021 (Temperatura + Umidade)
     if (_sensors.isSI7021Online()) {
         float tempSI = _sensors.getTemperatureSI7021();
         if (!isnan(tempSI) && tempSI >= TEMP_MIN_VALID && tempSI <= TEMP_MAX_VALID) {
@@ -767,7 +762,6 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
-    // CCS811 (CO2 + TVOC)
     if (_sensors.isCCS811Online()) {
         float co2 = _sensors.getCO2();
         float tvoc = _sensors.getTVOC();
@@ -781,7 +775,6 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
-    // MPU9250 (Magnetômetro)
     if (_sensors.isMPU9250Online()) {
         float magX = _sensors.getMagX();
         float magY = _sensors.getMagY();
@@ -806,33 +799,27 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.payload[PAYLOAD_MAX_SIZE - 1] = '\0';
 }
 
-
 void TelemetryManager::_sendTelemetry() {
     if (activeModeConfig->serialLogsEnabled) {
         DEBUG_PRINTF("[TelemetryManager] Enviando telemetria [%s]...\n", 
                      _rtc.getDateTime().c_str());
         
-        // ✅ CORRIGIDO: Usar valores separados
         bool hasBMP = !isnan(_telemetryData.temperatureBMP);
         bool hasSI = !isnan(_telemetryData.temperatureSI);
         
         if (hasBMP && hasSI) {
-            // Ambos sensores funcionando - mostrar delta
             float delta = abs(_telemetryData.temperatureBMP - _telemetryData.temperatureSI);
             DEBUG_PRINTF("Temp BMP280: %.2f°C | SI7021: %.2f°C | Δ: %.2f°C\n",
                          _telemetryData.temperatureBMP,
                          _telemetryData.temperatureSI,
                          delta);
         } else if (hasBMP && !hasSI) {
-            // Só BMP280 funcionando
             DEBUG_PRINTF("Temp BMP280: %.2f°C (SI7021 indisponível)\n", 
                          _telemetryData.temperatureBMP);
         } else if (!hasBMP && hasSI) {
-            // Só SI7021 funcionando
             DEBUG_PRINTF("Temp SI7021: %.2f°C (BMP280 indisponível)\n", 
                          _telemetryData.temperatureSI);
         } else {
-            // Nenhum sensor funcionando
             DEBUG_PRINTLN("Temperatura: INDISPONÍVEL");
         }
         
@@ -875,7 +862,6 @@ void TelemetryManager::_saveToStorage() {
         DEBUG_PRINTLN("[TelemetryManager] Telemetria salva no SD"); 
     }
     
-    // Salvar dados de todos os nós terrestres
     for (uint8_t i = 0; i < _groundNodeBuffer.activeNodes; i++) {
         _storage.saveMissionData(_groundNodeBuffer.nodes[i]);
     }
@@ -938,7 +924,6 @@ void TelemetryManager::_handleButtonEvents() {
     ButtonEvent event = _button.update();
     
     if (event == ButtonEvent::SHORT_PRESS) {
-        // ========== TOGGLE PREFLIGHT ↔ FLIGHT ==========
         if (_mode == MODE_PREFLIGHT) {
             DEBUG_PRINTLN("");
             DEBUG_PRINTLN("╔════════════════════════════════════════╗");
@@ -947,7 +932,6 @@ void TelemetryManager::_handleButtonEvents() {
             DEBUG_PRINTLN("╚════════════════════════════════════════╝");
             DEBUG_PRINTLN("");
             
-            // Feedback visual LED
             for (int i = 0; i < 3; i++) {
                 digitalWrite(LED_BUILTIN, HIGH);
                 delay(100);
@@ -965,7 +949,6 @@ void TelemetryManager::_handleButtonEvents() {
             DEBUG_PRINTLN("╚════════════════════════════════════════╝");
             DEBUG_PRINTLN("");
             
-            // Feedback visual LED
             for (int i = 0; i < 3; i++) {
                 digitalWrite(LED_BUILTIN, HIGH);
                 delay(100);
@@ -980,7 +963,6 @@ void TelemetryManager::_handleButtonEvents() {
         }
     }
     else if (event == ButtonEvent::LONG_PRESS) {
-        // ========== LONG PRESS → SAFE MODE ==========
         DEBUG_PRINTLN("");
         DEBUG_PRINTLN("╔════════════════════════════════════════╗");
         DEBUG_PRINTLN("║   BOTÃO SEGURADO 3s: SAFE MODE         ║");
@@ -988,7 +970,6 @@ void TelemetryManager::_handleButtonEvents() {
         DEBUG_PRINTLN("╚════════════════════════════════════════╝");
         DEBUG_PRINTLN("");
         
-        // Feedback visual LED (piscar rápido 5x)
         for (int i = 0; i < 5; i++) {
             digitalWrite(LED_BUILTIN, HIGH);
             delay(50);
