@@ -1,7 +1,7 @@
 /**
  * @file SensorManager.h
- * @brief Gerenciamento de sensores PION - VERSÃO OTIMIZADA
- * @version 4.0.0
+ * @brief Gerenciamento de sensores PION - VERSÃO OTIMIZADA COM REDUNDÂNCIA
+ * @version 4.1.0
  */
 
 #ifndef SENSORMANAGER_H
@@ -26,8 +26,9 @@ public:
     void update();
     
     // Getters
-    float getTemperature();
-    float getTemperatureSI7021();
+    float getTemperature();              // ← Temperatura com fallback automático
+    float getTemperatureSI7021();        // ← Temperatura do SI7021 (raw)
+    float getTemperatureBMP280();        // ← NOVO: Temperatura do BMP280 (raw)
     float getPressure();
     float getAltitude();
     float getGyroX();
@@ -50,6 +51,8 @@ public:
     bool isSI7021Online();
     bool isCCS811Online();
     bool isCalibrated();
+    bool isSI7021TemperatureValid();     // ← NOVO
+    bool isBMP280TemperatureValid();     // ← NOVO
     
     // Utilidades
     void scanI2C();
@@ -70,7 +73,7 @@ private:
     Adafruit_CCS811 _ccs811;
 
     // Dados dos sensores
-    float _temperature, _pressure, _altitude, _temperatureSI;
+    float _temperature, _temperatureBMP, _pressure, _altitude, _temperatureSI;
     float _humidity, _co2Level, _tvoc;
     float _seaLevelPressure;
     
@@ -87,6 +90,13 @@ private:
     bool _si7021Online;
     bool _ccs811Online;
     bool _calibrated;
+    
+    // ========== NOVO: Controle de redundância de temperatura ==========
+    bool _si7021TempValid;
+    bool _bmp280TempValid;
+    uint8_t _si7021TempFailures;
+    uint8_t _bmp280TempFailures;
+    static constexpr uint8_t MAX_TEMP_FAILURES = 5;
     
     // Controle de timing
     uint32_t _lastReadTime;
@@ -114,6 +124,7 @@ private:
     bool _validateBMPReadings(float temperature, float pressure);
     bool _validateSI7021Readings(float temperature, float humidity);
     bool _validateCCSReadings(float co2, float tvoc);
+    bool _validateTemperature(float temp);  // ← NOVO
     
     void _performHealthCheck();
     bool _calibrateMPU9250();
@@ -124,6 +135,7 @@ private:
     void _updateBMP280();
     void _updateSI7021();
     void _updateCCS811();
+    void _updateTemperatureRedundancy();  // ← NOVO
 };
 
 #endif // SENSORMANAGER_H

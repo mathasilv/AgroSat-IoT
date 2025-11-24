@@ -148,7 +148,7 @@ bool TelemetryManager::begin() {
     
     if (activeModeConfig->displayEnabled) {
         DEBUG_PRINTLN("[TelemetryManager] Inicializando DisplayManager...");
-        
+
         esp_task_wdt_reset();
         
         if (_displayMgr.begin()) {
@@ -191,6 +191,9 @@ bool TelemetryManager::begin() {
             delay(500);
         }
     }
+
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando gerenciador de botão...");
+    _button.begin();
 
     // SYSTEM HEALTH
     DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
@@ -338,6 +341,9 @@ void TelemetryManager::loop() {
     delay(10);
     _comm.update(); 
     delay(5);
+    _handleButtonEvents();
+    delay(5);
+
     
     // ========== RECEPÇÃO E PROCESSAMENTO DE PACOTES LORA ==========
     String loraPacket;
@@ -726,7 +732,11 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.missionTime = _health.getMissionTime();
     _telemetryData.batteryVoltage = _power.getVoltage();
     _telemetryData.batteryPercentage = _power.getPercentage();
-    _telemetryData.temperature = _sensors.getTemperature();
+    
+    _telemetryData.temperature = _sensors.getTemperature();           // Temperatura com fallback automático
+    _telemetryData.temperatureBMP = _sensors.getTemperatureBMP280();  // ← ADICIONADO: BMP280 RAW
+    _telemetryData.temperatureSI = NAN;                               // Será preenchido abaixo se SI7021 estiver online
+    
     _telemetryData.pressure = _sensors.getPressure();
     _telemetryData.altitude = _sensors.getAltitude();
     _telemetryData.gyroX = _sensors.getGyroX();
@@ -736,7 +746,7 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.accelY = _sensors.getAccelY();
     _telemetryData.accelZ = _sensors.getAccelZ();
     
-    _telemetryData.temperatureSI = NAN;
+    // Inicializar sensores opcionais como NAN
     _telemetryData.humidity = NAN;
     _telemetryData.co2 = NAN;
     _telemetryData.tvoc = NAN;
@@ -744,6 +754,7 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.magY = NAN;
     _telemetryData.magZ = NAN;
     
+    // SI7021 (Temperatura + Umidade)
     if (_sensors.isSI7021Online()) {
         float tempSI = _sensors.getTemperatureSI7021();
         if (!isnan(tempSI) && tempSI >= TEMP_MIN_VALID && tempSI <= TEMP_MAX_VALID) {
@@ -756,6 +767,7 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
+    // CCS811 (CO2 + TVOC)
     if (_sensors.isCCS811Online()) {
         float co2 = _sensors.getCO2();
         float tvoc = _sensors.getTVOC();
@@ -769,6 +781,7 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
+    // MPU9250 (Magnetômetro)
     if (_sensors.isMPU9250Online()) {
         float magX = _sensors.getMagX();
         float magY = _sensors.getMagY();
@@ -793,19 +806,34 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.payload[PAYLOAD_MAX_SIZE - 1] = '\0';
 }
 
+
 void TelemetryManager::_sendTelemetry() {
     if (activeModeConfig->serialLogsEnabled) {
         DEBUG_PRINTF("[TelemetryManager] Enviando telemetria [%s]...\n", 
                      _rtc.getDateTime().c_str());
         
-        DEBUG_PRINTF("Temp BMP280: %.2f°C", _telemetryData.temperature);
+        // ✅ CORRIGIDO: Usar valores separados
+        bool hasBMP = !isnan(_telemetryData.temperatureBMP);
+        bool hasSI = !isnan(_telemetryData.temperatureSI);
         
-        if (!isnan(_telemetryData.temperatureSI)) {
-            DEBUG_PRINTF(" | SI7021: %.2f°C", _telemetryData.temperatureSI);
-            float delta = _telemetryData.temperature - _telemetryData.temperatureSI;
-            DEBUG_PRINTF(" | Δ: %.2f°C\n", delta);
+        if (hasBMP && hasSI) {
+            // Ambos sensores funcionando - mostrar delta
+            float delta = abs(_telemetryData.temperatureBMP - _telemetryData.temperatureSI);
+            DEBUG_PRINTF("Temp BMP280: %.2f°C | SI7021: %.2f°C | Δ: %.2f°C\n",
+                         _telemetryData.temperatureBMP,
+                         _telemetryData.temperatureSI,
+                         delta);
+        } else if (hasBMP && !hasSI) {
+            // Só BMP280 funcionando
+            DEBUG_PRINTF("Temp BMP280: %.2f°C (SI7021 indisponível)\n", 
+                         _telemetryData.temperatureBMP);
+        } else if (!hasBMP && hasSI) {
+            // Só SI7021 funcionando
+            DEBUG_PRINTF("Temp SI7021: %.2f°C (BMP280 indisponível)\n", 
+                         _telemetryData.temperatureSI);
         } else {
-            DEBUG_PRINTLN();
+            // Nenhum sensor funcionando
+            DEBUG_PRINTLN("Temperatura: INDISPONÍVEL");
         }
         
         DEBUG_PRINTF("  Pressão: %.2f hPa | Altitude: %.1f m\n", 
@@ -904,4 +932,72 @@ void TelemetryManager::printLoRaStats() {
     uint16_t sent, failed;
     _comm.getLoRaStatistics(sent, failed);
     DEBUG_PRINTF("[TelemetryManager] LoRa Stats: %d enviados, %d falhas\n", sent, failed);
+}
+
+void TelemetryManager::_handleButtonEvents() {
+    ButtonEvent event = _button.update();
+    
+    if (event == ButtonEvent::SHORT_PRESS) {
+        // ========== TOGGLE PREFLIGHT ↔ FLIGHT ==========
+        if (_mode == MODE_PREFLIGHT) {
+            DEBUG_PRINTLN("");
+            DEBUG_PRINTLN("╔════════════════════════════════════════╗");
+            DEBUG_PRINTLN("║   BOTÃO PRESSIONADO: START MISSION     ║");
+            DEBUG_PRINTLN("║   PREFLIGHT → FLIGHT                   ║");
+            DEBUG_PRINTLN("╚════════════════════════════════════════╝");
+            DEBUG_PRINTLN("");
+            
+            // Feedback visual LED
+            for (int i = 0; i < 3; i++) {
+                digitalWrite(LED_BUILTIN, HIGH);
+                delay(100);
+                digitalWrite(LED_BUILTIN, LOW);
+                delay(100);
+            }
+            
+            startMission();
+        } 
+        else if (_mode == MODE_FLIGHT) {
+            DEBUG_PRINTLN("");
+            DEBUG_PRINTLN("╔════════════════════════════════════════╗");
+            DEBUG_PRINTLN("║   BOTÃO PRESSIONADO: STOP MISSION      ║");
+            DEBUG_PRINTLN("║   FLIGHT → PREFLIGHT                   ║");
+            DEBUG_PRINTLN("╚════════════════════════════════════════╝");
+            DEBUG_PRINTLN("");
+            
+            // Feedback visual LED
+            for (int i = 0; i < 3; i++) {
+                digitalWrite(LED_BUILTIN, HIGH);
+                delay(100);
+                digitalWrite(LED_BUILTIN, LOW);
+                delay(100);
+            }
+            
+            stopMission();
+        }
+        else {
+            DEBUG_PRINTF("[TelemetryManager] Modo atual (%d) não permite toggle via botão\n", _mode);
+        }
+    }
+    else if (event == ButtonEvent::LONG_PRESS) {
+        // ========== LONG PRESS → SAFE MODE ==========
+        DEBUG_PRINTLN("");
+        DEBUG_PRINTLN("╔════════════════════════════════════════╗");
+        DEBUG_PRINTLN("║   BOTÃO SEGURADO 3s: SAFE MODE         ║");
+        DEBUG_PRINTLN("║   Ativando modo de emergência...       ║");
+        DEBUG_PRINTLN("╚════════════════════════════════════════╝");
+        DEBUG_PRINTLN("");
+        
+        // Feedback visual LED (piscar rápido 5x)
+        for (int i = 0; i < 5; i++) {
+            digitalWrite(LED_BUILTIN, HIGH);
+            delay(50);
+            digitalWrite(LED_BUILTIN, LOW);
+            delay(50);
+        }
+        
+        applyModeConfig(MODE_SAFE);
+        _mode = MODE_SAFE;
+        _missionActive = false;
+    }
 }

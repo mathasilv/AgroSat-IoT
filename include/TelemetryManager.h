@@ -14,6 +14,7 @@
 #include "SystemHealth.h"
 #include "DisplayManager.h"
 #include "RTCManager.h"
+#include "ButtonHandler.h"  // ← NOVO
 
 class TelemetryManager {
 public:
@@ -45,6 +46,7 @@ private:
     SystemHealth _health;
     DisplayManager _displayMgr;
     RTCManager _rtc;
+    ButtonHandler _button;  // ← NOVO
     
     std::mutex _bufferMutex;
     
@@ -70,6 +72,7 @@ private:
     void _replaceLowestPriorityNode(const MissionData& newData);
     void _cleanupStaleNodes(unsigned long maxAge = NODE_TTL_MS);
     void _prepareForward();
+    void _handleButtonEvents();  // ← NOVO
     
     void _displayStatus();
     void _displayTelemetry();

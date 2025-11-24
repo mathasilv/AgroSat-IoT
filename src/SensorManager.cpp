@@ -18,7 +18,8 @@
 SensorManager::SensorManager() :
     _mpu9250(MPU9250_ADDRESS),
     _si7021(),
-    _temperature(NAN), _temperatureSI(NAN), _pressure(NAN), _altitude(NAN),
+    _temperature(NAN), _temperatureBMP(NAN), _temperatureSI(NAN), 
+    _pressure(NAN), _altitude(NAN),
     _humidity(NAN), _co2Level(NAN), _tvoc(NAN),
     _seaLevelPressure(1013.25),
     _gyroX(0.0), _gyroY(0.0), _gyroZ(0.0),
@@ -28,6 +29,8 @@ SensorManager::SensorManager() :
     _mpu9250Online(false), _bmp280Online(false),
     _si7021Online(false), _ccs811Online(false),
     _calibrated(false),
+    _si7021TempValid(false), _bmp280TempValid(false),  // ← NOVO
+    _si7021TempFailures(0), _bmp280TempFailures(0),    // ← NOVO
     _lastReadTime(0), _lastCCS811Read(0), _lastSI7021Read(0),
     _lastHealthCheck(0), _consecutiveFailures(0), _filterIndex(0),
     _sumAccelX(0), _sumAccelY(0), _sumAccelZ(0)
@@ -38,6 +41,7 @@ SensorManager::SensorManager() :
         _accelZBuffer[i] = 0.0;
     }
 }
+
 
 bool SensorManager::begin() {
     DEBUG_PRINTLN("[SensorManager] Inicializando sensores PION...");
@@ -96,8 +100,10 @@ void SensorManager::update() {
         _updateBMP280();
         _updateSI7021();
         _updateCCS811();
+        _updateTemperatureRedundancy();  // ← NOVO: Gerenciar fallback
     }
 }
+
 
 void SensorManager::_updateIMU() {
     if (!_mpu9250Online) return;
@@ -129,23 +135,32 @@ void SensorManager::_updateIMU() {
     
     _consecutiveFailures = 0;
 }
-
 void SensorManager::_updateBMP280() {
-    if (!_bmp280Online) return;
+    if (!_bmp280Online) {
+        _temperatureBMP = NAN;
+        return;
+    }
 
     float temp = _bmp280.readTemperature();
     float press = _bmp280.readPressure();
 
-    if (_validateBMPReadings(temp, press)) {
+    // Validar temperatura e pressão separadamente
+    bool tempValid = !isnan(temp) && temp >= TEMP_MIN_VALID && temp <= TEMP_MAX_VALID;
+    bool pressValid = !isnan(press) && press >= PRESSURE_MIN_VALID * 100 && press <= PRESSURE_MAX_VALID * 100;
+
+    if (tempValid) {
+        _temperatureBMP = temp;
+    } else {
+        _temperatureBMP = NAN;
+    }
+
+    if (pressValid) {
         _pressure = press / 100.0;
         _altitude = _calculateAltitude(_pressure);
-        
-        // Usar temperatura do BMP280 apenas se SI7021 falhar
-        if (!_si7021Online || isnan(_temperature)) {
-            _temperature = temp;
-        }
     }
 }
+
+
 
 void SensorManager::_updateSI7021() {
     if (!_si7021Online) return;
@@ -202,31 +217,40 @@ void SensorManager::_updateSI7021() {
     // PASSO 2: Ler TEMPERATURA (comando 0xF3)
     // ========================================
     
-    delay(30);
+delay(30);
+
+Wire.beginTransmission(SI7021_ADDRESS);
+Wire.write(0xF3);
+error = Wire.endTransmission();
+if (error != 0) return;
+
+delay(80);  // Tempo total garantido para conversão
+
+Wire.requestFrom((uint8_t)SI7021_ADDRESS, (uint8_t)2);
+
+if (Wire.available() >= 2) {
+    uint8_t msb = Wire.read();
+    uint8_t lsb = Wire.read();
     
-    Wire.beginTransmission(SI7021_ADDRESS);
-    Wire.write(0xF3);
-    error = Wire.endTransmission();
-    if (error != 0) return;
+    uint16_t rawTemp = (msb << 8) | lsb;
     
-    delay(80);  // Tempo total garantido para conversão
-    
-    Wire.requestFrom((uint8_t)SI7021_ADDRESS, (uint8_t)2);
-    
-    if (Wire.available() >= 2) {
-        uint8_t msb = Wire.read();
-        uint8_t lsb = Wire.read();
+    if (rawTemp != 0xFFFF && rawTemp != 0x0000) {
+        float temp = ((175.72 * rawTemp) / 65536.0) - 46.85;
         
-        uint16_t rawTemp = (msb << 8) | lsb;
-        
-        if (rawTemp != 0xFFFF && rawTemp != 0x0000) {
-            float temp = ((175.72 * rawTemp) / 65536.0) - 46.85;
+        if (_validateTemperature(temp)) {
+            _temperatureSI = temp;
+            _si7021TempValid = true;
+            _si7021TempFailures = 0;
+        } else {
+            _si7021TempValid = false;
+            _si7021TempFailures++;
             
-            if (temp >= TEMP_MIN_VALID && temp <= TEMP_MAX_VALID) {
-                _temperatureSI = temp;
+            if (_si7021TempFailures >= MAX_TEMP_FAILURES) {
+                DEBUG_PRINTLN("[SensorManager] SI7021: Temperatura com falhas consecutivas");
             }
         }
     }
+}
 }
 
 void SensorManager::_updateCCS811() {
@@ -251,6 +275,7 @@ void SensorManager::_updateCCS811() {
 // Getters
 float SensorManager::getTemperature() { return _temperature; }
 float SensorManager::getTemperatureSI7021() { return _temperatureSI; }
+float SensorManager::getTemperatureBMP280() { return _temperatureBMP; }
 float SensorManager::getPressure() { return _pressure; }
 float SensorManager::getAltitude() { return _altitude; }
 float SensorManager::getGyroX() { return _gyroX; }
@@ -283,10 +308,33 @@ void SensorManager::getRawData(float& gx, float& gy, float& gz,
 
 void SensorManager::printSensorStatus() {
     DEBUG_PRINTF("  MPU9250: %s\n", _mpu9250Online ? "ONLINE (9-axis)" : "offline");
-    DEBUG_PRINTF("  BMP280:  %s\n", _bmp280Online ? "ONLINE" : "offline");
-    DEBUG_PRINTF("  SI7021:  %s\n", _si7021Online ? "ONLINE" : "offline");
+    DEBUG_PRINTF("  BMP280:  %s", _bmp280Online ? "ONLINE" : "offline");
+    
+    if (_bmp280Online) {
+        DEBUG_PRINTF(" (Temp: %s)", _bmp280TempValid ? "OK" : "FALHA");
+    }
+    DEBUG_PRINTLN();
+    
+    DEBUG_PRINTF("  SI7021:  %s", _si7021Online ? "ONLINE" : "offline");
+    
+    if (_si7021Online) {
+        DEBUG_PRINTF(" (Temp: %s)", _si7021TempValid ? "OK" : "FALHA");
+    }
+    DEBUG_PRINTLN();
+    
     DEBUG_PRINTF("  CCS811:  %s\n", _ccs811Online ? "ONLINE" : "offline");
+    
+    // Status de redundância
+    DEBUG_PRINTLN("\n  Redundância de Temperatura:");
+    if (_si7021TempValid) {
+        DEBUG_PRINTF("    Usando SI7021 (%.2f°C)\n", _temperatureSI);
+    } else if (_bmp280TempValid) {
+        DEBUG_PRINTF("    Usando BMP280 (%.2f°C) - SI7021 falhou\n", _temperatureBMP);
+    } else {
+        DEBUG_PRINTLN("    CRÍTICO: Ambos sensores falharam!");
+    }
 }
+
 
 void SensorManager::resetAll() {
     _mpu9250Online = _initMPU9250();
@@ -573,7 +621,34 @@ void SensorManager::_performHealthCheck() {
         resetAll();
         _consecutiveFailures = 5;
     }
+    
+    // ========== NOVO: Recuperação de sensores de temperatura ==========
+    
+    // Tentar recuperar SI7021 se falhou muitas vezes
+    if (_si7021Online && _si7021TempFailures >= MAX_TEMP_FAILURES) {
+        DEBUG_PRINTLN("[SensorManager] Tentando recuperar SI7021...");
+        _si7021Online = _initSI7021();
+        
+        if (_si7021Online) {
+            _si7021TempFailures = 0;
+            _si7021TempValid = false;
+            DEBUG_PRINTLN("[SensorManager] SI7021 recuperado!");
+        }
+    }
+    
+    // Tentar recuperar BMP280 se falhou muitas vezes
+    if (_bmp280Online && _bmp280TempFailures >= MAX_TEMP_FAILURES) {
+        DEBUG_PRINTLN("[SensorManager] Tentando recuperar BMP280...");
+        _bmp280Online = _initBMP280();
+        
+        if (_bmp280Online) {
+            _bmp280TempFailures = 0;
+            _bmp280TempValid = false;
+            DEBUG_PRINTLN("[SensorManager] BMP280 recuperado!");
+        }
+    }
 }
+
 
 bool SensorManager::_calibrateMPU9250() {
     if (!_mpu9250Online) return false;
@@ -622,4 +697,52 @@ void SensorManager::scanI2C() {
     }
     
     DEBUG_PRINTF("[SensorManager] Found %d devices\n", count);
+}
+
+void SensorManager::_updateTemperatureRedundancy() {
+    // ========================================
+    // ESTRATÉGIA DE REDUNDÂNCIA AUTOMÁTICA
+    // ========================================
+    
+    // Prioridade 1: SI7021 (mais preciso para temperatura ambiente)
+    if (_si7021Online && _si7021TempValid && !isnan(_temperatureSI)) {
+        _temperature = _temperatureSI;
+        return;
+    }
+    
+    // Fallback 2: BMP280
+    if (_bmp280Online && _bmp280TempValid && !isnan(_temperatureBMP)) {
+        _temperature = _temperatureBMP;
+        
+        // Log apenas quando houver mudança de fonte
+        static bool lastUsedBMP = false;
+        if (!lastUsedBMP) {
+            DEBUG_PRINTLN("[SensorManager] ⚠️  Temperatura: Usando BMP280 (SI7021 indisponível)");
+            lastUsedBMP = true;
+        }
+        return;
+    }
+    
+    // Ambos falharam
+    _temperature = NAN;
+    
+    static unsigned long lastWarning = 0;
+    if (millis() - lastWarning > 30000) {
+        lastWarning = millis();
+        DEBUG_PRINTLN("[SensorManager] ⚠️  CRÍTICO: Ambos sensores de temperatura falharam!");
+        DEBUG_PRINTF("[SensorManager]   SI7021: %s (falhas: %d)\n", 
+                     _si7021TempValid ? "OK" : "FALHOU", _si7021TempFailures);
+        DEBUG_PRINTF("[SensorManager]   BMP280: %s (falhas: %d)\n", 
+                     _bmp280TempValid ? "OK" : "FALHOU", _bmp280TempFailures);
+    }
+}
+
+bool SensorManager::_validateTemperature(float temp) {
+    if (isnan(temp)) return false;
+    if (temp < TEMP_MIN_VALID || temp > TEMP_MAX_VALID) return false;
+    
+    // Filtro adicional: Detectar valores absurdos
+    if (temp == 0.0 || temp == -273.15) return false;
+    
+    return true;
 }

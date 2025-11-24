@@ -1,15 +1,8 @@
 /**
  * @file config.h
  * @brief Configurações globais do CubeSat AgroSat-IoT - Store-and-Forward LEO
- * @version 6.0.0
- * @date 2025-11-15
- * 
- * CHANGELOG v6.0.0:
- * - [NEW] Arquitetura Store-and-Forward completa para órbita LEO
- * - [NEW] Gerenciamento de múltiplos nós terrestres com buffer inteligente
- * - [NEW] Detecção de passagens orbitais e consolidação automática
- * - [FIX] Campos temporais e espaciais para gestão de dados
- * - [OPT] Política de priorização e TTL para nós
+ * @version 6.0.1
+ * @date 2025-11-24
  */
 
 #ifndef CONFIG_H
@@ -19,11 +12,12 @@
 
 #define MISSION_NAME "AgroSat-IoT"
 #define TEAM_CATEGORY "N3"
-#define FIRMWARE_VERSION "6.0.0"
+#define FIRMWARE_VERSION "6.0.1"
 #define BUILD_DATE __DATE__
 #define BUILD_TIME __TIME__
 #define TEAM_ID 666
 
+// ========== DISPLAY OLED ==========
 #define OLED_SDA 21
 #define OLED_SCL 22
 #ifndef OLED_RST
@@ -31,6 +25,7 @@
 #endif
 #define OLED_ADDRESS 0x3C
 
+// ========== LORA SX1276 ==========
 #define LORA_SCK 5
 #define LORA_MISO 19
 #define LORA_MOSI 27
@@ -40,25 +35,34 @@
 #define LORA_DIO1 33
 #define LORA_DIO2 32
 
+// ========== SD CARD ==========
 #define SD_CS 13
 #define SD_MOSI 15
 #define SD_MISO 2
 #define SD_SCLK 14
 
+// ========== I2C SENSORS ==========
 #define SENSOR_I2C_SDA 21
 #define SENSOR_I2C_SCL 22
 #define I2C_FREQUENCY 100000
 
+// ========== POWER MANAGEMENT ==========
 #define BATTERY_PIN 35
 #define BATTERY_SAMPLES 16
 #define BATTERY_VREF 3.6
 #define BATTERY_DIVIDER 2.0
 
+// ========== GPIO DISPONÍVEIS ==========
 #ifndef LED_BUILTIN
 #define LED_BUILTIN 25
 #endif
-#define BUTTON_PIN 0
 
+// ========== BOTÃO DE CONTROLE ==========
+#define BUTTON_PIN 4                    // GPIO 4 (livre)
+#define BUTTON_DEBOUNCE_TIME 50         // 50ms debounce
+#define BUTTON_LONG_PRESS_TIME 3000     // 3 segundos para long press
+
+// ========== MODOS DE OPERAÇÃO ==========
 enum OperationMode : uint8_t {
     MODE_INIT = 0,
     MODE_PREFLIGHT = 1,
@@ -68,6 +72,7 @@ enum OperationMode : uint8_t {
     MODE_ERROR = 5
 };
 
+// ========== CONFIGURAÇÕES DE MODO ==========
 struct ModeConfig {
     bool displayEnabled;
     bool serialLogsEnabled;
@@ -108,23 +113,25 @@ const ModeConfig FLIGHT_CONFIG = {
 };
 
 const ModeConfig SAFE_CONFIG = {
-    false,    // Display OFF
-    true,     // Logs ON (debug crítico)
-    true,     // SD verbose ON
-    true,     // LoRa ON (modo seguro SF12)
-    false,    // HTTP OFF
-    60000,    // Telemetria a cada 60s (conservar energia)
-    300000,   // SD a cada 5 minutos
-    0,        // WiFi OFF
-    0,        // RX sempre ativo
-    60000     // TX a cada 60s
+    false,    
+    true,     
+    true,     
+    true,     
+    false,    
+    60000,    
+    300000,   
+    0,        
+    0,        
+    60000     
 };
 
+// ========== SENSORES HABILITADOS ==========
 #define USE_MPU9250
 #define USE_BMP280
 #define USE_SI7021
 #define USE_CCS811
 
+// ========== ENDEREÇOS I2C ==========
 #define MPU9250_ADDRESS 0x69
 #define BMP280_ADDR_1 0x76
 #define BMP280_ADDR_2 0x77
@@ -133,6 +140,7 @@ const ModeConfig SAFE_CONFIG = {
 #define CCS811_ADDR_2 0x5B
 #define DS3231_ADDRESS 0x68
 
+// ========== SENSORES - PARÂMETROS ==========
 #define CUSTOM_FILTER_SIZE 5
 #define SENSOR_READ_INTERVAL 1000
 #define CCS811_READ_INTERVAL 5000
@@ -140,6 +148,7 @@ const ModeConfig SAFE_CONFIG = {
 #define MPU9250_CALIBRATION_SAMPLES 100
 #define CCS811_WARMUP_TIME 20000
 
+// ========== LIMITES DE VALIDAÇÃO ==========
 #define TEMP_MIN_VALID -50.0
 #define TEMP_MAX_VALID 100.0
 #define PRESSURE_MIN_VALID 300.0
@@ -159,6 +168,7 @@ const ModeConfig SAFE_CONFIG = {
 
 #define SENSOR_INIT_TIMEOUT 2000
 
+// ========== LORA - PARÂMETROS RF ==========
 #define LORA_FREQUENCY 915E6
 #define LORA_SPREADING_FACTOR 7         
 #define LORA_SPREADING_FACTOR_SAFE 12   
@@ -173,51 +183,60 @@ const ModeConfig SAFE_CONFIG = {
 #define LORA_MIN_INTERVAL_MS 14000
 #define LORA_TX_TIMEOUT_MS 2000         
 #define LORA_MAX_PAYLOAD_SIZE 255       
-#define LORA_TX_TIMEOUT_MS_NORMAL 2000   // Para SF7-SF10
-#define LORA_TX_TIMEOUT_MS_SAFE   5000   // Para SF11-SF12
+#define LORA_TX_TIMEOUT_MS_NORMAL 2000   
+#define LORA_TX_TIMEOUT_MS_SAFE   5000   
 
-
+// ========== WIFI ==========
 #define WIFI_SSID "MATHEUS "
 #define WIFI_PASSWORD "12213490"
 #define WIFI_TIMEOUT_MS 60000
 #define WIFI_RETRY_ATTEMPTS 5
 
+// ========== HTTP ==========
 #define HTTP_SERVER "obsat.org.br"
 #define HTTP_PORT 443
 #define HTTP_ENDPOINT "/teste_post/envio.php"
 #define HTTP_TIMEOUT_MS 10000
 
+// ========== BUFFERS ==========
 #define JSON_MAX_SIZE 768
 #define PAYLOAD_MAX_SIZE 180
 
+// ========== INTERVALOS DE TELEMETRIA ==========
 #define TELEMETRY_SEND_INTERVAL PREFLIGHT_CONFIG.telemetrySendInterval
 #define STORAGE_SAVE_INTERVAL PREFLIGHT_CONFIG.storageSaveInterval
 
+// ========== SD CARD - ARQUIVOS ==========
 #define SD_LOG_FILE "/telemetry.csv"
 #define SD_MISSION_FILE "/mission.csv"
 #define SD_ERROR_FILE "/errors.log"
 #define SD_MAX_FILE_SIZE 10485760
 
+// ========== BATERIA ==========
 #define BATTERY_MIN_VOLTAGE 3.7
 #define BATTERY_MAX_VOLTAGE 4.2
 #define BATTERY_CRITICAL 3.9
 #define BATTERY_LOW 3.8
 
+// ========== SISTEMA ==========
 #define DEEP_SLEEP_DURATION 3600
 #define MISSION_DURATION_MS 7200000
 #define WATCHDOG_TIMEOUT 60
 #define SYSTEM_HEALTH_INTERVAL 10000
 
+// ========== LIMITES OPERACIONAIS ==========
 #define MAX_ALTITUDE 30000
 #define MIN_TEMPERATURE -80
 #define MAX_TEMPERATURE 85
 
+// ========== NTP / RTC ==========
 #define NTP_SERVER_PRIMARY   "pool.ntp.org"
 #define NTP_SERVER_SECONDARY "time.google.com"
 #define NTP_SERVER_TERTIARY  "time.cloudflare.com"
 #define TIMEZONE_STRING      "<-03>3"
 #define RTC_TIMEZONE_OFFSET -10800
 
+// ========== DEBUG SERIAL ==========
 #define DEBUG_SERIAL Serial
 #define DEBUG_BAUDRATE 115200
 extern bool currentSerialLogsEnabled;
@@ -225,21 +244,22 @@ extern bool currentSerialLogsEnabled;
 #define DEBUG_PRINTLN(x) if(currentSerialLogsEnabled){DEBUG_SERIAL.println(x);}
 #define DEBUG_PRINTF(...) if(currentSerialLogsEnabled){DEBUG_SERIAL.printf(__VA_ARGS__);}
 
+// ========== BUFFERS DE DADOS ==========
 #define TELEMETRY_BUFFER_SIZE 10
 #define MAX_GROUND_NODES 8              
 #define NODE_TTL_MS 1800000              
 #define NODE_INACTIVITY_TIMEOUT_MS 600000 
 
 // ========== ESTRUTURAS DE DADOS ==========
-
 struct TelemetryData {
     unsigned long timestamp;
     unsigned long missionTime;
     
     float batteryVoltage;
     float batteryPercentage;
-    float temperature;
-    float temperatureSI;
+    float temperature;        // Temperatura FINAL (com fallback automático)
+    float temperatureBMP;     // ← ADICIONAR ESTA LINHA
+    float temperatureSI;      // Já existe
     float pressure;
     
     float gyroX, gyroY, gyroZ;
@@ -257,6 +277,7 @@ struct TelemetryData {
     
     char payload[PAYLOAD_MAX_SIZE];
 };
+
 
 struct MissionData {
     uint16_t nodeId;
@@ -294,4 +315,4 @@ enum SystemStatus : uint8_t {
     STATUS_WATCHDOG = 0x80
 };
 
-#endif
+#endif // CONFIG_H
