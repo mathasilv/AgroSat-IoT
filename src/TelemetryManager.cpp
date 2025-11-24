@@ -1,25 +1,24 @@
 /**
  * @file TelemetryManager.cpp
  * @brief VERSÃO OTIMIZADA PARA BALÃO METEOROLÓGICO (HAB)
- * @version 7.1.0 - HAB Edition + Display Calibração
+ * @version 7.2.0 - HAB Edition + I2C Fix
  * @date 2025-11-24
  * 
- * CHANGELOG v7.1.0:
- * - [FIX] Calibração com feedback visual em tempo real
- * - [FIX] Sequência de inicialização sem sobreposição
- * - [FIX] Ponteiro global para DisplayManager
- * - [OPT] Delays reduzidos para boot mais rápido
+ * CHANGELOG v7.2.0:
+ * - [FIX] Correção definitiva de mutex I2C
+ * - [FIX] Ordem de inicialização corrigida
+ * - [FIX] Remoção de Wire.begin() duplicados
  */
 #include "TelemetryManager.h"
 #include "config.h"
 
 bool currentSerialLogsEnabled = PREFLIGHT_CONFIG.serialLogsEnabled;
 const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
-DisplayManager* g_displayManagerPtr = nullptr;  // ✅ Ponteiro global
+DisplayManager* g_displayManagerPtr = nullptr;
 
 TelemetryManager::TelemetryManager() :
     _displayMgr(), 
-    _mode(MODE_INIT),
+    _mode(MODE_INIT),  // ✅ Começar em MODE_INIT
     _lastTelemetrySend(0),
     _lastStorageSave(0),
     _missionActive(false),
@@ -27,7 +26,8 @@ TelemetryManager::TelemetryManager() :
     _lastDisplayUpdate(0),
     _lastHeapCheck(0),
     _minHeapSeen(UINT32_MAX),
-    _useNewDisplay(true)
+    _useNewDisplay(true),
+    _lastSensorReset(0)  // ✅ Adicionar inicialização
 {
     memset(&_telemetryData, 0, sizeof(TelemetryData));
     memset(&_groundNodeBuffer, 0, sizeof(GroundNodeBuffer));
@@ -46,6 +46,8 @@ TelemetryManager::TelemetryManager() :
     _telemetryData.magX = NAN;
     _telemetryData.magY = NAN;
     _telemetryData.magZ = NAN;
+    
+    // ✅ NÃO CHAMAR applyModeConfig() AQUI!
 }
 
 bool TelemetryManager::_initI2CBus() {
@@ -57,26 +59,32 @@ bool TelemetryManager::_initI2CBus() {
         DEBUG_PRINTLN("[TelemetryManager] ========================================");
         
         Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
-        Wire.setClock(100000);
-        Wire.setTimeOut(200);
+        Wire.setClock(100000);  // 100 kHz
+        Wire.setTimeOut(1000);  // ✅ Aumentar timeout para 1000ms
         
-        delay(300);
+        delay(1000);  // ✅ Aumentar para 1 segundo
         i2cInitialized = true;
         
-        DEBUG_PRINTLN("[TelemetryManager] I2C inicializado (100 kHz, timeout 200ms)");
+        DEBUG_PRINTLN("[TelemetryManager] I2C inicializado (100 kHz, timeout 1000ms)");
+        DEBUG_PRINTLN("[TelemetryManager] Aguardando estabilização dos sensores...");
+        delay(500);  // ✅ Delay adicional antes do scan
+        
         DEBUG_PRINTLN("[TelemetryManager] Dispositivos no barramento:");
         
         uint8_t devicesFound = 0;
         for (uint8_t addr = 1; addr < 127; addr++) {
             Wire.beginTransmission(addr);
-            if (Wire.endTransmission() == 0) {
+            uint8_t error = Wire.endTransmission();
+            if (error == 0) {
                 DEBUG_PRINTF("[TelemetryManager]   - 0x%02X\n", addr);
                 devicesFound++;
             }
+            delay(10);  // ✅ Aumentar delay entre scans de 5ms para 10ms
         }
         
         if (devicesFound == 0) {
-            DEBUG_PRINTLN("[TelemetryManager] Nenhum dispositivo I2C encontrado!");
+            DEBUG_PRINTLN("[TelemetryManager] AVISO: Nenhum dispositivo detectado!");
+            DEBUG_PRINTLN("[TelemetryManager] Verifique conexões I2C (SDA, SCL, VCC, GND)");
         } else {
             DEBUG_PRINTF("[TelemetryManager] Total: %d dispositivo(s) I2C\n", devicesFound);
         }
@@ -124,9 +132,9 @@ void TelemetryManager::applyModeConfig(OperationMode mode) {
                  activeModeConfig->loraEnabled ? "ON" : "OFF");
 }
 
+
 bool TelemetryManager::begin() {
-    _mode = MODE_PREFLIGHT;
-    applyModeConfig(MODE_PREFLIGHT);
+    // ✅ NÃO aplicar modo antes de inicializar I2C
     
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========================================");
@@ -141,7 +149,12 @@ bool TelemetryManager::begin() {
     _minHeapSeen = initialHeap;
     DEBUG_PRINTF("[TelemetryManager] Heap inicial: %lu bytes\n", initialHeap);
 
+    // ✅ PRIMEIRO: Inicializar I2C
     _initI2CBus();
+
+    // ✅ DEPOIS: Aplicar configuração de modo (agora I2C está pronto)
+    _mode = MODE_PREFLIGHT;
+    applyModeConfig(MODE_PREFLIGHT);
 
     // ========================================
     // DISPLAY MANAGER - INICIALIZAR PRIMEIRO
@@ -157,7 +170,6 @@ bool TelemetryManager::begin() {
             displayOk = true;
             DEBUG_PRINTLN("[TelemetryManager] DisplayManager OK");
             
-            // ✅ REGISTRAR PONTEIRO GLOBAL
             g_displayManagerPtr = &_displayMgr;
             
             esp_task_wdt_reset();
@@ -239,38 +251,30 @@ bool TelemetryManager::begin() {
     }
 
     // ========================================
-    // SENSOR MANAGER (COM CALIBRAÇÃO VISUAL)
+    // SENSOR MANAGER
     // ========================================
-DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
-DEBUG_PRINTLN("[TelemetryManager] (Calibração do magnetômetro incluída)");
-esp_task_wdt_reset();
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
+    DEBUG_PRINTLN("[TelemetryManager] (Calibração do magnetômetro incluída)");
+    esp_task_wdt_reset();
 
-// ✅ O begin() dos sensores JÁ FAZ A CALIBRAÇÃO COM FEEDBACK VISUAL
-if (_sensors.begin()) {
-    subsystemsOk++;
-    DEBUG_PRINTLN("[TelemetryManager] Sensor Manager OK");
-    
-    // ✅ LIMPAR TELA EXPLICITAMENTE APÓS CALIBRAÇÃO
-    if (_useNewDisplay && displayOk) {
-        delay(500);  // Aguardar visualização do resultado
+    if (_sensors.begin()) {
+        subsystemsOk++;
+        DEBUG_PRINTLN("[TelemetryManager] Sensor Manager OK");
         
-        // ✅ LIMPAR A TELA ANTES DE MOSTRAR STATUS DOS SENSORES
-        _displayMgr.clear();
-        delay(100);  // Pequena pausa para garantir limpeza
-        
-        // ✅ RESETAR O CONTADOR DE LINHAS (importante!)
-        // Isso força o showSensorInit a começar do zero
-        
-        // Mostrar status de cada sensor
-        _displayMgr.showSensorInit("MPU9250", _sensors.isMPU9250Online());
-        _displayMgr.showSensorInit("BMP280", _sensors.isBMP280Online());
-        _displayMgr.showSensorInit("SI7021", _sensors.isSI7021Online());
-        _displayMgr.showSensorInit("CCS811", _sensors.isCCS811Online());
+        if (_useNewDisplay && displayOk) {
+            delay(500);
+            _displayMgr.clear();
+            delay(100);
+            
+            _displayMgr.showSensorInit("MPU9250", _sensors.isMPU9250Online());
+            _displayMgr.showSensorInit("BMP280", _sensors.isBMP280Online());
+            _displayMgr.showSensorInit("SI7021", _sensors.isSI7021Online());
+            _displayMgr.showSensorInit("CCS811", _sensors.isCCS811Online());
+        }
+    } else {
+        success = false;
+        DEBUG_PRINTLN("[TelemetryManager] Sensor Manager FAILED");
     }
-} else {
-    success = false;
-    DEBUG_PRINTLN("[TelemetryManager] Sensor Manager FAILED");
-}
 
     // ========================================
     // STORAGE MANAGER
@@ -286,8 +290,10 @@ if (_sensors.begin()) {
             _displayMgr.showSensorInit("Storage", true);
         }
     } else {
-        success = false;
-        DEBUG_PRINTLN("[TelemetryManager] Storage Manager FAILED");
+        DEBUG_PRINTLN("[TelemetryManager] Storage Manager FAILED (não-crítico)");
+        if (_useNewDisplay && displayOk) {
+            _displayMgr.showSensorInit("Storage", false);
+        }
     }
     
     // ========================================
@@ -702,7 +708,8 @@ void TelemetryManager::stopMission() {
         DEBUG_PRINTLN("[TelemetryManager] ════════════════════════════════");
     }
     
-    _mode = MODE_POSTFLIGHT;
+    // ✅ CORREÇÃO: Voltar para PREFLIGHT ao invés de POSTFLIGHT
+    _mode = MODE_PREFLIGHT;  // ✅ CORRIGIDO
     _missionActive = false;
     
     if (_useNewDisplay) {
@@ -712,7 +719,7 @@ void TelemetryManager::stopMission() {
         _displayMgr.displayMessage("MISSAO COMPLETA", durationStr);
     }
     
-    DEBUG_PRINTLN("[TelemetryManager] Missão HAB encerrada com sucesso!");
+    DEBUG_PRINTLN("[TelemetryManager] Missão HAB encerrada - Sistema em PREFLIGHT");
 }
 
 OperationMode TelemetryManager::getMode() {
@@ -875,14 +882,25 @@ void TelemetryManager::_checkOperationalConditions() {
         _health.reportError(STATUS_BATTERY_LOW, "Low battery level"); 
     }
     
-    if (!_sensors.isMPU6050Online() && !_sensors.isMPU9250Online()) { 
-        _health.reportError(STATUS_SENSOR_ERROR, "IMU offline"); 
-        _sensors.resetAll(); 
-    }
-    
-    if (!_sensors.isBMP280Online()) { 
-        _health.reportError(STATUS_SENSOR_ERROR, "BMP280 offline"); 
-        _sensors.resetAll(); 
+    // ✅ RESETAR SENSORES APENAS SE MUITO TEMPO PASSOU DESDE ÚLTIMO RESET
+    static unsigned long lastSensorCheck = 0;
+    if (millis() - lastSensorCheck >= 60000) {  // Verificar apenas a cada 1 minuto
+        lastSensorCheck = millis();
+        
+        if (!_sensors.isMPU6050Online() && !_sensors.isMPU9250Online()) { 
+            _health.reportError(STATUS_SENSOR_ERROR, "IMU offline"); 
+            
+            // ✅ Resetar apenas se cooldown passou
+            if (millis() - _lastSensorReset >= 300000) {  // 5 minutos
+                DEBUG_PRINTLN("[TelemetryManager] Tentando recuperação de sensores...");
+                _sensors.resetAll();
+                _lastSensorReset = millis();
+            }
+        }
+        
+        if (!_sensors.isBMP280Online()) { 
+            _health.reportError(STATUS_SENSOR_ERROR, "BMP280 offline"); 
+        }
     }
     
     uint32_t currentHeap = ESP.getFreeHeap();
@@ -924,7 +942,8 @@ void TelemetryManager::_handleButtonEvents() {
     ButtonEvent event = _button.update();
     
     if (event == ButtonEvent::SHORT_PRESS) {
-        if (_mode == MODE_PREFLIGHT) {
+        // ✅ Aceitar transição de PREFLIGHT ou POSTFLIGHT para FLIGHT
+        if (_mode == MODE_PREFLIGHT || _mode == MODE_POSTFLIGHT) {
             DEBUG_PRINTLN("");
             DEBUG_PRINTLN("╔════════════════════════════════════════╗");
             DEBUG_PRINTLN("║   BOTÃO PRESSIONADO: START MISSION     ║");

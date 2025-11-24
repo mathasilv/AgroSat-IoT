@@ -22,17 +22,16 @@ DisplayManager::DisplayManager() :
 }
 
 bool DisplayManager::begin() {
-    delay(100);
+    // ✅ Evitar que Adafruit_SSD1306 chame Wire.begin()
+    // Passar false no construtor (se suportado) ou inicializar manualmente
     
-    if (!_display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS, false)) {
-        DEBUG_PRINTLN("[DisplayManager] Falha ao inicializar display");
-        return false;
-    }
+    // Tentar inicializar sem reiniciar Wire
+    _display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS, false);  // ✅ false = não resetar I2C
     
     _display.clearDisplay();
-    _display.setTextColor(SSD1306_WHITE);
     _display.setTextSize(1);
-    _display.setTextWrap(false);
+    _display.setTextColor(SSD1306_WHITE);
+    _display.setCursor(0, 0);
     _display.display();
     
     _isDisplayOn = true;
@@ -40,6 +39,7 @@ bool DisplayManager::begin() {
     
     return true;
 }
+
 
 void DisplayManager::clear() {
     if (!_isDisplayOn) return;

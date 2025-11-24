@@ -79,6 +79,8 @@ private:
     void _displayError(const String& error);
     void _logHeapUsage(const String& component);
     void _monitorHeap();
+    unsigned long _lastSensorReset;
+    static constexpr unsigned long SENSOR_RESET_COOLDOWN = 300000;  // 5 minutos
 };
 
 #endif
