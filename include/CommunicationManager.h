@@ -1,8 +1,3 @@
-/**
- * @file CommunicationManager.h
- * @brief Sistema de comunicação dual com Store-and-Forward LEO
- * @version 6.1.0
- */
 #ifndef COMMUNICATION_MANAGER_H
 #define COMMUNICATION_MANAGER_H
 
@@ -12,9 +7,14 @@
 #include <ArduinoJson.h>
 #include <LoRa.h>
 #include <SPI.h>
-#include <mutex>
 #include <vector>
+#include <mutex>
 #include "config.h"
+
+// ✅ REMOVIDO - Não usar mais CBOR
+// #include <CBOR.h>
+// #include <CBOR_parsing.h>
+// #include <CBOR_streams.h>
 
 class CommunicationManager {
 public:
@@ -23,16 +23,16 @@ public:
     bool begin();
     void update();
     
+    // WiFi
     bool connectWiFi();
     void disconnectWiFi();
     bool isConnected();
     int8_t getRSSI();
     String getIPAddress();
+    void getStatistics(uint16_t& sent, uint16_t& failed, uint16_t& retries);
     bool testConnection();
     
-    bool sendTelemetry(const TelemetryData& data, const GroundNodeBuffer& groundBuffer);
-    void getStatistics(uint16_t& sent, uint16_t& failed, uint16_t& retries);
-    
+    // LoRa
     bool initLoRa();
     bool retryLoRaInit(uint8_t maxAttempts = 3);
     bool sendLoRa(const String& data);
@@ -44,19 +44,23 @@ public:
     void getLoRaStatistics(uint16_t& sent, uint16_t& failed);
     void reconfigureLoRa(OperationMode mode);
     
-    void enableLoRa(bool enable);
-    void enableHTTP(bool enable);
-    bool isLoRaEnabled() const { return _loraEnabled; }
-    bool isHTTPEnabled() const { return _httpEnabled; }
-    
+    // Mission Data Processing
     bool processLoRaPacket(const String& packet, MissionData& data);
     MissionData getLastMissionData();
     String generateMissionPayload(const MissionData& data);
     String generateConsolidatedPayload(const GroundNodeBuffer& buffer);
     void markNodesAsForwarded(GroundNodeBuffer& buffer, const std::vector<uint16_t>& nodeIds);
     uint8_t calculatePriority(const MissionData& node);
+    
+    // Telemetry
+    bool sendTelemetry(const TelemetryData& data, const GroundNodeBuffer& groundBuffer);
+    
+    // Control
+    void enableLoRa(bool enable);
+    void enableHTTP(bool enable);
 
 private:
+    // WiFi state
     bool _connected;
     int8_t _rssi;
     String _ipAddress;
@@ -65,29 +69,42 @@ private:
     uint16_t _totalRetries;
     unsigned long _lastConnectionAttempt;
     
+    // LoRa state
     bool _loraInitialized;
     int _loraRSSI;
     float _loraSNR;
     uint16_t _loraPacketsSent;
     uint16_t _loraPacketsFailed;
     unsigned long _lastLoRaTransmission;
-    
     bool _loraEnabled;
     bool _httpEnabled;
-    
     uint8_t _txFailureCount;
     unsigned long _lastTxFailure;
     uint8_t _currentSpreadingFactor;
-
+    
+    // Mission data
     MissionData _lastMissionData;
     uint16_t _expectedSeqNum[MAX_GROUND_NODES];
     
+    // Helper methods
     String _createTelemetryJSON(const TelemetryData& data, const GroundNodeBuffer& groundBuffer);
     String _createLoRaPayload(const TelemetryData& data);
-    String _createConsolidatedLoRaPayload(const TelemetryData& data, const GroundNodeBuffer& buffer, std::vector<uint16_t>& includedNodes);
-    bool _sendHTTPPost(const String& jsonPayload);
+    String _createConsolidatedLoRaPayload(const TelemetryData& data, 
+                                          const GroundNodeBuffer& buffer,
+                                          std::vector<uint16_t>& includedNodes);
     
-    bool _parseAgroPacket(const String& packet, MissionData& data);
+    // ✅ RENOMEADO para deixar claro que é binary (não CBOR)
+    String _createBinaryLoRaPayload(const TelemetryData& data,
+                                     const GroundNodeBuffer& buffer,
+                                     std::vector<uint16_t>& includedNodes);
+    
+    // ✅ Métodos de otimização LoRa
+    bool _isChannelFree();
+    void _adaptSpreadingFactor(float altitude);
+    void _configureLoRaParameters();
+    
+    bool _sendHTTPPost(const String& jsonPayload);
+    bool _parseAgroPacket(const String& packetData, MissionData& data);
     bool _validateChecksum(const String& packet);
     bool _validatePayloadSize(size_t size);
     int _findNodeIndex(uint16_t nodeId);

@@ -15,6 +15,7 @@
 #include "SensorManager.h"
 #include <algorithm>
 #include "DisplayManager.h"
+#include <string.h> 
 
 SensorManager::SensorManager() :
     _mpu9250(MPU9250_ADDRESS),
@@ -33,14 +34,29 @@ SensorManager::SensorManager() :
     _si7021TempFailures(0), _bmp280TempFailures(0),
     _lastReadTime(0), _lastCCS811Read(0), _lastSI7021Read(0),
     _lastHealthCheck(0), _consecutiveFailures(0), _filterIndex(0),
-    _sumAccelX(0), _sumAccelY(0), _sumAccelZ(0)
+    _sumAccelX(0), _sumAccelY(0), _sumAccelZ(0),
+    _lastBMP280Reinit(0),
+    _bmp280FailCount(0),
+    _historyIndex(0),
+    _historyFull(false),
+    _lastUpdateTime(0),
+    _lastPressureRead(0.0),
+    _identicalReadings(0),
+    _warmupStartTime(0)
 {
     for (uint8_t i = 0; i < CUSTOM_FILTER_SIZE; i++) {
         _accelXBuffer[i] = 0.0;
         _accelYBuffer[i] = 0.0;
         _accelZBuffer[i] = 0.0;
     }
+    
+    for (int i = 0; i < 5; i++) {
+        _pressureHistory[i] = 1013.25;
+        _altitudeHistory[i] = 0.0;
+        _tempHistory[i] = 20.0;
+    }
 }
+
 
 bool SensorManager::begin() {
     DEBUG_PRINTLN("[SensorManager] Inicializando sensores PION...");
@@ -140,31 +156,138 @@ void SensorManager::_updateBMP280() {
         return;
     }
 
-    float temp = _bmp280.readTemperature();
-    float press = _bmp280.readPressure();
+    bool readSuccess = false;
+    float temp = NAN, press = NAN, alt = NAN;
+    
+    // Retry loop
+    for (int retry = 0; retry < 3; retry++) {
+        if (!_waitForBMP280Measurement()) {
+            delay(10);
+            continue;
+        }
 
-    if (_validateReading(temp, TEMP_MIN_VALID, TEMP_MAX_VALID)) {
-        _temperatureBMP = temp;
-        _bmp280TempValid = true;
-        _bmp280TempFailures = 0;
-    } else {
-        _temperatureBMP = NAN;
-        _bmp280TempValid = false;
-        _bmp280TempFailures++;
+        temp = _bmp280.readTemperature();
+        press = _bmp280.readPressure() / 100.0;
+        alt = _bmp280.readAltitude(1013.25);
         
-        if (_bmp280TempFailures >= MAX_TEMP_FAILURES) {
-            DEBUG_PRINTLN("[SensorManager] BMP280: Temperatura com falhas consecutivas");
+        if (!isnan(temp) && !isnan(press) && !isnan(alt)) {
+            readSuccess = true;
+            break;
+        }
+        
+        if (retry < 2) {
+            DEBUG_PRINTF("[SensorManager] BMP280: Retry %d (NaN detectado)\n", retry + 1);
+            delay(50);
         }
     }
-
-    bool pressValid = !isnan(press) && 
-                      press >= PRESSURE_MIN_VALID * 100 && 
-                      press <= PRESSURE_MAX_VALID * 100;
-
-    if (pressValid) {
-        _pressure = press / 100.0;
-        _altitude = _calculateAltitude(_pressure);
+    
+    if (!readSuccess) {
+        _bmp280FailCount++;
+        DEBUG_PRINTLN("[SensorManager] BMP280: Falha após 3 tentativas");
+        
+        if (_bmp280FailCount >= 5) {
+            unsigned long now = millis();
+            
+            if (now - _lastBMP280Reinit > 30000) {
+                DEBUG_PRINTLN("[SensorManager] BMP280: 5 falhas, FORÇANDO reinicialização...");
+                _lastBMP280Reinit = now;
+                
+                if (_reinitBMP280()) {
+                    DEBUG_PRINTLN("[SensorManager] BMP280 reinicializado!");
+                } else {
+                    _bmp280Online = false;
+                    DEBUG_PRINTLN("[SensorManager] BMP280: Falha crítica, desabilitando");
+                }
+            }
+        }
+        return;
     }
+
+    // Atualizar valores temporários
+    float tempBackup = _temperatureBMP;
+    float pressBackup = _pressure;
+    float altBackup = _altitude;
+    
+    _temperatureBMP = temp;
+    _pressure = press;
+    _altitude = alt;
+    
+    // Validar ANTES de aceitar
+    if (!_validateBMP280Reading()) {
+        // Restaurar valores anteriores
+        _temperatureBMP = tempBackup;
+        _pressure = pressBackup;
+        _altitude = altBackup;
+        
+        _bmp280FailCount++;
+        _bmp280TempFailures++;
+        
+        DEBUG_PRINTF("[SensorManager] BMP280: Leitura rejeitada (P=%.0f vs anterior %.0f hPa)\n", 
+                    press, pressBackup);
+        
+        // ✅ NOVO: Se rejeitou mas diferença > 50 hPa OU sensor travado, forçar reset
+        bool bigDifference = abs(press - pressBackup) > 50.0;
+        bool sensorFrozen = (_identicalReadings >= 10);  // Travado detectado
+        
+        if (bigDifference || sensorFrozen) {
+            unsigned long now = millis();
+            
+            // ✅ Reduzir timeout para 10 segundos (não 30)
+            if (now - _lastBMP280Reinit > 10000) {
+                if (sensorFrozen) {
+                    DEBUG_PRINTLN("[SensorManager] BMP280: SENSOR TRAVADO! Forçando reinicialização IMEDIATA...");
+                } else {
+                    DEBUG_PRINTLN("[SensorManager] BMP280: Diferença grande detectada, forçando reinicialização...");
+                }
+                
+                _lastBMP280Reinit = now;
+                
+                if (_reinitBMP280()) {
+                    DEBUG_PRINTLN("[SensorManager] BMP280: Reinicializado com sucesso!");
+                    
+                    // Resetar contadores
+                    _bmp280FailCount = 0;
+                    _bmp280TempFailures = 0;
+                    _identicalReadings = 0;
+                } else {
+                    DEBUG_PRINTLN("[SensorManager] BMP280: FALHA CRÍTICA na reinicialização!");
+                    _bmp280Online = false;
+                }
+                return;
+            }
+        }
+        
+        // Após 5 falhas normais, tentar reinicializar
+        if (_bmp280FailCount >= 5) {
+            unsigned long now = millis();
+            
+            if (now - _lastBMP280Reinit > 30000) {
+                DEBUG_PRINTLN("[SensorManager] BMP280: 5 falhas, reinicializando...");
+                _lastBMP280Reinit = now;
+                
+                if (_reinitBMP280()) {
+                    DEBUG_PRINTLN("[SensorManager] BMP280 reinicializado!");
+                } else {
+                    _bmp280Online = false;
+                }
+            }
+        }
+        return;
+    }
+
+    // Leitura válida e aceita
+    _bmp280TempValid = true;
+    _bmp280FailCount = 0;
+    _bmp280TempFailures = 0;
+}
+
+void SensorManager::forceReinitBMP280() {
+    DEBUG_PRINTLN("[SensorManager] Reinicialização forçada do BMP280...");
+    _bmp280Online = _initBMP280();
+}
+
+bool SensorManager::_reinitBMP280() {
+    return _initBMP280();  // Usa o método init aprimorado
 }
 
 void SensorManager::_updateSI7021() {
@@ -450,29 +573,302 @@ bool SensorManager::_initMPU9250() {
     return !isnan(testRead.x);
 }
 
-
-bool SensorManager::_initBMP280() {
-    uint8_t addresses[] = {BMP280_ADDR_1, BMP280_ADDR_2};
+bool SensorManager::_waitForBMP280Measurement() {
+    const uint8_t BMP280_STATUS_REG = 0xF3;
+    const uint8_t STATUS_MEASURING = 0x08;  // bit 3
+    const uint8_t BMP280_ADDR = BMP280_ADDR_1;  // ou o endereço detectado
     
-    for (uint8_t i = 0; i < 2; i++) {
-        if (_bmp280.begin(addresses[i])) {
-            _bmp280.setSampling(
-                Adafruit_BMP280::MODE_NORMAL,
-                Adafruit_BMP280::SAMPLING_X16,
-                Adafruit_BMP280::SAMPLING_X16,
-                Adafruit_BMP280::FILTER_X16,
-                Adafruit_BMP280::STANDBY_MS_500
-            );
+    uint8_t maxRetries = 50;  // 50ms timeout
+    
+    while (maxRetries--) {
+        Wire.beginTransmission(BMP280_ADDR);
+        Wire.write(BMP280_STATUS_REG);
+        Wire.endTransmission();
+        
+        Wire.requestFrom(BMP280_ADDR, (uint8_t)1);
+        if (Wire.available()) {
+            uint8_t status = Wire.read();
             
-            delay(100);
-            float testTemp = _bmp280.readTemperature();
-            
-            if (!isnan(testTemp) && testTemp > TEMP_MIN_VALID && testTemp < TEMP_MAX_VALID) {
+            // Bit 3 = 0 significa medição completa
+            if ((status & STATUS_MEASURING) == 0) {
                 return true;
             }
         }
+        
+        delay(1);
     }
+    
     return false;
+}
+
+float SensorManager::_getMedian(float* values, uint8_t count) {
+    float sorted[5];
+    memcpy(sorted, values, count * sizeof(float));
+    
+    // Bubble sort
+    for (uint8_t i = 0; i < count - 1; i++) {
+        for (uint8_t j = 0; j < count - i - 1; j++) {
+            if (sorted[j] > sorted[j + 1]) {
+                float temp = sorted[j];
+                sorted[j] = sorted[j + 1];
+                sorted[j + 1] = temp;
+            }
+        }
+    }
+    
+    return sorted[count / 2];
+}
+
+bool SensorManager::_isOutlier(float value, float* history, uint8_t count) {
+    if (!_historyFull && _historyIndex < 3) {
+        return false;  // Histórico insuficiente
+    }
+    
+    float median = _getMedian(history, count);
+    
+    float deviations[5];
+    for (uint8_t i = 0; i < count; i++) {
+        deviations[i] = abs(history[i] - median);
+    }
+    
+    float mad = _getMedian(deviations, count);
+    if (mad < 0.1) mad = 0.1;
+    
+    float score = abs(value - median) / mad;
+    
+    return (score > 3.0);  // Outlier se > 3 MAD
+}
+
+bool SensorManager::_validateBMP280Reading() {
+    if (!_bmp280Online) return false;
+    
+    float temp = _temperatureBMP;
+    float press = _pressure;
+    float alt = _altitude;
+    
+    // Validação básica
+    if (isnan(temp) || isnan(press) || isnan(alt)) {
+        return false;
+    }
+    
+    // ✅ DETECTOR DE TRAVAMENTO CORRIGIDO
+    // Detectar apenas se valores são BITWISE IDÊNTICOS (não apenas próximos)
+    // Usar memcmp para comparação exata de bits
+    bool exactlyIdentical = (memcmp(&press, &_lastPressureRead, sizeof(float)) == 0);
+    
+    if (exactlyIdentical && _lastPressureRead != 0.0) {
+        _identicalReadings++;
+        
+        // ✅ Aumentar threshold: 50 leituras idênticas (não 10)
+        // Isso significa ~50 segundos de valores EXATAMENTE iguais
+        if (_identicalReadings >= 50) {
+            DEBUG_PRINTF("[SensorManager] BMP280: TRAVADO! (P=%.2f hPa por %d leituras EXATAS)\n", 
+                        press, _identicalReadings);
+            _identicalReadings = 0;
+            return false;
+        }
+    } else {
+        _identicalReadings = 0;
+    }
+    _lastPressureRead = press;
+    
+    unsigned long now = millis();
+    float deltaTime = (now - _lastUpdateTime) / 1000.0;
+    
+    // Validação de taxa de mudança
+    if (_lastUpdateTime > 0 && deltaTime > 0.1 && deltaTime < 10.0) {
+        
+        // Pressão: max 20 hPa/s
+        float pressRate = abs(press - _pressureHistory[(_historyIndex + 4) % 5]) / deltaTime;
+        if (pressRate > 20.0) {
+            DEBUG_PRINTF("[SensorManager] BMP280: Taxa pressão anormal: %.1f hPa/s\n", pressRate);
+            return false;
+        }
+        
+        // Altitude: max 150 m/s
+        float altRate = abs(alt - _altitudeHistory[(_historyIndex + 4) % 5]) / deltaTime;
+        if (altRate > 150.0) {
+            DEBUG_PRINTF("[SensorManager] BMP280: Taxa altitude anormal: %.1f m/s\n", altRate);
+            return false;
+        }
+        
+        // Temperatura: max 0.1°C/s
+        float tempRate = abs(temp - _tempHistory[(_historyIndex + 4) % 5]) / deltaTime;
+        if (tempRate > 0.1) {
+            DEBUG_PRINTF("[SensorManager] BMP280: Taxa temp anormal: %.2f°C/s\n", tempRate);
+            return false;
+        }
+    }
+    
+    // Warm-up period
+    if (_warmupStartTime == 0) {
+        _warmupStartTime = millis();
+    }
+    
+    unsigned long warmupElapsed = millis() - _warmupStartTime;
+    
+    if (warmupElapsed < 30000) {
+        // Durante warm-up, não aplicar detecção de outliers
+        DEBUG_PRINTF("[SensorManager] BMP280: Warm-up (%lus/30s)\n", warmupElapsed / 1000);
+    } else {
+        // Após warm-up, aplicar detecção de outliers
+        if (_historyFull || _historyIndex >= 3) {
+            uint8_t histCount = _historyFull ? 5 : _historyIndex;
+            
+            if (_isOutlier(press, _pressureHistory, histCount)) {
+                DEBUG_PRINTF("[SensorManager] BMP280: Pressão outlier: %.0f hPa\n", press);
+                return false;
+            }
+        }
+    }
+    
+    // Validação cruzada com SI7021 (relaxada)
+    if (_si7021Online && _si7021TempValid) {
+        float tempDelta = abs(temp - _temperatureSI);
+        float threshold = 4.0 + (alt / 10000.0);
+        
+        if (tempDelta > threshold) {
+            DEBUG_PRINTF("[SensorManager] BMP280: Delta temp: %.1f°C (limite: %.1f°C)\n",
+                        tempDelta, threshold);
+            
+            if (tempDelta > 5.0) {
+                DEBUG_PRINTLN("[SensorManager] BMP280: Delta crítico!");
+                return false;
+            }
+            
+            DEBUG_PRINTLN("[SensorManager] BMP280: Delta alto mas aceitável");
+        }
+    }
+    
+    // Atualizar histórico
+    _pressureHistory[_historyIndex] = press;
+    _altitudeHistory[_historyIndex] = alt;
+    _tempHistory[_historyIndex] = temp;
+    
+    _historyIndex = (_historyIndex + 1) % 5;
+    if (_historyIndex == 0) _historyFull = true;
+    
+    _lastUpdateTime = now;
+    
+    return true;
+}
+
+
+
+bool SensorManager::_initBMP280() {
+    DEBUG_PRINTLN("[SensorManager] ========================================");
+    DEBUG_PRINTLN("[SensorManager] Inicializando BMP280 (método robusto)");
+    DEBUG_PRINTLN("[SensorManager] ========================================");
+    
+    _bmp280Online = false;
+    _bmp280TempValid = false;
+    
+    // ✅ RESETAR variáveis de controle
+    _warmupStartTime = 0;
+    _identicalReadings = 0;
+    _lastPressureRead = 0.0;
+    
+    // ✅ EXECUTAR SOFT RESET ANTES DE QUALQUER COISA
+    Wire.setTimeOut(2000);
+    delay(50);
+    
+    if (!_softResetBMP280()) {
+        DEBUG_PRINTLN("[SensorManager] Falha no soft reset, tentando continuar...");
+    }
+    
+    // Aguardar após reset
+    delay(200);
+    
+    // Múltiplas tentativas
+    uint8_t addresses[] = {BMP280_ADDR_1, BMP280_ADDR_2};
+    bool found = false;
+    
+    for (uint8_t addr : addresses) {
+        DEBUG_PRINTF("[SensorManager] Tentando BMP280 em 0x%02X...\n", addr);
+        
+        for (int attempt = 0; attempt < 5; attempt++) {
+            if (_bmp280.begin(addr)) {
+                found = true;
+                DEBUG_PRINTF("[SensorManager] BMP280 detectado em 0x%02X (tentativa %d)\n", 
+                            addr, attempt + 1);
+                break;
+            }
+            delay(200);
+        }
+        
+        if (found) break;
+    }
+    
+    if (!found) {
+        DEBUG_PRINTLN("[SensorManager] BMP280 não detectado");
+        return false;
+    }
+    
+    // Configuração ótima
+    _bmp280.setSampling(
+        Adafruit_BMP280::MODE_NORMAL,
+        Adafruit_BMP280::SAMPLING_X2,
+        Adafruit_BMP280::SAMPLING_X16,
+        Adafruit_BMP280::FILTER_X16,
+        Adafruit_BMP280::STANDBY_MS_500
+    );
+    
+    DEBUG_PRINTLN("[SensorManager] Configuração aplicada");
+    
+    // ✅ Aguardar 3 ciclos + tempo IIR filter estabilizar (mínimo 5s)
+    DEBUG_PRINTLN("[SensorManager] Aguardando estabilização (5 segundos)...");
+    delay(5000);
+    
+    // Testar leituras COM retry
+    DEBUG_PRINTLN("[SensorManager] Testando leituras (5 ciclos com retry)...");
+    
+    for (int i = 0; i < 5; i++) {
+        bool readSuccess = false;
+        float press = NAN, temp = NAN;
+        
+        for (int retry = 0; retry < 3; retry++) {
+            if (_waitForBMP280Measurement()) {
+                press = _bmp280.readPressure() / 100.0;
+                temp = _bmp280.readTemperature();
+                
+                if (!isnan(press) && !isnan(temp)) {
+                    readSuccess = true;
+                    break;
+                }
+            }
+            delay(50);
+        }
+        
+        if (!readSuccess) {
+            DEBUG_PRINTF("[SensorManager] Falha na leitura %d após 3 tentativas\n", i+1);
+            return false;
+        }
+        
+        DEBUG_PRINTF("[SensorManager]   Leitura %d: T=%.1f°C P=%.0f hPa\n",
+                     i+1, temp, press);
+        
+        // Inicializar histórico
+        if (i == 4) {
+            for (int j = 0; j < 5; j++) {
+                _pressureHistory[j] = press;
+                _altitudeHistory[j] = _calculateAltitude(press);
+                _tempHistory[j] = temp;
+            }
+            _historyFull = true;
+        }
+        
+        delay(200);
+    }
+    
+    _bmp280Online = true;
+    _bmp280TempValid = true;
+    _bmp280FailCount = 0;
+    
+    DEBUG_PRINTLN("[SensorManager] ========================================");
+    DEBUG_PRINTLN("[SensorManager] BMP280 INICIALIZADO COM SUCESSO!");
+    DEBUG_PRINTLN("[SensorManager] ========================================");
+    
+    return true;
 }
 
 bool SensorManager::_initSI7021() {
@@ -784,4 +1180,40 @@ void SensorManager::_updateTemperatureRedundancy() {
         lastWarning = millis();
         DEBUG_PRINTLN("[SensorManager] CRÍTICO: Ambos sensores de temperatura falharam!");
     }
+}
+
+bool SensorManager::_softResetBMP280() {
+    DEBUG_PRINTLN("[SensorManager] Executando SOFT RESET do BMP280...");
+    
+    const uint8_t BMP280_RESET_REG = 0xE0;
+    const uint8_t BMP280_RESET_CMD = 0xB6;  // Comando mágico de reset
+    const uint8_t BMP280_ADDR = BMP280_ADDR_1;  // 0x76 ou 0x77
+    
+    // Enviar comando de soft reset
+    Wire.beginTransmission(BMP280_ADDR);
+    Wire.write(BMP280_RESET_REG);  // Registro 0xE0
+    Wire.write(BMP280_RESET_CMD);  // Comando 0xB6
+    uint8_t error = Wire.endTransmission();
+    
+    if (error != 0) {
+        DEBUG_PRINTF("[SensorManager] Erro ao enviar soft reset: %d\n", error);
+        return false;
+    }
+    
+    DEBUG_PRINTLN("[SensorManager] Soft reset enviado, aguardando...");
+    
+    // Aguardar reset completo (datasheet: 2ms típico, mas vamos usar 100ms)
+    delay(100);
+    
+    // Verificar se sensor voltou
+    Wire.beginTransmission(BMP280_ADDR);
+    error = Wire.endTransmission();
+    
+    if (error != 0) {
+        DEBUG_PRINTLN("[SensorManager] Sensor não respondeu após soft reset");
+        return false;
+    }
+    
+    DEBUG_PRINTLN("[SensorManager] Soft reset executado com sucesso!");
+    return true;
 }
