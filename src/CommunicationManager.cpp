@@ -675,14 +675,16 @@ bool CommunicationManager::_validateChecksum(const String& packet) {
         return false;
     }
     
-    // Procurar asterisco que separa dados do checksum: AGRO,...*CC
     int checksumPos = packet.lastIndexOf('*');
     if (checksumPos < 0) {
-        DEBUG_PRINTLN("[CommunicationManager] Formato sem checksum, aceitando (compatibilidade)");
-        return true; // Permitir pacotes sem checksum para compatibilidade
+        static unsigned long lastWarning = 0;
+        if (millis() - lastWarning > 30000) {
+            lastWarning = millis();
+            DEBUG_PRINTLN("[CommunicationManager] AVISO: Pacotes sem checksum (modo compatibilidade)");
+        }
+        return true;
     }
     
-    // Extrair dados e checksum
     String data = packet.substring(0, checksumPos);
     String checksumStr = packet.substring(checksumPos + 1);
     
@@ -691,24 +693,22 @@ bool CommunicationManager::_validateChecksum(const String& packet) {
         return false;
     }
     
-    // Calcular XOR checksum dos dados
     uint8_t calcChecksum = 0;
     for (size_t i = 0; i < data.length(); i++) {
         calcChecksum ^= data.charAt(i);
     }
     
-    // Converter checksum recebido de hexadecimal
     uint8_t receivedChecksum = (uint8_t)strtol(checksumStr.c_str(), NULL, 16);
     
-    bool valid = (calcChecksum == receivedChecksum);
-    
-    if (!valid) {
+    if (calcChecksum != receivedChecksum) {
         DEBUG_PRINTF("[CommunicationManager] Checksum inválido: calc=0x%02X recv=0x%02X\n", 
                      calcChecksum, receivedChecksum);
+        return false;
     }
     
-    return valid;
+    return true;
 }
+
 
 void CommunicationManager::update() {
     if (WiFi.status() == WL_CONNECTED) {
@@ -961,9 +961,8 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data, con
 }
 
 bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
-    // Validação de payload vazio
     if (jsonPayload.length() == 0 || jsonPayload == "{}" || jsonPayload == "null") {
-        DEBUG_PRINTLN("[CommunicationManager] ERRO: Payload HTTP vazio ou inválido, abortando");
+        DEBUG_PRINTLN("[CommunicationManager] ERRO: Payload HTTP inválido");
         return false;
     }
     
@@ -974,7 +973,6 @@ bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
     }
     
     HTTPClient http;
-    
     String url = String("https://") + HTTP_SERVER + HTTP_ENDPOINT;
     
     http.begin(url);
@@ -983,7 +981,7 @@ bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
     http.addHeader("Content-Type", "application/json");
     
     DEBUG_PRINTF("[CommunicationManager] POST para: %s\n", url.c_str());
-    DEBUG_PRINTF("[CommunicationManager] Payload: %s\n", jsonPayload.c_str());
+    DEBUG_PRINTF("[CommunicationManager] Payload size: %d bytes\n", jsonPayload.length());
     
     int httpCode = http.POST(jsonPayload);
     bool success = false;
@@ -995,19 +993,14 @@ bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
             String response = http.getString();
             DEBUG_PRINTF("[CommunicationManager] Resposta: %s\n", response.c_str());
             
-            if (response.indexOf("sucesso") >= 0 || response.indexOf("Sucesso") >= 0) {
-                success = true;
-            } else {
+            success = (response.indexOf("sucesso") >= 0 || response.indexOf("Sucesso") >= 0);
+            
+            if (!success) {
                 StaticJsonDocument<256> responseDoc;
-                DeserializationError error = deserializeJson(responseDoc, response);
-                
-                if (!error) {
+                if (deserializeJson(responseDoc, response) == DeserializationError::Ok) {
                     const char* status = responseDoc["Status"];
                     if (status != nullptr) {
-                        String statusStr = String(status);
-                        if (statusStr.indexOf("Sucesso") >= 0 || statusStr.indexOf("sucesso") >= 0) {
-                            success = true;
-                        }
+                        success = (String(status).indexOf("Sucesso") >= 0);
                     }
                 } else {
                     success = true;
@@ -1022,6 +1015,7 @@ bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
     http.end();
     return success;
 }
+
 
 uint8_t CommunicationManager::calculatePriority(const MissionData& node) {
     uint8_t priority = 0;

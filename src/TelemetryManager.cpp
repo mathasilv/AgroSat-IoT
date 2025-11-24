@@ -146,21 +146,17 @@ bool TelemetryManager::begin() {
     DEBUG_PRINTF("[TelemetryManager] Heap inicial: %lu bytes\n", initialHeap);
 
     _initI2CBus();
-
+    
     _mode = MODE_PREFLIGHT;
     applyModeConfig(MODE_PREFLIGHT);
 
     bool success = true;
     uint8_t subsystemsOk = 0;
 
-    // ========================================
-    // DISPLAY MANAGER
-    // ========================================
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando DisplayManager...");
     bool displayOk = false;
     
     if (activeModeConfig->displayEnabled) {
-        DEBUG_PRINTLN("[TelemetryManager] Inicializando DisplayManager...");
-        
         if (_displayMgr.begin()) {
             _useNewDisplay = true;
             displayOk = true;
@@ -176,11 +172,7 @@ bool TelemetryManager::begin() {
         }
     }
 
-    // ========================================
-    // RTC MANAGER
-    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC...");
-    
     if (_rtc.begin(&Wire)) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] RTC OK");
@@ -189,17 +181,10 @@ bool TelemetryManager::begin() {
         }
     }
 
-    // ========================================
-    // BUTTON HANDLER
-    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando botão...");
     _button.begin();
 
-    // ========================================
-    // SYSTEM HEALTH
-    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
-    
     if (_health.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] System Health OK");
@@ -207,11 +192,7 @@ bool TelemetryManager::begin() {
         success = false;
     }
 
-    // ========================================
-    // POWER MANAGER
-    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Power Manager...");
-    
     if (_power.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Power Manager OK");
@@ -219,11 +200,7 @@ bool TelemetryManager::begin() {
         success = false;
     }
 
-    // ========================================
-    // SENSOR MANAGER
-    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
-
     if (_sensors.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Sensor Manager OK");
@@ -242,21 +219,13 @@ bool TelemetryManager::begin() {
         success = false;
     }
 
-    // ========================================
-    // STORAGE MANAGER
-    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Storage...");
-    
     if (_storage.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Storage OK");
     }
     
-    // ========================================
-    // COMMUNICATION MANAGER
-    // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication...");
-    
     if (_comm.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Communication OK");
@@ -264,9 +233,6 @@ bool TelemetryManager::begin() {
         success = false;
     }
 
-    // ========================================
-    // TELA SISTEMA PRONTO
-    // ========================================
     if (_useNewDisplay && displayOk) {
         _displayMgr.showReady();
     }
@@ -289,7 +255,6 @@ bool TelemetryManager::begin() {
     
     return success;
 }
-
 
 void TelemetryManager::loop() {
     uint32_t currentTime = millis();
@@ -769,17 +734,14 @@ void TelemetryManager::_checkOperationalConditions() {
         _health.reportError(STATUS_BATTERY_LOW, "Low battery level"); 
     }
     
-    // ✅ RESETAR SENSORES APENAS SE MUITO TEMPO PASSOU
     static unsigned long lastSensorCheck = 0;
-    if (millis() - lastSensorCheck >= 60000) {  // Verificar apenas a cada 1 minuto
+    if (millis() - lastSensorCheck >= 60000) {
         lastSensorCheck = millis();
         
-        // ✅ SUBSTITUIR isMPU6050Online() por isMPU9250Online()
         if (!_sensors.isMPU9250Online()) { 
             _health.reportError(STATUS_SENSOR_ERROR, "IMU offline"); 
             
-            // ✅ Resetar apenas se cooldown passou
-            if (millis() - _lastSensorReset >= 300000) {  // 5 minutos
+            if (millis() - _lastSensorReset >= 300000) {
                 DEBUG_PRINTLN("[TelemetryManager] Tentando recuperação de sensores...");
                 _sensors.resetAll();
                 _lastSensorReset = millis();
@@ -790,27 +752,8 @@ void TelemetryManager::_checkOperationalConditions() {
             _health.reportError(STATUS_SENSOR_ERROR, "BMP280 offline"); 
         }
     }
-    
-    uint32_t currentHeap = ESP.getFreeHeap();
-    if (currentHeap < 10000) { 
-        DEBUG_PRINTF("[TelemetryManager] CRÍTICO: Heap baixo: %lu bytes\n", currentHeap); 
-        _health.reportError(STATUS_WATCHDOG, "Critical low memory"); 
-    }
 }
 
-
-void TelemetryManager::_logHeapUsage(const String& component) {
-    uint32_t currentHeap = ESP.getFreeHeap();
-    if (currentHeap < _minHeapSeen) { _minHeapSeen = currentHeap; }
-    DEBUG_PRINTF("[TelemetryManager] %s - Heap: %lu bytes\n", component.c_str(), currentHeap);
-}
-
-void TelemetryManager::_monitorHeap() {
-    uint32_t currentHeap = ESP.getFreeHeap();
-    if (currentHeap < _minHeapSeen) { _minHeapSeen = currentHeap; }
-    DEBUG_PRINTF("[TelemetryManager] Heap: %lu KB, Min: %lu KB\n",
-        currentHeap / 1024, _minHeapSeen / 1024);
-}
 
 void TelemetryManager::testLoRaTransmission() {
     DEBUG_PRINTLN("[TelemetryManager] Testando transmissão LoRa...");
@@ -943,7 +886,7 @@ void TelemetryManager::_monitorHeapUsage(unsigned long currentTime) {
     static unsigned long lastHeapCheck = 0;
     
     if (currentTime - lastHeapCheck < 30000) {
-        return; // Verificar apenas a cada 30s
+        return;
     }
     
     lastHeapCheck = currentTime;
