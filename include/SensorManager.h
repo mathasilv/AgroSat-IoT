@@ -1,22 +1,12 @@
-/**
- * @file SensorManager.h
- * @brief Gerenciamento de sensores PION - VERSÃO OTIMIZADA COM REDUNDÂNCIA
- * @version 4.1.0
- */
-
 #ifndef SENSORMANAGER_H
 #define SENSORMANAGER_H
 
 #include <Arduino.h>
 #include <Wire.h>
-#include "config.h"
-
 #include <MPU9250_WE.h>
 #include <Adafruit_BMP280.h>
-#include <Adafruit_Si7021.h>
 #include <Adafruit_CCS811.h>
-
-extern TwoWire I2C_Sensors;
+#include "config.h"
 
 class SensorManager {
 public:
@@ -24,11 +14,14 @@ public:
     
     bool begin();
     void update();
+    void resetAll();
     
-    // Getters
-    float getTemperature();              // ← Temperatura com fallback automático
-    float getTemperatureSI7021();        // ← Temperatura do SI7021 (raw)
-    float getTemperatureBMP280();        // ← NOVO: Temperatura do BMP280 (raw)
+    // Getters de temperatura
+    float getTemperature();
+    float getTemperatureSI7021();
+    float getTemperatureBMP280();
+    
+    // Getters de sensores
     float getPressure();
     float getAltitude();
     float getGyroX();
@@ -45,97 +38,124 @@ public:
     float getCO2();
     float getTVOC();
     
-    // Status
+    // Status dos sensores
+    bool isMPU6050Online();
     bool isMPU9250Online();
     bool isBMP280Online();
     bool isSI7021Online();
     bool isCCS811Online();
     bool isCalibrated();
-    bool isSI7021TemperatureValid();     // ← NOVO
-    bool isBMP280TemperatureValid();     // ← NOVO
     
-    // Utilidades
-    void scanI2C();
+    // Utilitários
+    void getRawData(float& gx, float& gy, float& gz,
+                    float& ax, float& ay, float& az);
     void printSensorStatus();
     bool calibrateIMU();
-    void resetAll();
-    
-    // Compatibilidade
-    void getRawData(float& gx, float& gy, float& gz, 
-                   float& ax, float& ay, float& az);
-    bool isMPU6050Online() { return false; }
+    void scanI2C();
 
 private:
-    // Instâncias dos sensores
+    // ========================================
+    // OBJETOS DE HARDWARE
+    // ========================================
     MPU9250_WE _mpu9250;
     Adafruit_BMP280 _bmp280;
-    Adafruit_Si7021 _si7021;
     Adafruit_CCS811 _ccs811;
-
-    // Dados dos sensores
-    float _temperature, _temperatureBMP, _pressure, _altitude, _temperatureSI;
-    float _humidity, _co2Level, _tvoc;
-    float _seaLevelPressure;
+    // Nota: SI7021 usa Wire.h diretamente (sem objeto de biblioteca)
     
+    // ========================================
+    // DADOS DOS SENSORES
+    // ========================================
+    float _temperature;        // Temperatura final (com fallback automático)
+    float _temperatureBMP;     // Temperatura do BMP280
+    float _temperatureSI;      // Temperatura do SI7021
+    float _pressure;           // Pressão atmosférica (hPa)
+    float _altitude;           // Altitude calculada (m)
+    float _humidity;           // Umidade relativa (%)
+    float _co2Level;           // CO2 (ppm)
+    float _tvoc;               // TVOC (ppb)
+    float _seaLevelPressure;   // Pressão ao nível do mar (hPa)
+    
+    // IMU - Giroscópio (°/s)
     float _gyroX, _gyroY, _gyroZ;
+    
+    // IMU - Acelerômetro (g)
     float _accelX, _accelY, _accelZ;
+    
+    // IMU - Magnetômetro (µT)
     float _magX, _magY, _magZ;
+    float _magOffsetX, _magOffsetY, _magOffsetZ;  // Offsets de calibração
     
-    // Calibração magnetômetro
-    float _magOffsetX, _magOffsetY, _magOffsetZ;
-    
-    // Status
+    // ========================================
+    // STATUS DOS SENSORES
+    // ========================================
     bool _mpu9250Online;
     bool _bmp280Online;
     bool _si7021Online;
     bool _ccs811Online;
     bool _calibrated;
     
-    // ========== NOVO: Controle de redundância de temperatura ==========
+    // Validação de temperatura redundante
     bool _si7021TempValid;
     bool _bmp280TempValid;
     uint8_t _si7021TempFailures;
     uint8_t _bmp280TempFailures;
     static constexpr uint8_t MAX_TEMP_FAILURES = 5;
     
-    // Controle de timing
-    uint32_t _lastReadTime;
-    uint32_t _lastCCS811Read;
-    uint32_t _lastSI7021Read;
-    uint32_t _lastHealthCheck;
+    // ========================================
+    // CONTROLE DE TEMPO
+    // ========================================
+    unsigned long _lastReadTime;
+    unsigned long _lastCCS811Read;
+    unsigned long _lastSI7021Read;
+    unsigned long _lastHealthCheck;
     uint8_t _consecutiveFailures;
     
-    // Filtro de média móvel
+    // ========================================
+    // FILTRO DE MÉDIA MÓVEL
+    // ========================================
+    // Nota: CUSTOM_FILTER_SIZE definido em config.h
     float _accelXBuffer[CUSTOM_FILTER_SIZE];
     float _accelYBuffer[CUSTOM_FILTER_SIZE];
     float _accelZBuffer[CUSTOM_FILTER_SIZE];
     uint8_t _filterIndex;
     float _sumAccelX, _sumAccelY, _sumAccelZ;
     
-    // Métodos privados
+    // ========================================
+    // MÉTODOS INTERNOS - INICIALIZAÇÃO
+    // ========================================
     bool _initMPU9250();
     bool _initBMP280();
     bool _initSI7021();
     bool _initCCS811();
     
-    bool _validateMPUReadings(float gx, float gy, float gz, 
-                             float ax, float ay, float az,
-                             float mx, float my, float mz);
-    bool _validateBMPReadings(float temperature, float pressure);
-    bool _validateSI7021Readings(float temperature, float humidity);
-    bool _validateCCSReadings(float co2, float tvoc);
-    bool _validateTemperature(float temp);  // ← NOVO
-    
-    void _performHealthCheck();
-    bool _calibrateMPU9250();
-    float _applyFilter(float newValue, float* buffer, float& sum);
-    float _calculateAltitude(float pressure);
-    
+    // ========================================
+    // MÉTODOS INTERNOS - ATUALIZAÇÃO
+    // ========================================
     void _updateIMU();
     void _updateBMP280();
     void _updateSI7021();
     void _updateCCS811();
-    void _updateTemperatureRedundancy();  // ← NOVO
+    void _updateTemperatureRedundancy();
+    
+    // ========================================
+    // MÉTODOS INTERNOS - VALIDAÇÃO
+    // ========================================
+    // ✅ VALIDAÇÃO CONSOLIDADA (NOVA)
+    bool _validateReading(float value, float minValid, float maxValid);
+    
+    // Validações específicas (mantidas para compatibilidade)
+    bool _validateMPUReadings(float gx, float gy, float gz,
+                              float ax, float ay, float az,
+                              float mx, float my, float mz);
+    bool _validateCCSReadings(float co2, float tvoc);
+    
+    // ========================================
+    // OUTROS MÉTODOS INTERNOS
+    // ========================================
+    void _performHealthCheck();
+    bool _calibrateMPU9250();
+    float _applyFilter(float newValue, float* buffer, float& sum);
+    float _calculateAltitude(float pressure);
 };
 
 #endif // SENSORMANAGER_H

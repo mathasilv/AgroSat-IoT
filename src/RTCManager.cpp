@@ -223,3 +223,4 @@ bool RTCManager::_detectRTC() {
 time_t RTCManager::_applyOffset(time_t utcTime) const {
     return utcTime + RTC_TIMEZONE_OFFSET;
 }
+

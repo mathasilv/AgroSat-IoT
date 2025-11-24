@@ -132,16 +132,12 @@ void TelemetryManager::applyModeConfig(OperationMode mode) {
                  activeModeConfig->loraEnabled ? "ON" : "OFF");
 }
 
-
 bool TelemetryManager::begin() {
-    // ✅ NÃO aplicar modo antes de inicializar I2C
-    
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("  AgroSat-IoT HAB - OBSAT Fase 2");
     DEBUG_PRINTLN("  Equipe: Orbitalis");
     DEBUG_PRINTLN("  Firmware: " FIRMWARE_VERSION " HAB");
-    DEBUG_PRINTLN("  Balão Meteorológico - Coleta Contínua");
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
 
@@ -149,21 +145,21 @@ bool TelemetryManager::begin() {
     _minHeapSeen = initialHeap;
     DEBUG_PRINTF("[TelemetryManager] Heap inicial: %lu bytes\n", initialHeap);
 
-    // ✅ PRIMEIRO: Inicializar I2C
     _initI2CBus();
 
-    // ✅ DEPOIS: Aplicar configuração de modo (agora I2C está pronto)
     _mode = MODE_PREFLIGHT;
     applyModeConfig(MODE_PREFLIGHT);
 
+    bool success = true;
+    uint8_t subsystemsOk = 0;
+
     // ========================================
-    // DISPLAY MANAGER - INICIALIZAR PRIMEIRO
+    // DISPLAY MANAGER
     // ========================================
     bool displayOk = false;
     
     if (activeModeConfig->displayEnabled) {
         DEBUG_PRINTLN("[TelemetryManager] Inicializando DisplayManager...");
-        esp_task_wdt_reset();
         
         if (_displayMgr.begin()) {
             _useNewDisplay = true;
@@ -171,91 +167,62 @@ bool TelemetryManager::begin() {
             DEBUG_PRINTLN("[TelemetryManager] DisplayManager OK");
             
             g_displayManagerPtr = &_displayMgr;
-            
-            esp_task_wdt_reset();
             _displayMgr.showBoot();
             delay(2000);
         } else {
-            DEBUG_PRINTLN("[TelemetryManager] DisplayManager FAILED (não-crítico)");
+            DEBUG_PRINTLN("[TelemetryManager] DisplayManager FAILED");
             _useNewDisplay = false;
             g_displayManagerPtr = nullptr;
         }
-        
-        delay(500);
     }
-
-    bool success = true;
-    uint8_t subsystemsOk = 0;
 
     // ========================================
     // RTC MANAGER
     // ========================================
-    DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC Manager...");
-    esp_task_wdt_reset();
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC...");
     
     if (_rtc.begin(&Wire)) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] RTC Manager OK");
-        DEBUG_PRINTF("[TelemetryManager] RTC: %s\n", _rtc.getDateTime().c_str());
-        
+        DEBUG_PRINTLN("[TelemetryManager] RTC OK");
         if (_useNewDisplay && displayOk) {
             _displayMgr.showSensorInit("RTC", true);
-        }
-    } else {
-        DEBUG_PRINTLN("[TelemetryManager] RTC Manager FAILED (não-crítico)");
-        if (_useNewDisplay && displayOk) {
-            _displayMgr.showSensorInit("RTC", false);
         }
     }
 
     // ========================================
     // BUTTON HANDLER
     // ========================================
-    DEBUG_PRINTLN("[TelemetryManager] Inicializando gerenciador de botão...");
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando botão...");
     _button.begin();
 
     // ========================================
     // SYSTEM HEALTH
     // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
-    esp_task_wdt_reset();
     
     if (_health.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] System Health OK");
-        
-        if (_useNewDisplay && displayOk) {
-            _displayMgr.showSensorInit("Health", true);
-        }
     } else {
         success = false;
-        DEBUG_PRINTLN("[TelemetryManager] System Health FAILED");
     }
 
     // ========================================
     // POWER MANAGER
     // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Power Manager...");
-    esp_task_wdt_reset();
     
     if (_power.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] Power Manager OK");
-        
-        if (_useNewDisplay && displayOk) {
-            _displayMgr.showSensorInit("Power", true);
-        }
     } else {
         success = false;
-        DEBUG_PRINTLN("[TelemetryManager] Power Manager FAILED");
     }
 
     // ========================================
     // SENSOR MANAGER
     // ========================================
     DEBUG_PRINTLN("[TelemetryManager] Inicializando Sensor Manager...");
-    DEBUG_PRINTLN("[TelemetryManager] (Calibração do magnetômetro incluída)");
-    esp_task_wdt_reset();
 
     if (_sensors.begin()) {
         subsystemsOk++;
@@ -273,47 +240,28 @@ bool TelemetryManager::begin() {
         }
     } else {
         success = false;
-        DEBUG_PRINTLN("[TelemetryManager] Sensor Manager FAILED");
     }
 
     // ========================================
     // STORAGE MANAGER
     // ========================================
-    DEBUG_PRINTLN("[TelemetryManager] Inicializando Storage Manager...");
-    esp_task_wdt_reset();
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando Storage...");
     
     if (_storage.begin()) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] Storage Manager OK");
-        
-        if (_useNewDisplay && displayOk) {
-            _displayMgr.showSensorInit("Storage", true);
-        }
-    } else {
-        DEBUG_PRINTLN("[TelemetryManager] Storage Manager FAILED (não-crítico)");
-        if (_useNewDisplay && displayOk) {
-            _displayMgr.showSensorInit("Storage", false);
-        }
+        DEBUG_PRINTLN("[TelemetryManager] Storage OK");
     }
     
     // ========================================
     // COMMUNICATION MANAGER
     // ========================================
-    DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication Manager...");
-    DEBUG_PRINTLN("[TelemetryManager]   - LoRa RX/TX Contínuo (HAB Mode)");
-    DEBUG_PRINTLN("[TelemetryManager]   - Antena Direcional Terrestre");
-    esp_task_wdt_reset();
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando Communication...");
     
     if (_comm.begin()) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] Communication Manager OK");
-        
-        if (_useNewDisplay && displayOk) {
-            _displayMgr.showSensorInit("LoRa", _comm.isLoRaOnline());
-        }
+        DEBUG_PRINTLN("[TelemetryManager] Communication OK");
     } else {
         success = false;
-        DEBUG_PRINTLN("[TelemetryManager] Communication Manager FAILED");
     }
 
     // ========================================
@@ -339,16 +287,14 @@ bool TelemetryManager::begin() {
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
     
-    esp_task_wdt_reset();
-    
     return success;
 }
 
-// ========== LOOP SIMPLIFICADO PARA BALÃO ==========
+
 void TelemetryManager::loop() {
     uint32_t currentTime = millis();
     
-    // Atualizar subsistemas básicos
+    // ✅ ATUALIZAR SUBSISTEMAS
     _health.update(); 
     delay(5);
     _power.update(); 
@@ -360,7 +306,10 @@ void TelemetryManager::loop() {
     _handleButtonEvents();
     delay(5);
     
-    // ========== RECEPÇÃO E PROCESSAMENTO DE PACOTES LORA ==========
+    // ✅ CONTROLE DE LED (CENTRALIZADO AQUI)
+    _updateLEDIndicator(currentTime);
+    
+    // ========== RECEPÇÃO LORA ==========
     String loraPacket;
     int rssi;
     float snr;
@@ -388,21 +337,8 @@ void TelemetryManager::loop() {
             
             _updateGroundNode(receivedData);
             
-            DEBUG_PRINTLN("[TelemetryManager] Payload processado!");
-            DEBUG_PRINTF("[TelemetryManager]   Node ID: %u | Seq: %u\n", 
-                         receivedData.nodeId, receivedData.sequenceNumber);
-            DEBUG_PRINTF("[TelemetryManager]   Umidade Solo: %.1f%% | Temp: %.1f°C\n", 
-                         receivedData.soilMoisture, receivedData.ambientTemp);
-            DEBUG_PRINTF("[TelemetryManager]   Umidade Ar: %.1f%% | Irrigação: %d\n", 
-                         receivedData.humidity, receivedData.irrigationStatus);
-            DEBUG_PRINTF("[TelemetryManager]   RSSI: %d dBm | SNR: %.1f dB\n", rssi, snr);
-            DEBUG_PRINTF("[TelemetryManager]   Prioridade: %d | RX Total: %u | Perdidos: %u\n",
-                         receivedData.priority, receivedData.packetsReceived, receivedData.packetsLost);
-            
             if (_storage.isAvailable()) {
-                if (_storage.saveMissionData(receivedData)) {
-                    DEBUG_PRINTLN("[TelemetryManager] Dados salvos no SD");
-                }
+                _storage.saveMissionData(receivedData);
             }
             
             if (_useNewDisplay && _displayMgr.isOn()) {
@@ -411,92 +347,43 @@ void TelemetryManager::loop() {
                         receivedData.nodeId, receivedData.soilMoisture, rssi);
                 _displayMgr.displayMessage("LORA RX", nodeInfo);
             }
-            
-        } else {
-            DEBUG_PRINTLN("[TelemetryManager] Falha ao processar payload (checksum inválido)");
         }
     }
     
+    // ========== LIMPEZA DE BUFFER ==========
     static unsigned long lastCleanup = 0;
     if (currentTime - lastCleanup > 600000) {
         lastCleanup = currentTime;
         _cleanupStaleNodes(NODE_TTL_MS);
-        
-        DEBUG_PRINTLN("[TelemetryManager] ━━━━━ STATUS DO BUFFER ━━━━━");
-        DEBUG_PRINTF("[TelemetryManager] Nós ativos: %d/%d\n", 
-                     _groundNodeBuffer.activeNodes, MAX_GROUND_NODES);
-        DEBUG_PRINTF("[TelemetryManager] Pacotes coletados: %u\n", 
-                     _groundNodeBuffer.totalPacketsCollected);
     }
     
+    // ========== COLETAR TELEMETRIA ==========
     _collectTelemetryData();
     _checkOperationalConditions();
     
-    // Transmissão de telemetria
+    // ========== TRANSMISSÃO ==========
     if (currentTime - _lastTelemetrySend >= activeModeConfig->telemetrySendInterval) {
         _lastTelemetrySend = currentTime;
-        
-        DEBUG_PRINTLN("[TelemetryManager] ╔════════════════════════════════════╗");
-        DEBUG_PRINTLN("[TelemetryManager] ║  TRANSMISSÃO DE TELEMETRIA         ║");
-        DEBUG_PRINTLN("[TelemetryManager] ╚════════════════════════════════════╝");
-        
-        if (_groundNodeBuffer.activeNodes > 0) {
-            std::lock_guard<std::mutex> lock(_bufferMutex);
-            DEBUG_PRINTF("[TelemetryManager] Buffer: %d nós ativos\n", _groundNodeBuffer.activeNodes);
-            
-            for (uint8_t i = 0; i < _groundNodeBuffer.activeNodes; i++) {
-                DEBUG_PRINTF("[TelemetryManager]   [%d] Node %u: seq=%u, fwd=%s, pri=%d, rssi=%d\n",
-                            i,
-                            _groundNodeBuffer.nodes[i].nodeId,
-                            _groundNodeBuffer.nodes[i].sequenceNumber,
-                            _groundNodeBuffer.nodes[i].forwarded ? "Y" : "N",
-                            _groundNodeBuffer.nodes[i].priority,
-                            _groundNodeBuffer.nodes[i].rssi);
-            }
-        }
-        
         _sendTelemetry();
-        
-        DEBUG_PRINTLN("[TelemetryManager] ════════════════════════════════════");
     }
     
-    // Salvar no SD
+    // ========== SALVAR SD ==========
     if (currentTime - _lastStorageSave >= activeModeConfig->storageSaveInterval) {
         _lastStorageSave = currentTime;
         _saveToStorage();
     }
     
-    // Atualizar display
+    // ========== ATUALIZAR DISPLAY ==========
     if (activeModeConfig->displayEnabled && _useNewDisplay) {
         _displayMgr.updateTelemetry(_telemetryData);
     }
     
-    // Monitoramento de heap
-    static unsigned long lastHeapCheck = 0;
-    if (currentTime - lastHeapCheck >= 30000) {
-        lastHeapCheck = currentTime;
-        uint32_t currentHeap = ESP.getFreeHeap();
-        
-        if (currentHeap < _minHeapSeen) {
-            _minHeapSeen = currentHeap;
-        }
-        
-        DEBUG_PRINTF("[TelemetryManager] Heap: %lu KB (mín: %lu KB)\n",
-                     currentHeap / 1024, _minHeapSeen / 1024);
-        
-        if (currentHeap < 15000) {
-            DEBUG_PRINTLN("[TelemetryManager] ALERTA: Heap baixo!");
-            _health.reportError(STATUS_WATCHDOG, "Low memory warning");
-        }
-        
-        if (currentHeap < 8000) {
-            DEBUG_PRINTLN("[TelemetryManager] CRÍTICO: Entrando em SAFE MODE!");
-            applyModeConfig(MODE_SAFE);
-        }
-    }
+    // ========== MONITORAMENTO DE HEAP (CONSOLIDADO) ==========
+    _monitorHeapUsage(currentTime);
     
     delay(20);
 }
+
 
 void TelemetryManager::_updateGroundNode(const MissionData& data) {
     std::lock_guard<std::mutex> lock(_bufferMutex);
@@ -882,12 +769,13 @@ void TelemetryManager::_checkOperationalConditions() {
         _health.reportError(STATUS_BATTERY_LOW, "Low battery level"); 
     }
     
-    // ✅ RESETAR SENSORES APENAS SE MUITO TEMPO PASSOU DESDE ÚLTIMO RESET
+    // ✅ RESETAR SENSORES APENAS SE MUITO TEMPO PASSOU
     static unsigned long lastSensorCheck = 0;
     if (millis() - lastSensorCheck >= 60000) {  // Verificar apenas a cada 1 minuto
         lastSensorCheck = millis();
         
-        if (!_sensors.isMPU6050Online() && !_sensors.isMPU9250Online()) { 
+        // ✅ SUBSTITUIR isMPU6050Online() por isMPU9250Online()
+        if (!_sensors.isMPU9250Online()) { 
             _health.reportError(STATUS_SENSOR_ERROR, "IMU offline"); 
             
             // ✅ Resetar apenas se cooldown passou
@@ -909,6 +797,7 @@ void TelemetryManager::_checkOperationalConditions() {
         _health.reportError(STATUS_WATCHDOG, "Critical low memory"); 
     }
 }
+
 
 void TelemetryManager::_logHeapUsage(const String& component) {
     uint32_t currentHeap = ESP.getFreeHeap();
@@ -1000,4 +889,94 @@ void TelemetryManager::_handleButtonEvents() {
         _mode = MODE_SAFE;
         _missionActive = false;
     }
+}
+
+void TelemetryManager::_updateLEDIndicator(unsigned long currentTime) {
+    static unsigned long lastBlink = 0;
+    
+    if (currentTime - lastBlink < 1000) {
+        return; // Atualizar apenas a cada 1 segundo
+    }
+    
+    lastBlink = currentTime;
+    
+    switch (_mode) {
+        case MODE_PREFLIGHT: 
+            digitalWrite(LED_BUILTIN, HIGH); 
+            break;
+            
+        case MODE_FLIGHT: 
+            digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); 
+            break;
+            
+        case MODE_SAFE:
+            if ((currentTime / 1000) % 5 < 3) {
+                digitalWrite(LED_BUILTIN, HIGH);
+            } else {
+                digitalWrite(LED_BUILTIN, LOW);
+            }
+            break;
+            
+        case MODE_POSTFLIGHT:
+            if ((currentTime / 1000) % 2 == 0) {
+                digitalWrite(LED_BUILTIN, HIGH);
+            } else {
+                digitalWrite(LED_BUILTIN, LOW);
+            }
+            break;
+            
+        case MODE_ERROR:
+            if ((currentTime / 100) % 2 == 0) {
+                digitalWrite(LED_BUILTIN, HIGH);
+            } else {
+                digitalWrite(LED_BUILTIN, LOW);
+            }
+            break;
+            
+        default: 
+            digitalWrite(LED_BUILTIN, LOW); 
+            break;
+    }
+}
+
+void TelemetryManager::_monitorHeapUsage(unsigned long currentTime) {
+    static unsigned long lastHeapCheck = 0;
+    
+    if (currentTime - lastHeapCheck < 30000) {
+        return; // Verificar apenas a cada 30s
+    }
+    
+    lastHeapCheck = currentTime;
+    uint32_t currentHeap = ESP.getFreeHeap();
+    
+    if (currentHeap < _minHeapSeen) {
+        _minHeapSeen = currentHeap;
+    }
+    
+    DEBUG_PRINTLN("");
+    DEBUG_PRINTLN("========== STATUS DO SISTEMA ==========");
+    DEBUG_PRINTF("Uptime: %lu s\n", currentTime / 1000);
+    DEBUG_PRINTF("Modo: %d\n", _mode);
+    DEBUG_PRINTF("Heap atual: %lu KB\n", currentHeap / 1024);
+    DEBUG_PRINTF("Heap mínimo: %lu KB\n", _minHeapSeen / 1024);
+    
+    if (currentHeap < 15000) {
+        DEBUG_PRINTLN("ALERTA: Heap baixo!");
+        _health.reportError(STATUS_WATCHDOG, "Low memory");
+    }
+    
+    if (currentHeap < 8000) {
+        DEBUG_PRINTLN("CRÍTICO: Entrando em SAFE MODE!");
+        applyModeConfig(MODE_SAFE);
+    }
+    
+    if (currentHeap < 5000) {
+        DEBUG_PRINTF("CRÍTICO: Heap muito baixo: %lu bytes\n", currentHeap); 
+        DEBUG_PRINTLN("Sistema será reiniciado em 3 segundos..."); 
+        delay(3000); 
+        ESP.restart(); 
+    }
+    
+    DEBUG_PRINTLN("=======================================");
+    DEBUG_PRINTLN("");
 }
