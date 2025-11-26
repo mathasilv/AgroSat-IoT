@@ -1,13 +1,12 @@
 /**
  * @file TelemetryManager.cpp
  * @brief VERSÃO OTIMIZADA PARA BALÃO METEOROLÓGICO (HAB)
- * @version 7.2.0 - HAB Edition + I2C Fix
- * @date 2025-11-24
+ * @version 7.3.0 - HAB Edition + Relay Fix
+ * @date 2025-11-25
  * 
- * CHANGELOG v7.2.0:
- * - [FIX] Correção definitiva de mutex I2C
- * - [FIX] Ordem de inicialização corrigida
- * - [FIX] Remoção de Wire.begin() duplicados
+ * CHANGELOG v7.3.0:
+ * - [FIX] Reset de flag forwarded ao atualizar nó
+ * - [FIX] Reset periódico de flags para retransmissão contínua
  */
 #include "TelemetryManager.h"
 #include "config.h"
@@ -18,7 +17,7 @@ DisplayManager* g_displayManagerPtr = nullptr;
 
 TelemetryManager::TelemetryManager() :
     _displayMgr(), 
-    _mode(MODE_INIT),  // ✅ Começar em MODE_INIT
+    _mode(MODE_INIT),
     _lastTelemetrySend(0),
     _lastStorageSave(0),
     _missionActive(false),
@@ -27,7 +26,7 @@ TelemetryManager::TelemetryManager() :
     _lastHeapCheck(0),
     _minHeapSeen(UINT32_MAX),
     _useNewDisplay(true),
-    _lastSensorReset(0)  // ✅ Adicionar inicialização
+    _lastSensorReset(0)
 {
     memset(&_telemetryData, 0, sizeof(TelemetryData));
     memset(&_groundNodeBuffer, 0, sizeof(GroundNodeBuffer));
@@ -46,8 +45,6 @@ TelemetryManager::TelemetryManager() :
     _telemetryData.magX = NAN;
     _telemetryData.magY = NAN;
     _telemetryData.magZ = NAN;
-    
-    // ✅ NÃO CHAMAR applyModeConfig() AQUI!
 }
 
 bool TelemetryManager::_initI2CBus() {
@@ -59,15 +56,15 @@ bool TelemetryManager::_initI2CBus() {
         DEBUG_PRINTLN("[TelemetryManager] ========================================");
         
         Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
-        Wire.setClock(100000);  // 100 kHz
-        Wire.setTimeOut(1000);  // ✅ Aumentar timeout para 1000ms
+        Wire.setClock(100000);
+        Wire.setTimeOut(1000);
         
-        delay(1000);  // ✅ Aumentar para 1 segundo
+        delay(1000);
         i2cInitialized = true;
         
         DEBUG_PRINTLN("[TelemetryManager] I2C inicializado (100 kHz, timeout 1000ms)");
         DEBUG_PRINTLN("[TelemetryManager] Aguardando estabilização dos sensores...");
-        delay(500);  // ✅ Delay adicional antes do scan
+        delay(500);
         
         DEBUG_PRINTLN("[TelemetryManager] Dispositivos no barramento:");
         
@@ -79,7 +76,7 @@ bool TelemetryManager::_initI2CBus() {
                 DEBUG_PRINTF("[TelemetryManager]   - 0x%02X\n", addr);
                 devicesFound++;
             }
-            delay(10);  // ✅ Aumentar delay entre scans de 5ms para 10ms
+            delay(10);
         }
         
         if (devicesFound == 0) {
@@ -259,7 +256,7 @@ bool TelemetryManager::begin() {
 void TelemetryManager::loop() {
     uint32_t currentTime = millis();
     
-    // ✅ ATUALIZAR SUBSISTEMAS
+    // Atualizar subsistemas
     _health.update(); 
     delay(5);
     _power.update(); 
@@ -271,7 +268,7 @@ void TelemetryManager::loop() {
     _handleButtonEvents();
     delay(5);
     
-    // ✅ CONTROLE DE LED (CENTRALIZADO AQUI)
+    // Controle de LED
     _updateLEDIndicator(currentTime);
     
     // ========== RECEPÇÃO LORA ==========
@@ -322,6 +319,30 @@ void TelemetryManager::loop() {
         _cleanupStaleNodes(NODE_TTL_MS);
     }
     
+    // ========================================
+    // ✅ RESET PERIÓDICO DE FLAGS DE RETRANSMISSÃO
+    // ========================================
+    static unsigned long lastFlagReset = 0;
+    const unsigned long FLAG_RESET_INTERVAL = 60000;  // 60 segundos
+    
+    if (currentTime - lastFlagReset >= FLAG_RESET_INTERVAL) {
+        lastFlagReset = currentTime;
+        
+        std::lock_guard<std::mutex> lock(_bufferMutex);
+        uint8_t resetCount = 0;
+        
+        for (uint8_t i = 0; i < _groundNodeBuffer.activeNodes; i++) {
+            if (_groundNodeBuffer.nodes[i].forwarded) {
+                _groundNodeBuffer.nodes[i].forwarded = false;
+                resetCount++;
+            }
+        }
+        
+        if (resetCount > 0) {
+            DEBUG_PRINTF("[TelemetryManager] %d nó(s) prontos para retransmissão periódica\n", resetCount);
+        }
+    }
+    
     // ========== COLETAR TELEMETRIA ==========
     _collectTelemetryData();
     _checkOperationalConditions();
@@ -343,12 +364,11 @@ void TelemetryManager::loop() {
         _displayMgr.updateTelemetry(_telemetryData);
     }
     
-    // ========== MONITORAMENTO DE HEAP (CONSOLIDADO) ==========
+    // ========== MONITORAMENTO DE HEAP ==========
     _monitorHeapUsage(currentTime);
     
     delay(20);
 }
-
 
 void TelemetryManager::_updateGroundNode(const MissionData& data) {
     std::lock_guard<std::mutex> lock(_bufferMutex);
@@ -376,11 +396,16 @@ void TelemetryManager::_updateGroundNode(const MissionData& data) {
             
             existingNode = data;
             existingNode.lastLoraRx = millis();
+            
+            // ✅ RESETAR FLAG DE RETRANSMISSÃO
             existingNode.forwarded = false;
+            
             existingNode.priority = _comm.calculatePriority(data);
             
             _groundNodeBuffer.lastUpdate[existingIndex] = millis();
             _groundNodeBuffer.totalPacketsCollected++;
+            
+            DEBUG_PRINTF("[TelemetryManager] Node %u pronto para retransmitir\n", data.nodeId);
             
         } else if (data.sequenceNumber == existingNode.sequenceNumber) {
             DEBUG_PRINTF("[TelemetryManager] Node %u duplicado (seq %u), ignorando\n",
@@ -560,8 +585,7 @@ void TelemetryManager::stopMission() {
         DEBUG_PRINTLN("[TelemetryManager] ════════════════════════════════");
     }
     
-    // ✅ CORREÇÃO: Voltar para PREFLIGHT ao invés de POSTFLIGHT
-    _mode = MODE_PREFLIGHT;  // ✅ CORRIGIDO
+    _mode = MODE_PREFLIGHT;
     _missionActive = false;
     
     if (_useNewDisplay) {
@@ -653,9 +677,15 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.systemStatus = _health.getSystemStatus();
     _telemetryData.errorCount = _health.getErrorCount();
     
-    String payloadStr = _comm.generateConsolidatedPayload(_groundNodeBuffer);
-    strncpy(_telemetryData.payload, payloadStr.c_str(), PAYLOAD_MAX_SIZE - 1);
-    _telemetryData.payload[PAYLOAD_MAX_SIZE - 1] = '\0';
+// Gerar resumo simples dos nós
+if (_groundNodeBuffer.activeNodes > 0) {
+    snprintf(_telemetryData.payload, PAYLOAD_MAX_SIZE, 
+             "Nodes:%d", _groundNodeBuffer.activeNodes);
+} else {
+    _telemetryData.payload[0] = '\0';
+}
+
+
 }
 
 void TelemetryManager::_sendTelemetry() {
@@ -754,7 +784,6 @@ void TelemetryManager::_checkOperationalConditions() {
     }
 }
 
-
 void TelemetryManager::testLoRaTransmission() {
     DEBUG_PRINTLN("[TelemetryManager] Testando transmissão LoRa...");
     _comm.sendLoRa("TEST_AGROSAT_HAB");
@@ -774,7 +803,6 @@ void TelemetryManager::_handleButtonEvents() {
     ButtonEvent event = _button.update();
     
     if (event == ButtonEvent::SHORT_PRESS) {
-        // ✅ Aceitar transição de PREFLIGHT ou POSTFLIGHT para FLIGHT
         if (_mode == MODE_PREFLIGHT || _mode == MODE_POSTFLIGHT) {
             DEBUG_PRINTLN("");
             DEBUG_PRINTLN("╔════════════════════════════════════════╗");
@@ -838,7 +866,7 @@ void TelemetryManager::_updateLEDIndicator(unsigned long currentTime) {
     static unsigned long lastBlink = 0;
     
     if (currentTime - lastBlink < 1000) {
-        return; // Atualizar apenas a cada 1 segundo
+        return;
     }
     
     lastBlink = currentTime;

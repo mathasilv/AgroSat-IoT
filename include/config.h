@@ -87,29 +87,29 @@ struct ModeConfig {
 };
 
 const ModeConfig PREFLIGHT_CONFIG = {
-    true,    
-    true,    
-    true,    
-    true,    
-    false,   
-    15000,    
-    60000,   
-    0,     
-    0,   
-    15000    
+    true,    // displayEnabled
+    true,    // serialLogsEnabled
+    true,    // sdLogsVerbose
+    true,    // loraEnabled
+    false,   // httpEnabled
+    60000,   // telemetrySendInterval: 60 s (antes 15000 / 30000)
+    60000,   // storageSaveInterval: 60 s
+    0,       // wifiDutyCycle (não usado aqui)
+    0,       // loraRxWindowDuration (não usado)
+    60000    // loraRxTxInterval: 60 s
 };
 
 const ModeConfig FLIGHT_CONFIG = {
-    false,   
-    false,   
-    false,   
-    true,    
-    true,    
-    30000,  
-    5000,  
-    0,       
-    0,   
-    30000    
+    false,
+    false,
+    false,
+    true,
+    true,
+    60000,  // 60 s
+    10000,  // pode aumentar um pouco o intervalo de save também
+    0,
+    0,
+    60000   // 60 s
 };
 
 const ModeConfig SAFE_CONFIG = {
@@ -180,7 +180,7 @@ const ModeConfig SAFE_CONFIG = {
 #define LORA_CRC_ENABLED true           
 #define LORA_MAX_TX_TIME_MS 400
 #define LORA_DUTY_CYCLE_PERCENT 2.86
-#define LORA_MIN_INTERVAL_MS 14000
+#define LORA_MIN_INTERVAL_MS 20000
 #define LORA_TX_TIMEOUT_MS 2000         
 #define LORA_MAX_PAYLOAD_SIZE 255       
 #define LORA_TX_TIMEOUT_MS_NORMAL 2000   
@@ -294,6 +294,8 @@ struct MissionData {
     unsigned long collectionTime;
     uint8_t priority;
     bool forwarded;
+    char originalPayloadHex[20];  // 16 chars + null + margem
+    uint8_t payloadLength;
 };
 
 struct GroundNodeBuffer {
