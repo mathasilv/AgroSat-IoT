@@ -1,13 +1,16 @@
+#pragma once
+
 /**
  * @file ButtonHandler.h
- * @brief Gerenciador de botão para transição de modos PREFLIGHT ↔ FLIGHT
- * @version 1.0.0
- * @date 2025-11-24
+ * @brief Gerenciador de botão usando HAL GPIO
+ * @version 2.0.0
  */
+
 #ifndef BUTTON_HANDLER_H
 #define BUTTON_HANDLER_H
 
 #include <Arduino.h>
+#include "hal/hal.h"
 #include "config.h"
 
 enum class ButtonEvent : uint8_t {
@@ -27,7 +30,6 @@ public:
     unsigned long getPressedTime() const { return _pressedTime; }
     
 private:
-    uint8_t _pin;
     bool _buttonState;
     bool _lastButtonState;
     unsigned long _lastDebounceTime;
