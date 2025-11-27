@@ -1,96 +1,79 @@
+/**
+ * @file RTCManager.cpp
+ * @brief Implementação usando HAL::i2c()
+ * @version 2.0.0
+ */
+
 #include "RTCManager.h"
 #include <WiFi.h>
 #include <time.h>
 
-RTCManager::RTCManager() : _wire(nullptr), _initialized(false) {}
+RTCManager::RTCManager() : _initialized(false) {}
 
-bool RTCManager::begin(TwoWire* wire) {
-    _wire = wire;
+bool RTCManager::begin() {
+    DEBUG_PRINTLN("[RTC] Inicializando com HAL I2C...");
     
-    DEBUG_PRINTLN("[RTC] Usando barramento I2C ja inicializado");
+    // ✅ MIGRAÇÃO: HAL I2C já inicializado pelo sistema
+    HAL::i2c().begin();
     
-    // Limpar erros anteriores do barramento
-    _wire->clearWriteError();
-    
-    // Delay maior para estabilizacao do barramento
+    // Delay para estabilização
     delay(1000);
     
-    // Tentar detectar RTC ate 3 vezes
     bool rtcDetected = false;
     for (uint8_t attempt = 1; attempt <= 3; attempt++) {
-        DEBUG_PRINTF("[RTC] Tentativa %d/3 de deteccao...\n", attempt);
+        DEBUG_PRINTF("[RTC] Tentativa %d/3...\n", attempt);
         
         if (_detectRTC()) {
             rtcDetected = true;
-            DEBUG_PRINTLN("[RTC] DS3231 detectado no barramento I2C");
+            DEBUG_PRINTLN("[RTC] DS3231 detectado (HAL I2C)");
             break;
         }
         
-        if (attempt < 3) {
-            delay(500);
-        }
+        if (attempt < 3) delay(500);
     }
     
     if (!rtcDetected) {
-        DEBUG_PRINTLN("[RTC] DS3231 nao encontrado apos 3 tentativas");
+        DEBUG_PRINTLN("[RTC] DS3231 não encontrado");
         return false;
     }
     
-    // Delay adicional antes de inicializar
     delay(500);
     
-    // Tentar inicializar com RTClib
     if (!_rtc.begin()) {
-        DEBUG_PRINTLN("[RTC] Falha ao inicializar biblioteca RTClib");
-        DEBUG_PRINTLN("[RTC] Tentando inicializacao manual...");
-        
-        // Forcar inicializacao manual
+        DEBUG_PRINTLN("[RTC] Falha RTClib - inicialização manual");
         _initialized = true;
         _rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-        
-        DEBUG_PRINTF("[RTC] Inicializado manualmente: %s\n", getDateTime().c_str());
+        DEBUG_PRINTF("[RTC] Data: %s\n", getDateTime().c_str());
         return true;
     }
     
-    // Inicializacao bem-sucedida
     delay(100);
     
-    // Verificar perda de energia
     if (_rtc.lostPower()) {
-        DEBUG_PRINTLN("[RTC] AVISO: RTC perdeu energia - bateria fraca?");
-        DEBUG_PRINTLN("[RTC] Ajustando para data de compilacao");
+        DEBUG_PRINTLN("[RTC] AVISO: Bateria RTC fraca");
         _rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     }
     
     _initialized = true;
     
     DateTime now = _rtc.now();
-    DEBUG_PRINTF("[RTC] Inicializado com sucesso: %s\n", getDateTime().c_str());
+    DEBUG_PRINTF("[RTC] OK: %s\n", getDateTime().c_str());
     
-    // Validar data
     if (now.year() < 2020 || now.year() > 2100) {
-        DEBUG_PRINTLN("[RTC] Data invalida detectada");
-        DEBUG_PRINTF("[RTC] Ano recebido: %d\n", now.year());
-        DEBUG_PRINTLN("[RTC] Ajustando para data de compilacao");
+        DEBUG_PRINTLN("[RTC] Data inválida - ajustando");
         _rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-        DEBUG_PRINTF("[RTC] Ajustado para: %s\n", getDateTime().c_str());
     }
     
     return true;
 }
 
 bool RTCManager::syncWithNTP() {
-    if (!_initialized) {
-        DEBUG_PRINTLN("[RTC] RTC nao inicializado - impossivel sincronizar");
+    if (!_initialized || WiFi.status() != WL_CONNECTED) {
+        DEBUG_PRINTLN("[RTC] Pré-condições NTP falharam");
         return false;
     }
     
-    if (WiFi.status() != WL_CONNECTED) {
-        DEBUG_PRINTLN("[RTC] WiFi desconectado - impossivel sincronizar NTP");
-        return false;
-    }
-    
-    DEBUG_PRINTLN("[RTC] Sincronizando com servidor NTP...");
+    DEBUG_PRINTLN("[RTC] Sincronizando NTP...");
     
     configTime(RTC_TIMEZONE_OFFSET, 0, NTP_SERVER_PRIMARY, NTP_SERVER_SECONDARY);
     
@@ -102,26 +85,21 @@ bool RTCManager::syncWithNTP() {
     while (attempts < MAX_ATTEMPTS) {
         if (getLocalTime(&timeinfo)) {
             time(&now);
-            // Validar timestamp (apos 1 Jan 2024)
-            if (now > 1704067200) {
-                break;
-            }
+            if (now > 1704067200) break;
         }
         delay(500);
         attempts++;
         
-        // Log progresso a cada 5 tentativas
         if (attempts % 5 == 0) {
-            DEBUG_PRINTF("[RTC] Aguardando NTP... tentativa %d/%d\n", attempts, MAX_ATTEMPTS);
+            DEBUG_PRINTF("[RTC] NTP tentativa %d/%d\n", attempts, MAX_ATTEMPTS);
         }
     }
     
     if (now < 1704067200) {
-        DEBUG_PRINTLN("[RTC] Timeout ao aguardar sincronizacao NTP (20 segundos)");
+        DEBUG_PRINTLN("[RTC] NTP timeout (20s)");
         return false;
     }
     
-    // Converter para UTC
     struct tm timeinfoUTC;
     gmtime_r(&now, &timeinfoUTC);
     
@@ -132,19 +110,14 @@ bool RTCManager::syncWithNTP() {
                      timeinfoUTC.tm_min, 
                      timeinfoUTC.tm_sec);
     
-    // Salvar no RTC
     _rtc.adjust(ntpTime);
     
-    DEBUG_PRINTF("[RTC] Sincronizado com sucesso: %s\n", getDateTime().c_str());
-    DEBUG_PRINTF("[RTC] Unix timestamp: %lu\n", getUnixTime());
-    
+    DEBUG_PRINTF("[RTC] NTP OK: %s (Unix: %lu)\n", getDateTime().c_str(), getUnixTime());
     return true;
 }
 
 String RTCManager::getDateTime() {
-    if (!_initialized) {
-        return "1970-01-01 00:00:00";
-    }
+    if (!_initialized) return "1970-01-01 00:00:00";
     
     time_t utcTime = _rtc.now().unixtime();
     time_t localTime = _applyOffset(utcTime);
@@ -170,57 +143,12 @@ uint32_t RTCManager::getUnixTime() {
 }
 
 bool RTCManager::_detectRTC() {
-    // Limpar erros antes de tentar comunicacao
-    _wire->clearWriteError();
+    HAL::i2c().writeByte(DS3231_ADDRESS, 0x00);
     
-    // Tentar acessar registro de segundos (0x00)
-    _wire->beginTransmission(DS3231_ADDRESS);
-    _wire->write(0x00);
-    uint8_t error = _wire->endTransmission();
-    
-    if (error == 0) {
-        // Tentar ler para confirmar comunicacao - cast explicito para evitar ambiguidade
-        uint8_t bytesToRead = 1;
-        _wire->requestFrom((uint8_t)DS3231_ADDRESS, bytesToRead);
-        
-        if (_wire->available()) {
-            _wire->read(); // Descartar leitura
-            DEBUG_PRINTLN("[RTC] DS3231 respondeu corretamente");
-            return true;
-        } else {
-            DEBUG_PRINTLN("[RTC] DS3231 ACK mas sem dados");
-            return false;
-        }
-    } else {
-        DEBUG_PRINTF("[RTC] DS3231 nao respondeu (erro I2C: %d)\n", error);
-        
-        // Decodificar erro
-        switch(error) {
-            case 1:
-                DEBUG_PRINTLN("[RTC] Erro: Dados muito longos para buffer");
-                break;
-            case 2:
-                DEBUG_PRINTLN("[RTC] Erro: NACK ao enviar endereco");
-                break;
-            case 3:
-                DEBUG_PRINTLN("[RTC] Erro: NACK ao enviar dados");
-                break;
-            case 4:
-                DEBUG_PRINTLN("[RTC] Erro: Outro erro I2C");
-                break;
-            case 5:
-                DEBUG_PRINTLN("[RTC] Erro: Timeout I2C");
-                break;
-            default:
-                DEBUG_PRINTF("[RTC] Erro: Codigo desconhecido %d\n", error);
-                break;
-        }
-        
-        return false;
-    }
+    uint8_t data;
+    return HAL::i2c().readRegisterByte(DS3231_ADDRESS, 0x00, &data);
 }
 
 time_t RTCManager::_applyOffset(time_t utcTime) const {
     return utcTime + RTC_TIMEZONE_OFFSET;
 }
-
