@@ -1,25 +1,31 @@
+#pragma once
+
+/**
+ * @file RTCManager.h
+ * @brief Gerenciador RTC usando HAL I2C
+ * @version 2.0.0
+ */
+
 #ifndef RTC_MANAGER_H
 #define RTC_MANAGER_H
 
 #include <Arduino.h>
 #include <RTClib.h>
-#include <Wire.h>
+#include "hal/hal.h"
 #include "config.h"
 
 class RTCManager {
 public:
     RTCManager();
-    bool begin(TwoWire* wire = &Wire);
+    bool begin();
     bool syncWithNTP();
     
-    // Métodos essenciais
     bool isInitialized() const { return _initialized; }
-    String getDateTime();  // Retorna: "2025-11-11 00:49:30"
+    String getDateTime();
     uint32_t getUnixTime();
     
 private:
     RTC_DS3231 _rtc;
-    TwoWire* _wire;
     bool _initialized;
     
     bool _detectRTC();
