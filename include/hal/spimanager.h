@@ -15,10 +15,9 @@
 class SPIManager {
 private:
     static SPIManager* instance;
-    SPIManager() = default;
+    SPIManager();
     
     bool initialized = false;
-    SPIClass* spi = nullptr;
     static constexpr uint32_t SPI_TIMEOUT_MS = 100;
     
 #ifdef CONFIG_FREERTOS_UNICORE
@@ -33,7 +32,7 @@ public:
     SPIManager(SPIManager&&) = delete;
     SPIManager& operator=(SPIManager&&) = delete;
     
-    bool init(int8_t mosi = 23, int8_t miso = 19, int8_t sck = 18, int8_t freq = 10000000);
+    bool init(int8_t mosi = 23, int8_t miso = 19, int8_t sck = 18, uint32_t freq = 10000000);
     
     bool transfer(uint8_t cs_pin, uint8_t* tx_buf, uint8_t* rx_buf, size_t len);
     bool transfer(uint8_t cs_pin, const uint8_t* tx_buf, size_t len);
@@ -42,6 +41,8 @@ public:
     void setChipSelect(uint8_t cs_pin, bool state);
     
     bool isInitialized() const { return initialized; }
+    
+    ~SPIManager();
 };
 
 inline SPIManager* SPIManager::instance = nullptr;

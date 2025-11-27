@@ -1,23 +1,50 @@
 #include "../include/hal/i2cmanager.h"
 #include "../include/config.h"
-#include "Arduino.h"
+
+I2CManager::I2CManager() {
+#ifdef CONFIG_FREERTOS_UNICORE
+    mutex = xSemaphoreCreateMutex();
+    if (!mutex) {
+        Serial.println("[I2C] ERROR: Mutex creation failed");
+    }
+#endif
+}
+
+I2CManager::~I2CManager() {
+#ifdef CONFIG_FREERTOS_UNICORE
+    if (mutex) {
+        vSemaphoreDelete(mutex);
+    }
+#endif
+    if (wire) {
+        wire->end();
+    }
+}
+
+I2CManager& I2CManager::getInstance() {
+    if (!instance) {
+        instance = new I2CManager();
+    }
+    return *instance;
+}
 
 bool I2CManager::init(uint8_t sda, uint8_t scl, uint32_t freq) {
-    if (initialized) return true; // Já inicializado
+    if (initialized) return true;
     
     wire = &Wire;
     wire->begin(sda, scl);
     wire->setClock(freq);
-    delay(10); // Estabilização
+    delay(10);
     
     initialized = true;
-    Serial.println("[I2C] Initialized successfully (SDA:%d SCL:%d %ldHz)", sda, scl, freq);
+    Serial.printf("[I2C] Initialized (SDA:%d SCL:%d %ldHz)\n", sda, scl, freq);
     return true;
 }
 
 bool I2CManager::write(uint8_t addr, uint8_t reg, uint8_t data) {
 #ifdef CONFIG_FREERTOS_UNICORE
     if (mutex && xSemaphoreTake(mutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) != pdTRUE) {
+        Serial.println("[I2C] Mutex timeout");
         return false;
     }
 #endif
@@ -66,10 +93,9 @@ bool I2CManager::read(uint8_t addr, uint8_t reg, uint8_t* data, size_t len) {
     }
 #endif
     
-    // Escrever endereço do registro
     wire->beginTransmission(addr);
     wire->write(reg);
-    uint8_t error = wire->endTransmission(false); // Repeated start
+    uint8_t error = wire->endTransmission(false);
     if (error != 0) {
 #ifdef CONFIG_FREERTOS_UNICORE
         if (mutex) xSemaphoreGive(mutex);
@@ -77,7 +103,6 @@ bool I2CManager::read(uint8_t addr, uint8_t reg, uint8_t* data, size_t len) {
         return false;
     }
     
-    // Solicitar dados
     uint8_t received = wire->requestFrom(addr, (uint8_t)len);
     if (received != len) {
 #ifdef CONFIG_FREERTOS_UNICORE
@@ -86,7 +111,6 @@ bool I2CManager::read(uint8_t addr, uint8_t reg, uint8_t* data, size_t len) {
         return false;
     }
     
-    // Ler bytes
     for (size_t i = 0; i < len; i++) {
         data[i] = wire->read();
     }
@@ -98,8 +122,20 @@ bool I2CManager::read(uint8_t addr, uint8_t reg, uint8_t* data, size_t len) {
 }
 
 bool I2CManager::probe(uint8_t addr) {
+#ifdef CONFIG_FREERTOS_UNICORE
+    if (mutex && xSemaphoreTake(mutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) != pdTRUE) {
+        return false;
+    }
+#endif
+    
     wire->beginTransmission(addr);
-    return wire->endTransmission() == 0;
+    uint8_t result = wire->endTransmission();
+    
+#ifdef CONFIG_FREERTOS_UNICORE
+    if (mutex) xSemaphoreGive(mutex);
+#endif
+    
+    return result == 0;
 }
 
 void I2CManager::scan() {

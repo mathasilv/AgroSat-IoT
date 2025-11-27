@@ -1,6 +1,18 @@
 #include "../include/hal/spimanager.h"
 #include "../include/config.h"
 
+SPIManager::SPIManager() {
+#ifdef CONFIG_FREERTOS_UNICORE
+    mutex = xSemaphoreCreateMutex();
+#endif
+}
+
+SPIManager::~SPIManager() {
+#ifdef CONFIG_FREERTOS_UNICORE
+    if (mutex) vSemaphoreDelete(mutex);
+#endif
+}
+
 SPIManager& SPIManager::getInstance() {
     if (!instance) {
         instance = new SPIManager();
@@ -8,19 +20,14 @@ SPIManager& SPIManager::getInstance() {
     return *instance;
 }
 
-bool SPIManager::init(int8_t mosi, int8_t miso, int8_t sck, int8_t freq) {
+bool SPIManager::init(int8_t mosi, int8_t miso, int8_t sck, uint32_t freq) {
     if (initialized) return true;
     
-    spi = new SPIClass(HSPI);
-    spi->begin(sck, miso, mosi, -1);
-    spi->setFrequency(freq);
-    
-#ifdef CONFIG_FREERTOS_UNICORE
-    mutex = xSemaphoreCreateMutex();
-#endif
+    SPI.begin(sck, miso, mosi, -1);
+    SPI.setFrequency(freq);
     
     initialized = true;
-    Serial.printf("[SPI] Initialized (MOSI:%d MISO:%d SCK:%d %dHz)\n", mosi, miso, sck, freq);
+    Serial.printf("[SPI] Initialized (MOSI:%d MISO:%d SCK:%d %ldHz)\n", mosi, miso, sck, freq);
     return true;
 }
 
@@ -34,7 +41,7 @@ bool SPIManager::transfer(uint8_t cs_pin, uint8_t* tx_buf, uint8_t* rx_buf, size
 #endif
     
     digitalWrite(cs_pin, LOW);
-    spi->transferBytes(tx_buf, rx_buf, len);
+    SPI.transferBytes(tx_buf, rx_buf, len);
     digitalWrite(cs_pin, HIGH);
     
 #ifdef CONFIG_FREERTOS_UNICORE
@@ -52,7 +59,7 @@ bool SPIManager::transfer(uint8_t cs_pin, const uint8_t* tx_buf, size_t len) {
 }
 
 void SPIManager::setFrequency(uint32_t freq) {
-    if (spi) spi->setFrequency(freq);
+    SPI.setFrequency(freq);
 }
 
 void SPIManager::setChipSelect(uint8_t cs_pin, bool state) {

@@ -1,14 +1,15 @@
 #pragma once
 #include <Arduino.h>
 #include <cstdint>
+#include <driver/adc.h>
 
 /**
- * @brief Gerenciador ADC com calibração e averaging
+ * @brief Gerenciador ADC com calibração ESP32
  */
 class ADCManager {
 private:
     static ADCManager* instance;
-    ADCManager() = default;
+    ADCManager();
     
 public:
     static ADCManager& getInstance();
@@ -23,7 +24,9 @@ public:
     
     void setAttenuation(adc_attenuation_t atten);
     
-    bool isInitialized() const { return true; }
+    bool isInitialized() const;
+    
+    ~ADCManager();
 };
 
 inline ADCManager* ADCManager::instance = nullptr;

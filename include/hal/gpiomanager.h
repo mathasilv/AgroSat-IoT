@@ -13,7 +13,7 @@
 class GPIOManager {
 private:
     static GPIOManager* instance;
-    GPIOManager() = default;
+    GPIOManager();
     
 #ifdef CONFIG_FREERTOS_UNICORE
     SemaphoreHandle_t mutex = nullptr;
@@ -36,7 +36,9 @@ public:
     void attachInterrupt(uint8_t pin, void (*ISR)(void), int mode);
     void detachInterrupt(uint8_t pin);
     
-    bool isInitialized() const { return true; } // Sempre disponível
+    bool isInitialized() const;
+    
+    ~GPIOManager();
 };
 
 inline GPIOManager* GPIOManager::instance = nullptr;

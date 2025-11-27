@@ -1,5 +1,9 @@
 #include "../include/hal/adcmanager.h"
 
+ADCManager::ADCManager() = default;
+
+ADCManager::~ADCManager() = default;
+
 ADCManager& ADCManager::getInstance() {
     if (!instance) {
         instance = new ADCManager();
@@ -29,4 +33,8 @@ float ADCManager::analogReadVoltage(uint8_t pin, uint16_t samples) {
 
 void ADCManager::setAttenuation(adc_attenuation_t atten) {
     analogSetAttenuation(atten);
+}
+
+bool ADCManager::isInitialized() const {
+    return true;
 }
