@@ -1,133 +1,63 @@
 /**
  * @file SensorManager.cpp
- * @brief SensorManager v4.1.0 - SI7021 migrado para HAL I2C
+ * @brief SensorManager v4.2.0 - BMP280 + scanI2C → HAL I2C
  */
 
-#include "SensorManager.h"
-#include <algorithm>
-#include "DisplayManager.h"
-#include <string.h>
+// ... [código anterior mantido]
 
-// ... [código anterior mantido até _updateSI7021()]
-
-void SensorManager::_updateSI7021() {
-    if (!_si7021Online) return;
+bool SensorManager::_softResetBMP280() {
+    DEBUG_PRINTLN("[SensorManager] SOFT RESET BMP280 (HAL I2C)...");
     
-    uint32_t currentTime = millis();
-    if (currentTime - _lastSI7021Read < SI7021_READ_INTERVAL) return;
+    const uint8_t BMP280_RESET_REG = 0xE0;
+    const uint8_t BMP280_RESET_CMD = 0xB6;
     
-    // ========================================
-    // PASSO 1: UMIDADE (0xF5) - HAL I2C ✅
-    // ========================================
-    if (!HAL::i2c().writeByte(SI7021_ADDRESS, 0xF5)) return;
-    
-    delay(50);
-    
-    bool humiditySuccess = false;
-    delay(50);  // Total 100ms
-    
-    uint8_t rawHumData[3];
-    if (HAL::i2c().read(SI7021_ADDRESS, rawHumData, 3)) {
-        uint16_t rawHum = (rawHumData[0] << 8) | rawHumData[1];
-        
-        if (rawHum != 0xFFFF && rawHum != 0x0000) {
-            float hum = ((125.0 * rawHum) / 65536.0) - 6.0;
-            
-            if (hum >= HUMIDITY_MIN_VALID && hum <= HUMIDITY_MAX_VALID) {
-                _humidity = hum;
-                _lastSI7021Read = currentTime;
-                humiditySuccess = true;
-            }
-        }
-    }
-    
-    if (!humiditySuccess) {
-        static uint8_t failCount = 0;
-        failCount++;
-        if (failCount >= 10) {
-            DEBUG_PRINTLN("[SensorManager] SI7021: 10 falhas umidade");
-            failCount = 0;
-        }
-        return;
-    }
-    
-    // ========================================
-    // PASSO 2: TEMPERATURA (0xF3) - HAL I2C ✅
-    // ========================================
-    delay(30);
-    
-    if (!HAL::i2c().writeByte(SI7021_ADDRESS, 0xF3)) return;
-    
-    delay(80);
-    
-    uint8_t rawTempData[2];
-    if (HAL::i2c().read(SI7021_ADDRESS, rawTempData, 2)) {
-        uint16_t rawTemp = (rawTempData[0] << 8) | rawTempData[1];
-        
-        if (rawTemp != 0xFFFF && rawTemp != 0x0000) {
-            float temp = ((175.72 * rawTemp) / 65536.0) - 46.85;
-            
-            if (_validateReading(temp, TEMP_MIN_VALID, TEMP_MAX_VALID)) {
-                _temperatureSI = temp;
-                _si7021TempValid = true;
-                _si7021TempFailures = 0;
-            } else {
-                _si7021TempValid = false;
-                _si7021TempFailures++;
-                
-                if (_si7021TempFailures >= MAX_TEMP_FAILURES) {
-                    DEBUG_PRINTLN("[SensorManager] SI7021: Temp falhas consecutivas");
-                }
-            }
-        }
-    }
-}
-
-bool SensorManager::_initSI7021() {
-    DEBUG_PRINTLN("[SensorManager] Inicializando SI7021 (HAL I2C)...");
-    
-    // Verificar presença
-    if (!HAL::i2c().writeByte(SI7021_ADDRESS, 0x00)) {
-        DEBUG_PRINTLN("[SensorManager] SI7021: Não detectado");
+    // ✅ HAL I2C: Escrever 2 bytes (reg + cmd)
+    uint8_t resetData[2] = {BMP280_RESET_REG, BMP280_RESET_CMD};
+    if (!HAL::i2c().write(BMP280_ADDR_1, resetData, 2)) {
+        DEBUG_PRINTLN("[SensorManager] Erro soft reset");
         return false;
     }
     
-    DEBUG_PRINTLN("[SensorManager] SI7021: Detectado HAL I2C");
+    DEBUG_PRINTLN("[SensorManager] Soft reset enviado, aguardando...");
+    delay(100);
     
-    // Software Reset
-    HAL::i2c().writeByte(SI7021_ADDRESS, 0xFE);
-    delay(50);
+    // Verificar resposta
+    return HAL::i2c().writeByte(BMP280_ADDR_1, 0x00);
+}
+
+bool SensorManager::_waitForBMP280Measurement() {
+    const uint8_t BMP280_STATUS_REG = 0xF3;
+    const uint8_t STATUS_MEASURING = 0x08;
     
-    // Configurar User Register
-    uint8_t configData[2] = {0xE6, 0x00};
-    HAL::i2c().write(SI7021_ADDRESS, configData, 2);
-    delay(20);
+    uint8_t maxRetries = 50;
     
-    // Testar umidade
-    HAL::i2c().writeByte(SI7021_ADDRESS, 0xF5);
-    delay(20);
-    
-    bool success = false;
-    uint8_t rawData[3];
-    
-    for (uint8_t retry = 0; retry < 20; retry++) {
-        if (HAL::i2c().read(SI7021_ADDRESS, rawData, 3)) {
-            uint16_t rawHum = (rawData[0] << 8) | rawData[1];
-            
-            if (rawHum != 0xFFFF && rawHum != 0x0000) {
-                float hum = ((125.0 * rawHum) / 65536.0) - 6.0;
-                
-                if (hum >= HUMIDITY_MIN_VALID && hum <= HUMIDITY_MAX_VALID) {
-                    DEBUG_PRINTF("[SensorManager] SI7021 OK (%.1f%% RH)\n", hum);
-                    success = true;
-                    break;
-                }
+    while (maxRetries--) {
+        // ✅ HAL I2C: Ler status register
+        uint8_t status;
+        if (HAL::i2c().readRegisterByte(BMP280_ADDR_1, BMP280_STATUS_REG, &status)) {
+            if ((status & STATUS_MEASURING) == 0) {
+                return true;
             }
         }
-        delay(10);
+        delay(1);
     }
     
-    return success;
+    return false;
+}
+
+void SensorManager::scanI2C() {
+    DEBUG_PRINTLN("[SensorManager] Scanning I2C (HAL I2C)...");
+    uint8_t count = 0;
+    
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        // ✅ HAL I2C: Teste simples de presença
+        if (HAL::i2c().writeByte(addr, 0x00)) {
+            DEBUG_PRINTF("  Device at 0x%02X\n", addr);
+            count++;
+        }
+    }
+    
+    DEBUG_PRINTF("[SensorManager] Found %d devices\n", count);
 }
 
 // ... [resto do código mantido igual]
