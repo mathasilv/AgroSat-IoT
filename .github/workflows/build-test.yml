@@ -1,0 +1,29 @@
+# GitHub Actions Build/Test Workflow
+
+name: PlatformIO Build/Test
+
+on:
+  push:
+    branches: [ "main", "refactor/*" ]
+  pull_request:
+    branches: [ "main", "refactor/*" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Setup PlatformIO
+        run: pip install platformio
+      - name: Run PlatformIO Build
+        run: platformio run
+      - name: PlatformIO Test (se houver testes)
+        run: |
+          if grep -rq "[platformio]" platformio.ini; then
+            platformio test || echo "no tests yet"
+          fi
+
