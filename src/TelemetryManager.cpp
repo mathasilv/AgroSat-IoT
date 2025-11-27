@@ -1,13 +1,3 @@
-/**
- * @file TelemetryManager.cpp
- * @brief VERSÃO OTIMIZADA PARA BALÃO METEOROLÓGICO (HAB)
- * @version 7.3.0 - HAB Edition + Relay Fix
- * @date 2025-11-25
- * 
- * CHANGELOG v7.3.0:
- * - [FIX] Reset de flag forwarded ao atualizar nó
- * - [FIX] Reset periódico de flags para retransmissão contínua
- */
 #include "TelemetryManager.h"
 #include "config.h"
 
@@ -15,18 +5,26 @@ bool currentSerialLogsEnabled = PREFLIGHT_CONFIG.serialLogsEnabled;
 const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
 DisplayManager* g_displayManagerPtr = nullptr;
 
-TelemetryManager::TelemetryManager() :
+TelemetryManager::TelemetryManager(HAL::I2C& i2c) :
+    _i2c(&i2c),                 // novo: guarda ponteiro pro HAL I2C
+    _sensors(i2c),              // novo: passa HAL I2C pro SensorManager
+    _comm(),
+    _storage(),
+    _power(),
+    _health(),
     _displayMgr(), 
+    _rtc(),
+    _button(),
     _mode(MODE_INIT),
-    _lastTelemetrySend(0),
-    _lastStorageSave(0),
     _missionActive(false),
     _missionStartTime(0),
+    _lastTelemetrySend(0),
+    _lastStorageSave(0),
     _lastDisplayUpdate(0),
     _lastHeapCheck(0),
+    _lastSensorReset(0),
     _minHeapSeen(UINT32_MAX),
-    _useNewDisplay(true),
-    _lastSensorReset(0)
+    _useNewDisplay(true)
 {
     memset(&_telemetryData, 0, sizeof(TelemetryData));
     memset(&_groundNodeBuffer, 0, sizeof(GroundNodeBuffer));
@@ -50,45 +48,29 @@ TelemetryManager::TelemetryManager() :
 bool TelemetryManager::_initI2CBus() {
     static bool i2cInitialized = false;
     
-    if (!i2cInitialized) {
-        DEBUG_PRINTLN("[TelemetryManager] ========================================");
-        DEBUG_PRINTLN("[TelemetryManager] Inicializando barramento I2C...");
-        DEBUG_PRINTLN("[TelemetryManager] ========================================");
-        
-        Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
-        Wire.setClock(100000);
-        Wire.setTimeOut(1000);
-        
-        delay(1000);
-        i2cInitialized = true;
-        
-        DEBUG_PRINTLN("[TelemetryManager] I2C inicializado (100 kHz, timeout 1000ms)");
-        DEBUG_PRINTLN("[TelemetryManager] Aguardando estabilização dos sensores...");
-        delay(500);
-        
-        DEBUG_PRINTLN("[TelemetryManager] Dispositivos no barramento:");
-        
-        uint8_t devicesFound = 0;
-        for (uint8_t addr = 1; addr < 127; addr++) {
-            Wire.beginTransmission(addr);
-            uint8_t error = Wire.endTransmission();
-            if (error == 0) {
-                DEBUG_PRINTF("[TelemetryManager]   - 0x%02X\n", addr);
-                devicesFound++;
-            }
-            delay(10);
-        }
-        
-        if (devicesFound == 0) {
-            DEBUG_PRINTLN("[TelemetryManager] AVISO: Nenhum dispositivo detectado!");
-            DEBUG_PRINTLN("[TelemetryManager] Verifique conexões I2C (SDA, SCL, VCC, GND)");
-        } else {
-            DEBUG_PRINTF("[TelemetryManager] Total: %d dispositivo(s) I2C\n", devicesFound);
-        }
-        
-        DEBUG_PRINTLN("[TelemetryManager] ========================================");
-        DEBUG_PRINTLN("");
+    if (i2cInitialized || !_i2c) {
+        return true;
     }
+    
+    DEBUG_PRINTLN("[TelemetryManager] ========================================");
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando barramento I2C (HAL)...");
+    DEBUG_PRINTLN("[TelemetryManager] ========================================");
+    
+    // Mesmo mapeamento de pinos que você já usava (SENSOR_I2C_* vem do config.h)
+    _i2c->begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL, 100000);  // 100 kHz
+    delay(1000);
+    i2cInitialized = true;
+    
+    DEBUG_PRINTLN("[TelemetryManager] I2C inicializado via HAL (100 kHz)");
+    DEBUG_PRINTLN("[TelemetryManager] Aguardando estabilização dos sensores...");
+    delay(500);
+    
+    // (Opcional) scan básico – por enquanto só loga que o scan HAL ainda não foi implementado
+    DEBUG_PRINTLN("[TelemetryManager] Dispositivos no barramento (scan via HAL ainda simplificado)");
+    // Se quiser um scan real depois: usar readRegister() em alguns endereços
+    
+    DEBUG_PRINTLN("[TelemetryManager] ========================================");
+    DEBUG_PRINTLN("");
     
     return true;
 }

@@ -42,7 +42,6 @@ public:
     float getTVOC();
     
     // Status dos sensores
-    bool isMPU6050Online();
     bool isMPU9250Online();
     bool isBMP280Online();
     bool isSI7021Online();

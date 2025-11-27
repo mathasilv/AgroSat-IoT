@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <mutex>
 #include "config.h"
+#include <HAL/interface/I2C.h>      // <-- novo
 #include "SensorManager.h"
 #include "CommunicationManager.h"
 #include "StorageManager.h"
@@ -15,7 +16,8 @@
 
 class TelemetryManager {
 public:
-    TelemetryManager();
+    // Novo: injeção do HAL I2C
+    explicit TelemetryManager(HAL::I2C& i2c);
     
     bool begin();
     void loop();
@@ -31,6 +33,9 @@ public:
     void printLoRaStats();
 
 private:
+    // Ponteiro para o barramento I2C (mesmo passado para SensorManager)
+    HAL::I2C* _i2c;
+
     // Subsistemas
     SensorManager _sensors;
     CommunicationManager _comm;

@@ -7,9 +7,15 @@
 #include <Arduino.h>
 #include <esp_task_wdt.h>
 #include "config.h"
+#include <HAL/platform/esp32/ESP32_I2C.h>
+#include <HAL/board/ttgo_lora32_v21.h>
 #include "TelemetryManager.h"
 
-TelemetryManager telemetry;
+// HAL I2C global
+HAL::ESP32_I2C halI2C;
+
+// TelemetryManager agora recebe o HAL I2C
+TelemetryManager telemetry(halI2C);
 
 void setup() {
     Serial.begin(DEBUG_BAUDRATE);
@@ -32,6 +38,9 @@ void setup() {
     DEBUG_PRINTLN("[Main] Configurando Watchdog Timer (120s)...");
     esp_task_wdt_init(120, true);
     esp_task_wdt_add(NULL);
+
+    // Opcional: se quiser garantir o begin aqui, antes do _initI2CBus()
+    // halI2C.begin(BOARD_I2C_SDA, BOARD_I2C_SCL, BOARD_I2C_FREQUENCY);
     
     if (!telemetry.begin()) {
         DEBUG_PRINTLN("[Main] ERRO CRÍTICO: Falha na inicialização!");

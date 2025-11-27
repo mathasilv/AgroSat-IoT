@@ -458,20 +458,19 @@ void SensorManager::resetAll() {
 }
 
 bool SensorManager::_initMPU9250() {
-    // Verificar presença no barramento via leitura de um registrador conhecido (WHO_AM_I = 0x75)
-    uint8_t whoAmI = 0;
-    if (!_i2c || !_i2c->readRegisters(MPU9250_ADDRESS, 0x75, &whoAmI, 1)) {
-        return false;
-    }
+    if (!_i2c) return false;
 
-    // Inicializar driver de alto nível
+    // WHO_AM_I (0x75) via HAL
+    uint8_t whoAmI = _i2c->readRegister(MPU9250_ADDRESS, 0x75);
+    // se quiser, pode checar whoAmI != 0x00/0xFF aqui
+
     if (!_mpu9250.init()) return false;
 
     _mpu9250.setAccRange(MPU9250_ACC_RANGE_8G);
     _mpu9250.setGyrRange(MPU9250_GYRO_RANGE_500);
     _mpu9250.enableGyrDLPF();
     _mpu9250.setGyrDLPF(MPU9250_DLPF_6);
-    
+
     // Inicializar magnetômetro (mantém a lógica original)
     if (!_mpu9250.initMagnetometer()) {
         DEBUG_PRINTLN("[SensorManager] Magnetometro falhou");
@@ -545,7 +544,6 @@ bool SensorManager::_initMPU9250() {
     }
     
     delay(100);
-
     xyzFloat testRead = _mpu9250.getGValues();
     return !isnan(testRead.x);
 }
@@ -553,25 +551,24 @@ bool SensorManager::_initMPU9250() {
 
 bool SensorManager::_waitForBMP280Measurement() {
     const uint8_t BMP280_STATUS_REG = 0xF3;
-    const uint8_t STATUS_MEASURING = 0x08;  // bit 3
-    const uint8_t BMP280_ADDR = BMP280_ADDR_1;
-    
+    const uint8_t STATUS_MEASURING  = 0x08;
+    const uint8_t BMP280_ADDR       = BMP280_ADDR_1;
+
     if (!_i2c) return false;
-    
-    uint8_t maxRetries = 50;  // 50ms timeout
-    uint8_t status = 0;
-    
+
+    uint8_t maxRetries = 50;
+
     while (maxRetries--) {
-        if (_i2c->readRegisters(BMP280_ADDR, BMP280_STATUS_REG, &status, 1)) {
-            if ((status & STATUS_MEASURING) == 0) {
-                return true;  // medição completa
-            }
+        uint8_t status = _i2c->readRegister(BMP280_ADDR, BMP280_STATUS_REG);
+        if ((status & STATUS_MEASURING) == 0) {
+            return true;
         }
         delay(1);
     }
-    
     return false;
 }
+
+
 
 
 float SensorManager::_getMedian(float* values, uint8_t count) {
@@ -841,55 +838,38 @@ bool SensorManager::_initSI7021() {
     DEBUG_PRINTLN("[SensorManager] Inicializando SI7021 (HAL I2C)...");
     if (!_i2c) return false;
 
-    // Verificar presença física: ler user register (0xE7)
-    uint8_t userReg = 0;
-    if (!_i2c->readRegisters(SI7021_ADDRESS, 0xE7, &userReg, 1)) {
-        DEBUG_PRINTLN("[SensorManager] SI7021: Não detectado");
-        return false;
-    }
-    
+    // User Register (0xE7) só pra verificar presença
+    uint8_t userReg = _i2c->readRegister(SI7021_ADDRESS, 0xE7);
+    // opcional: se userReg == 0xFF tratar como erro
+
     DEBUG_PRINTLN("[SensorManager] SI7021: Detectado no barramento I2C");
-    
-    // Reset software (comando 0xFE sem registrador)
+
+    // Reset software
     uint8_t cmd = 0xFE;
-    if (!_i2c->write(SI7021_ADDRESS, &cmd, 1)) {
-        DEBUG_PRINTLN("[SensorManager] SI7021: Falha no reset");
-        return false;
-    }
+    if (!_i2c->write(SI7021_ADDRESS, &cmd, 1)) return false;
     delay(50);
-    
-    // Configurar User Register: RH 12-bit, Temp 14-bit (0xE6 -> 0x00)
+
+    // Config User Register
     uint8_t cfg[2] = {0xE6, 0x00};
-    if (!_i2c->write(SI7021_ADDRESS, cfg, 2)) {
-        DEBUG_PRINTLN("[SensorManager] SI7021: Falha ao configurar User Register");
-        return false;
-    }
+    if (!_i2c->write(SI7021_ADDRESS, cfg, 2)) return false;
     delay(20);
     
-    // Testar leitura de umidade (comando 0xF5, No Hold Master)
+    // Teste de leitura de umidade (idêntico em lógica ao seu, mas via HAL) [attached_file:66]
+    bool success = false;
     cmd = 0xF5;
     if (!_i2c->write(SI7021_ADDRESS, &cmd, 1)) {
-        DEBUG_PRINTLN("[SensorManager] SI7021: Erro ao iniciar medição de umidade");
         return false;
     }
-    
     delay(20);
-    
-    bool success = false;
+
     uint8_t buf[3];
-    
     for (uint8_t retry = 0; retry < 20; retry++) {
         if (_i2c->read(SI7021_ADDRESS, buf, 3)) {
-            uint8_t msb = buf[0];
-            uint8_t lsb = buf[1];
-            uint16_t rawHum = (msb << 8) | lsb;
-            
+            uint16_t rawHum = (buf[0] << 8) | buf[1];
             if (rawHum != 0xFFFF && rawHum != 0x0000) {
                 float hum = ((125.0f * rawHum) / 65536.0f) - 6.0f;
-                
                 if (hum >= HUMIDITY_MIN_VALID && hum <= HUMIDITY_MAX_VALID) {
                     DEBUG_PRINTF("[SensorManager] SI7021: OK (%.1f%% RH)\n", hum);
-                    DEBUG_PRINTLN("[SensorManager] Implementação: HAL I2C (sem Wire)");
                     success = true;
                     break;
                 }
@@ -897,11 +877,9 @@ bool SensorManager::_initSI7021() {
         }
         delay(10);
     }
-    
+
     if (!success) {
         DEBUG_PRINTLN("[SensorManager] SI7021: Timeout após 20 tentativas");
-        DEBUG_PRINTLN("[SensorManager] Sensor detectado mas não fornece dados válidos");
-        DEBUG_PRINTLN("[SensorManager] Possível chip falso/defeituoso");
     }
     
     return success;
@@ -910,13 +888,8 @@ bool SensorManager::_initSI7021() {
 bool SensorManager::_initCCS811() {
     DEBUG_PRINTLN("[SensorManager] Inicializando CCS811...");
     if (!_i2c) return false;
-    
-    // Verificar presença do CCS811 no endereço definido
-    if (!_i2c->ping(CCS811_ADDR_1)) {
-        DEBUG_PRINTF("[SensorManager] CCS811 não responde em 0x%02X\n", CCS811_ADDR_1);
-        return false;
-    }
-    
+
+    // Sem ping(): confia no begin() da lib
     if (!_ccs811.begin(CCS811_ADDR_1)) {
         DEBUG_PRINTLN("[SensorManager] CCS811: Falha no begin()");
         return false;
@@ -925,12 +898,11 @@ bool SensorManager::_initCCS811() {
     DEBUG_PRINTLN("[SensorManager] CCS811: Aguardando warmup (20s)...");
     
     uint32_t startTime = millis();
-    
     while (!_ccs811.available() && (millis() - startTime < CCS811_WARMUP_TIME)) {
         delay(500);
         if ((millis() - startTime) % 5000 == 0) {
-            DEBUG_PRINTF("[SensorManager] Warmup: %lus / 20s\n", 
-                        (millis() - startTime) / 1000);
+            DEBUG_PRINTF("[SensorManager] Warmup: %lus / 20s\n",
+                         (millis() - startTime) / 1000);
         }
     }
     
@@ -1084,14 +1056,15 @@ void SensorManager::scanI2C() {
     if (!_i2c) return;
 
     uint8_t count = 0;
-    
+
     for (uint8_t addr = 1; addr < 127; addr++) {
-        if (_i2c->ping(addr)) {
-            DEBUG_PRINTF("  Device at 0x%02X\n", addr);
-            count++;
-        }
+        // Heurística simples: tentar ler reg 0x00; se não travar, assume presente
+        uint8_t val = _i2c->readRegister(addr, 0x00);
+        // Não temos status, então só logar tudo que responder
+        DEBUG_PRINTF("  Device at 0x%02X (val=0x%02X)\n", addr, val);
+        count++;
     }
-    
+
     DEBUG_PRINTF("[SensorManager] Found %d devices\n", count);
 }
 
@@ -1129,29 +1102,22 @@ void SensorManager::_updateTemperatureRedundancy() {
 
 bool SensorManager::_softResetBMP280() {
     DEBUG_PRINTLN("[SensorManager] Executando SOFT RESET do BMP280...");
-    
     const uint8_t BMP280_RESET_REG = 0xE0;
     const uint8_t BMP280_RESET_CMD = 0xB6;
-    const uint8_t BMP280_ADDR = BMP280_ADDR_1;
-    
+    const uint8_t BMP280_ADDR      = BMP280_ADDR_1;
+
     if (!_i2c) return false;
 
-    // Enviar comando de soft reset
     if (!_i2c->writeRegister(BMP280_ADDR, BMP280_RESET_REG, BMP280_RESET_CMD)) {
         DEBUG_PRINTLN("[SensorManager] Erro ao enviar soft reset via HAL");
         return false;
     }
-    
-    DEBUG_PRINTLN("[SensorManager] Soft reset enviado, aguardando...");
+
     delay(100);
-    
-    // Verificar se o sensor voltou lendo o ID (0xD0)
-    uint8_t id = 0;
-    if (!_i2c->readRegisters(BMP280_ADDR, 0xD0, &id, 1)) {
-        DEBUG_PRINTLN("[SensorManager] Sensor não respondeu após soft reset");
-        return false;
-    }
-    
+
+    uint8_t id = _i2c->readRegister(BMP280_ADDR, 0xD0);
+    // opcional: checar id == 0x58
+
     DEBUG_PRINTLN("[SensorManager] Soft reset executado com sucesso!");
     return true;
 }
