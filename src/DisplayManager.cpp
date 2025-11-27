@@ -1,4 +1,5 @@
 #include "DisplayManager.h"
+#include <Wire.h>
 #include <math.h>
 
 #define SCREEN_WIDTH 128
@@ -22,11 +23,8 @@ DisplayManager::DisplayManager() :
 }
 
 bool DisplayManager::begin() {
-    // ✅ Evitar que Adafruit_SSD1306 chame Wire.begin()
-    // Passar false no construtor (se suportado) ou inicializar manualmente
-    
-    // Tentar inicializar sem reiniciar Wire
-    _display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS, false);  // ✅ false = não resetar I2C
+    // HAL já inicializou o barramento I2C; o false evita reset de I2C
+    _display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS, false);
     
     _display.clearDisplay();
     _display.setTextSize(1);
@@ -39,7 +37,6 @@ bool DisplayManager::begin() {
     
     return true;
 }
-
 
 void DisplayManager::clear() {
     if (!_isDisplayOn) return;

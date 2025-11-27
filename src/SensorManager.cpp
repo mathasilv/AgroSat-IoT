@@ -19,15 +19,18 @@
 
 SensorManager::SensorManager(HAL::I2C& i2c) :
     _i2c(&i2c),
-    _mpu9250(MPU9250_ADDRESS),
-    _temperature(NAN), _temperatureBMP(NAN), _temperatureSI(NAN),
+    _mpu9250(i2c, MPU9250_ADDRESS),
+    _bmp280(i2c),
+    _si7021(i2c),
+    _ccs811(i2c),
+    _temperature(NAN), _temperatureBMP(NAN), _temperatureSI(NAN), 
     _pressure(NAN), _altitude(NAN),
     _humidity(NAN), _co2Level(NAN), _tvoc(NAN),
     _seaLevelPressure(1013.25),
-    _gyroX(0.0), _gyroY(0.0), _gyroZ(0.0),
-    _accelX(0.0), _accelY(0.0), _accelZ(0.0),
-    _magX(0.0), _magY(0.0), _magZ(0.0),
-    _magOffsetX(0.0), _magOffsetY(0.0), _magOffsetZ(0.0),
+    _gyroX(0.0f), _gyroY(0.0f), _gyroZ(0.0f),
+    _accelX(0.0f), _accelY(0.0f), _accelZ(0.0f),
+    _magX(0.0f), _magY(0.0f), _magZ(0.0f),
+    _magOffsetX(0.0f), _magOffsetY(0.0f), _magOffsetZ(0.0f),
     _mpu9250Online(false), _bmp280Online(false),
     _si7021Online(false), _ccs811Online(false),
     _calibrated(false),
@@ -35,26 +38,26 @@ SensorManager::SensorManager(HAL::I2C& i2c) :
     _si7021TempFailures(0), _bmp280TempFailures(0),
     _lastReadTime(0), _lastCCS811Read(0), _lastSI7021Read(0),
     _lastHealthCheck(0), _consecutiveFailures(0), _filterIndex(0),
-    _sumAccelX(0), _sumAccelY(0), _sumAccelZ(0),
+    _sumAccelX(0.0f), _sumAccelY(0.0f), _sumAccelZ(0.0f),
     _lastBMP280Reinit(0),
     _bmp280FailCount(0),
     _historyIndex(0),
     _historyFull(false),
     _lastUpdateTime(0),
-    _lastPressureRead(0.0),
+    _lastPressureRead(0.0f),
     _identicalReadings(0),
     _warmupStartTime(0)
 {
     for (uint8_t i = 0; i < CUSTOM_FILTER_SIZE; i++) {
-        _accelXBuffer[i] = 0.0;
-        _accelYBuffer[i] = 0.0;
-        _accelZBuffer[i] = 0.0;
+        _accelXBuffer[i] = 0.0f;
+        _accelYBuffer[i] = 0.0f;
+        _accelZBuffer[i] = 0.0f;
     }
     
     for (int i = 0; i < 5; i++) {
-        _pressureHistory[i] = 1013.25;
-        _altitudeHistory[i] = 0.0;
-        _tempHistory[i] = 20.0;
+        _pressureHistory[i] = 1013.25f;
+        _altitudeHistory[i] = 0.0f;
+        _tempHistory[i]     = 20.0f;
     }
 }
 
@@ -124,7 +127,7 @@ void SensorManager::update() {
 void SensorManager::_updateIMU() {
     if (!_mpu9250Online) return;
 
-    xyzFloat gValues = _mpu9250.getGValues();
+    xyzFloat gValues   = _mpu9250.getGValues();
     xyzFloat gyrValues = _mpu9250.getGyrValues();
     xyzFloat magValues = _mpu9250.getMagValues();
 
@@ -167,10 +170,10 @@ void SensorManager::_updateBMP280() {
             continue;
         }
 
-        temp = _bmp280.readTemperature();
-        press = _bmp280.readPressure() / 100.0;
-        alt = _bmp280.readAltitude(1013.25);
-        
+        temp  = _bmp280.readTemperature();
+        press = _bmp280.readPressure() / 100.0f;   // Pa → hPa
+        alt   = _calculateAltitude(press);         // usa tua função interna
+
         if (!isnan(temp) && !isnan(press) && !isnan(alt)) {
             readSuccess = true;
             break;
@@ -205,35 +208,33 @@ void SensorManager::_updateBMP280() {
     }
 
     // Atualizar valores temporários
-    float tempBackup = _temperatureBMP;
+    float tempBackup  = _temperatureBMP;
     float pressBackup = _pressure;
-    float altBackup = _altitude;
+    float altBackup   = _altitude;
     
     _temperatureBMP = temp;
-    _pressure = press;
-    _altitude = alt;
+    _pressure       = press;
+    _altitude       = alt;
     
     // Validar ANTES de aceitar
     if (!_validateBMP280Reading()) {
         // Restaurar valores anteriores
         _temperatureBMP = tempBackup;
-        _pressure = pressBackup;
-        _altitude = altBackup;
+        _pressure       = pressBackup;
+        _altitude       = altBackup;
         
         _bmp280FailCount++;
         _bmp280TempFailures++;
         
         DEBUG_PRINTF("[SensorManager] BMP280: Leitura rejeitada (P=%.0f vs anterior %.0f hPa)\n", 
-                    press, pressBackup);
+                     press, pressBackup);
         
-        // ✅ NOVO: Se rejeitou mas diferença > 50 hPa OU sensor travado, forçar reset
-        bool bigDifference = abs(press - pressBackup) > 50.0;
-        bool sensorFrozen = (_identicalReadings >= 10);  // Travado detectado
+        bool bigDifference = fabsf(press - pressBackup) > 50.0f;
+        bool sensorFrozen  = (_identicalReadings >= 10);
         
         if (bigDifference || sensorFrozen) {
             unsigned long now = millis();
             
-            // ✅ Reduzir timeout para 10 segundos (não 30)
             if (now - _lastBMP280Reinit > 10000) {
                 if (sensorFrozen) {
                     DEBUG_PRINTLN("[SensorManager] BMP280: SENSOR TRAVADO! Forçando reinicialização IMEDIATA...");
@@ -245,11 +246,9 @@ void SensorManager::_updateBMP280() {
                 
                 if (_reinitBMP280()) {
                     DEBUG_PRINTLN("[SensorManager] BMP280: Reinicializado com sucesso!");
-                    
-                    // Resetar contadores
-                    _bmp280FailCount = 0;
+                    _bmp280FailCount    = 0;
                     _bmp280TempFailures = 0;
-                    _identicalReadings = 0;
+                    _identicalReadings  = 0;
                 } else {
                     DEBUG_PRINTLN("[SensorManager] BMP280: FALHA CRÍTICA na reinicialização!");
                     _bmp280Online = false;
@@ -258,7 +257,6 @@ void SensorManager::_updateBMP280() {
             }
         }
         
-        // Após 5 falhas normais, tentar reinicializar
         if (_bmp280FailCount >= 5) {
             unsigned long now = millis();
             
@@ -277,10 +275,11 @@ void SensorManager::_updateBMP280() {
     }
 
     // Leitura válida e aceita
-    _bmp280TempValid = true;
-    _bmp280FailCount = 0;
+    _bmp280TempValid    = true;
+    _bmp280FailCount    = 0;
     _bmp280TempFailures = 0;
 }
+
 
 void SensorManager::forceReinitBMP280() {
     DEBUG_PRINTLN("[SensorManager] Reinicialização forçada do BMP280...");
@@ -292,36 +291,23 @@ bool SensorManager::_reinitBMP280() {
 }
 
 void SensorManager::_updateSI7021() {
-    if (!_si7021Online || !_i2c) return;
+    if (!_si7021Online) return;
     
     uint32_t currentTime = millis();
     if (currentTime - _lastSI7021Read < SI7021_READ_INTERVAL) return;
     
-    // PASSO 1: Umidade (0xF5)
-    uint8_t cmd = 0xF5;
-    if (!_i2c->write(SI7021_ADDRESS, &cmd, 1)) return;
-    
-    delay(100);  // garante conversão completa
-    
-    uint8_t buf[3] = {0};
     bool humiditySuccess = false;
-    
-    if (_i2c->read(SI7021_ADDRESS, buf, 3)) {
-        uint8_t msb = buf[0];
-        uint8_t lsb = buf[1];
-        uint16_t rawHum = (msb << 8) | lsb;
-        
-        if (rawHum != 0xFFFF && rawHum != 0x0000) {
-            float hum = ((125.0f * rawHum) / 65536.0f) - 6.0f;
-            
-            if (hum >= HUMIDITY_MIN_VALID && hum <= HUMIDITY_MAX_VALID) {
-                _humidity = hum;
-                _lastSI7021Read = currentTime;
-                humiditySuccess = true;
-            }
+
+    // Passo 1: Umidade
+    float hum = NAN;
+    if (_si7021.readHumidity(hum)) {
+        if (!isnan(hum) && hum >= HUMIDITY_MIN_VALID && hum <= HUMIDITY_MAX_VALID) {
+            _humidity        = hum;
+            _lastSI7021Read  = currentTime;
+            humiditySuccess  = true;
         }
     }
-    
+
     if (!humiditySuccess) {
         static uint8_t failCount = 0;
         failCount++;
@@ -332,55 +318,41 @@ void SensorManager::_updateSI7021() {
         }
         return;
     }
-    
-    // PASSO 2: Temperatura (0xF3)
-    delay(30);
-    
-    cmd = 0xF3;
-    if (!_i2c->write(SI7021_ADDRESS, &cmd, 1)) return;
-    
-    delay(80);
-    
-    uint8_t tbuf[2] = {0};
-    if (_i2c->read(SI7021_ADDRESS, tbuf, 2)) {
-        uint8_t msb = tbuf[0];
-        uint8_t lsb = tbuf[1];
-        uint16_t rawTemp = (msb << 8) | lsb;
-        
-        if (rawTemp != 0xFFFF && rawTemp != 0x0000) {
-            float temp = ((175.72f * rawTemp) / 65536.0f) - 46.85f;
+
+    // Passo 2: Temperatura
+    float temp = NAN;
+    if (_si7021.readTemperature(temp)) {
+        if (_validateReading(temp, TEMP_MIN_VALID, TEMP_MAX_VALID)) {
+            _temperatureSI      = temp;
+            _si7021TempValid    = true;
+            _si7021TempFailures = 0;
+        } else {
+            _si7021TempValid = false;
+            _si7021TempFailures++;
             
-            if (_validateReading(temp, TEMP_MIN_VALID, TEMP_MAX_VALID)) {
-                _temperatureSI = temp;
-                _si7021TempValid = true;
-                _si7021TempFailures = 0;
-            } else {
-                _si7021TempValid = false;
-                _si7021TempFailures++;
-                
-                if (_si7021TempFailures >= MAX_TEMP_FAILURES) {
-                    DEBUG_PRINTLN("[SensorManager] SI7021: Temperatura com falhas consecutivas");
-                }
+            if (_si7021TempFailures >= MAX_TEMP_FAILURES) {
+                DEBUG_PRINTLN("[SensorManager] SI7021: Temperatura com falhas consecutivas");
             }
         }
     }
 }
+
 
 void SensorManager::_updateCCS811() {
     if (!_ccs811Online) return;
 
     uint32_t currentTime = millis();
     if (currentTime - _lastCCS811Read < CCS811_READ_INTERVAL) return;
-    
+
     _lastCCS811Read = currentTime;
 
-    if (_ccs811.available() && !_ccs811.readData()) {
-        float co2 = _ccs811.geteCO2();
+    if (_ccs811.available() && _ccs811.readData() == 0) {
+        float co2  = _ccs811.geteCO2();
         float tvoc = _ccs811.getTVOC();
 
         if (_validateCCSReadings(co2, tvoc)) {
             _co2Level = co2;
-            _tvoc = tvoc;
+            _tvoc     = tvoc;
         }
     }
 }
@@ -460,30 +432,24 @@ void SensorManager::resetAll() {
 bool SensorManager::_initMPU9250() {
     if (!_i2c) return false;
 
-    // WHO_AM_I (0x75) via HAL
-    uint8_t whoAmI = _i2c->readRegister(MPU9250_ADDRESS, 0x75);
-    // se quiser, pode checar whoAmI != 0x00/0xFF aqui
+    // Inicialização básica da IMU via HAL (acc + gyro)
+    if (!_mpu9250.begin()) {
+        return false;
+    }
 
-    if (!_mpu9250.init()) return false;
-
-    _mpu9250.setAccRange(MPU9250_ACC_RANGE_8G);
-    _mpu9250.setGyrRange(MPU9250_GYRO_RANGE_500);
-    _mpu9250.enableGyrDLPF();
-    _mpu9250.setGyrDLPF(MPU9250_DLPF_6);
-
-    // Inicializar magnetômetro (mantém a lógica original)
+    // Inicializar magnetômetro (AK8963 interno)
     if (!_mpu9250.initMagnetometer()) {
         DEBUG_PRINTLN("[SensorManager] Magnetometro falhou");
     } else {
         DEBUG_PRINTLN("[SensorManager] Magnetometro OK, iniciando calibração...");
         
-        float magMin[3] = {9999.0, 9999.0, 9999.0};
-        float magMax[3] = {-9999.0, -9999.0, -9999.0};
+        float magMin[3] = {9999.0f, 9999.0f, 9999.0f};
+        float magMax[3] = {-9999.0f, -9999.0f, -9999.0f};
         
         DEBUG_PRINTLN("[SensorManager] Rotacione o CubeSat lentamente em todos os eixos...");
         
         uint32_t startTime = millis();
-        uint16_t samples = 0;
+        uint16_t samples   = 0;
         const uint32_t calibrationTime = 10000;  // 10 segundos
         
         while (millis() - startTime < calibrationTime) {
@@ -505,7 +471,8 @@ bool SensorManager::_initMPU9250() {
             if (millis() - lastDisplayUpdate >= 100) {
                 lastDisplayUpdate = millis();
                 
-                uint8_t progress = ((millis() - startTime) * 100) / calibrationTime;
+                uint8_t progress =
+                    ((millis() - startTime) * 100) / calibrationTime;
                 
                 extern DisplayManager* g_displayManagerPtr;
                 if (g_displayManagerPtr && g_displayManagerPtr->isOn()) {
@@ -513,8 +480,10 @@ bool SensorManager::_initMPU9250() {
                 }
                 
                 if ((millis() - startTime) % 2000 < 100) {
-                    DEBUG_PRINTF("[SensorManager] Calibrando... %lus / 10s (%d samples)\n", 
-                                 (millis() - startTime) / 1000, samples);
+                    DEBUG_PRINTF(
+                        "[SensorManager] Calibrando... %lus / 10s (%d samples)\n", 
+                        (millis() - startTime) / 1000, samples
+                    );
                 }
             }
             
@@ -522,24 +491,26 @@ bool SensorManager::_initMPU9250() {
         }
         
         if (samples > 100) {
-            _magOffsetX = (magMax[0] + magMin[0]) / 2.0;
-            _magOffsetY = (magMax[1] + magMin[1]) / 2.0;
-            _magOffsetZ = (magMax[2] + magMin[2]) / 2.0;
+            _magOffsetX = (magMax[0] + magMin[0]) / 2.0f;
+            _magOffsetY = (magMax[1] + magMin[1]) / 2.0f;
+            _magOffsetZ = (magMax[2] + magMin[2]) / 2.0f;
             
-            DEBUG_PRINTF("[SensorManager] Magnetometro calibrado!\n");
+            DEBUG_PRINTLN("[SensorManager] Magnetometro calibrado!");
             DEBUG_PRINTF("[SensorManager] Offsets: X=%.2f Y=%.2f Z=%.2f µT\n", 
                          _magOffsetX, _magOffsetY, _magOffsetZ);
             DEBUG_PRINTF("[SensorManager] Samples coletados: %d\n", samples);
             
             extern DisplayManager* g_displayManagerPtr;
             if (g_displayManagerPtr && g_displayManagerPtr->isOn()) {
-                g_displayManagerPtr->showCalibrationResult(_magOffsetX, _magOffsetY, _magOffsetZ);
+                g_displayManagerPtr->showCalibrationResult(
+                    _magOffsetX, _magOffsetY, _magOffsetZ
+                );
             }
         } else {
             DEBUG_PRINTLN("[SensorManager] Calibração insuficiente, usando offsets zero");
-            _magOffsetX = 0.0;
-            _magOffsetY = 0.0;
-            _magOffsetZ = 0.0;
+            _magOffsetX = 0.0f;
+            _magOffsetY = 0.0f;
+            _magOffsetZ = 0.0f;
         }
     }
     
@@ -550,21 +521,26 @@ bool SensorManager::_initMPU9250() {
 
 
 bool SensorManager::_waitForBMP280Measurement() {
-    const uint8_t BMP280_STATUS_REG = 0xF3;
-    const uint8_t STATUS_MEASURING  = 0x08;
-    const uint8_t BMP280_ADDR       = BMP280_ADDR_1;
+    if (!_i2c || !_bmp280Online) return false;
 
-    if (!_i2c) return false;
+    const uint8_t BMP280_STATUS_REG = 0xF3;   // STATUS [web:102]
+    const uint8_t STATUS_MEASURING  = 0x08;   // bit 3
+    const uint8_t BMP280_ADDR       = BMP280_ADDR_1;  // ou se você guardar o endereço detectado
 
-    uint8_t maxRetries = 50;
+    uint8_t maxRetries = 50;  // ~50 ms de timeout
 
     while (maxRetries--) {
+        // Lê STATUS via HAL::I2C em vez de Wire
         uint8_t status = _i2c->readRegister(BMP280_ADDR, BMP280_STATUS_REG);
+
+        // Bit 3 = 0 significa medição completa (datasheet BMP280) [web:102]
         if ((status & STATUS_MEASURING) == 0) {
             return true;
         }
+
         delay(1);
     }
+
     return false;
 }
 
@@ -730,22 +706,16 @@ bool SensorManager::_initBMP280() {
     DEBUG_PRINTLN("[SensorManager] Inicializando BMP280 (método robusto)");
     DEBUG_PRINTLN("[SensorManager] ========================================");
     
-    _bmp280Online = false;
-    _bmp280TempValid = false;
+    _bmp280Online      = false;
+    _bmp280TempValid   = false;
     
-    _warmupStartTime = 0;
+    _warmupStartTime   = 0;
     _identicalReadings = 0;
-    _lastPressureRead = 0.0;
+    _lastPressureRead  = 0.0f;
     
-    // Se quiser timeout de I2C, implemente no HAL em vez de usar Wire.setTimeOut()
     delay(50);
     
-    if (!_softResetBMP280()) {
-        DEBUG_PRINTLN("[SensorManager] Falha no soft reset, tentando continuar...");
-    }
-    
-    delay(200);
-    
+    // Tentar 0x76 / 0x77 usando o driver HAL
     uint8_t addresses[] = {BMP280_ADDR_1, BMP280_ADDR_2};
     bool found = false;
     
@@ -761,7 +731,6 @@ bool SensorManager::_initBMP280() {
             }
             delay(200);
         }
-        
         if (found) break;
     }
     
@@ -770,16 +739,9 @@ bool SensorManager::_initBMP280() {
         return false;
     }
     
-    _bmp280.setSampling(
-        Adafruit_BMP280::MODE_NORMAL,
-        Adafruit_BMP280::SAMPLING_X2,
-        Adafruit_BMP280::SAMPLING_X16,
-        Adafruit_BMP280::FILTER_X16,
-        Adafruit_BMP280::STANDBY_MS_500
-    );
+    DEBUG_PRINTLN("[SensorManager] Configuração aplicada (via BMP280Hal)");
     
-    DEBUG_PRINTLN("[SensorManager] Configuração aplicada");
-    
+    // Warm-up global (filtro IIR + estabilidade)
     DEBUG_PRINTLN("[SensorManager] Aguardando estabilização (5 segundos)...");
     delay(5000);
     
@@ -791,8 +753,8 @@ bool SensorManager::_initBMP280() {
         
         for (int retry = 0; retry < 3; retry++) {
             if (_waitForBMP280Measurement()) {
-                press = _bmp280.readPressure() / 100.0;
-                temp = _bmp280.readTemperature();
+                press = _bmp280.readPressure() / 100.0f;   // Pa → hPa
+                temp  = _bmp280.readTemperature();
                 
                 if (!isnan(press) && !isnan(temp)) {
                     readSuccess = true;
@@ -811,10 +773,11 @@ bool SensorManager::_initBMP280() {
                      i + 1, temp, press);
         
         if (i == 4) {
+            float alt = _calculateAltitude(press);
             for (int j = 0; j < 5; j++) {
                 _pressureHistory[j] = press;
-                _altitudeHistory[j] = _calculateAltitude(press);
-                _tempHistory[j] = temp;
+                _altitudeHistory[j] = alt;
+                _tempHistory[j]     = temp;
             }
             _historyFull = true;
         }
@@ -822,9 +785,9 @@ bool SensorManager::_initBMP280() {
         delay(200);
     }
     
-    _bmp280Online = true;
-    _bmp280TempValid = true;
-    _bmp280FailCount = 0;
+    _bmp280Online      = true;
+    _bmp280TempValid   = true;
+    _bmp280FailCount   = 0;
     
     DEBUG_PRINTLN("[SensorManager] ========================================");
     DEBUG_PRINTLN("[SensorManager] BMP280 INICIALIZADO COM SUCESSO!");
@@ -835,69 +798,52 @@ bool SensorManager::_initBMP280() {
 
 
 bool SensorManager::_initSI7021() {
-    DEBUG_PRINTLN("[SensorManager] Inicializando SI7021 (HAL I2C)...");
-    if (!_i2c) return false;
-
-    // User Register (0xE7) só pra verificar presença
-    uint8_t userReg = _i2c->readRegister(SI7021_ADDRESS, 0xE7);
-    // opcional: se userReg == 0xFF tratar como erro
-
-    DEBUG_PRINTLN("[SensorManager] SI7021: Detectado no barramento I2C");
-
-    // Reset software
-    uint8_t cmd = 0xFE;
-    if (!_i2c->write(SI7021_ADDRESS, &cmd, 1)) return false;
-    delay(50);
-
-    // Config User Register
-    uint8_t cfg[2] = {0xE6, 0x00};
-    if (!_i2c->write(SI7021_ADDRESS, cfg, 2)) return false;
-    delay(20);
+    DEBUG_PRINTLN("[SensorManager] Inicializando SI7021 (driver HAL)...");
     
-    // Teste de leitura de umidade (idêntico em lógica ao seu, mas via HAL) [attached_file:66]
-    bool success = false;
-    cmd = 0xF5;
-    if (!_i2c->write(SI7021_ADDRESS, &cmd, 1)) {
+    _si7021Online      = false;
+    _si7021TempValid   = false;
+    _si7021TempFailures= 0;
+
+    // Testar presença + soft reset + user register via driver
+    if (!_si7021.begin(SI7021_ADDRESS)) {
+        DEBUG_PRINTLN("[SensorManager] SI7021: Não inicializado (HAL)");
         return false;
     }
-    delay(20);
 
-    uint8_t buf[3];
-    for (uint8_t retry = 0; retry < 20; retry++) {
-        if (_i2c->read(SI7021_ADDRESS, buf, 3)) {
-            uint16_t rawHum = (buf[0] << 8) | buf[1];
-            if (rawHum != 0xFFFF && rawHum != 0x0000) {
-                float hum = ((125.0f * rawHum) / 65536.0f) - 6.0f;
-                if (hum >= HUMIDITY_MIN_VALID && hum <= HUMIDITY_MAX_VALID) {
-                    DEBUG_PRINTF("[SensorManager] SI7021: OK (%.1f%% RH)\n", hum);
-                    success = true;
-                    break;
-                }
-            }
+    // Fazer uma leitura inicial para log
+    float hum = NAN;
+    float temp = NAN;
+
+    if (_si7021.readHumidity(hum)) {
+        _humidity = hum;
+        DEBUG_PRINTF("[SensorManager] SI7021: Umidade inicial = %.1f%%\n", hum);
+    }
+
+    if (_si7021.readTemperature(temp)) {
+        if (_validateReading(temp, TEMP_MIN_VALID, TEMP_MAX_VALID)) {
+            _temperatureSI      = temp;
+            _si7021TempValid    = true;
+            _si7021TempFailures = 0;
+            DEBUG_PRINTF("[SensorManager] SI7021: Temperatura inicial = %.2f°C\n", temp);
         }
-        delay(10);
     }
 
-    if (!success) {
-        DEBUG_PRINTLN("[SensorManager] SI7021: Timeout após 20 tentativas");
-    }
-    
-    return success;
+    _si7021Online = true;
+    return true;
 }
 
-bool SensorManager::_initCCS811() {
-    DEBUG_PRINTLN("[SensorManager] Inicializando CCS811...");
-    if (!_i2c) return false;
 
-    // Sem ping(): confia no begin() da lib
+bool SensorManager::_initCCS811() {
+    DEBUG_PRINTLN("[SensorManager] Inicializando CCS811 (HAL)...");
+
     if (!_ccs811.begin(CCS811_ADDR_1)) {
         DEBUG_PRINTLN("[SensorManager] CCS811: Falha no begin()");
         return false;
     }
-    
+
     DEBUG_PRINTLN("[SensorManager] CCS811: Aguardando warmup (20s)...");
-    
     uint32_t startTime = millis();
+
     while (!_ccs811.available() && (millis() - startTime < CCS811_WARMUP_TIME)) {
         delay(500);
         if ((millis() - startTime) % 5000 == 0) {
@@ -905,49 +851,40 @@ bool SensorManager::_initCCS811() {
                          (millis() - startTime) / 1000);
         }
     }
-    
+
     if (!_ccs811.available()) {
         DEBUG_PRINTLN("[SensorManager] CCS811: Timeout warmup");
         return false;
     }
-    
+
     DEBUG_PRINTLN("[SensorManager] CCS811 disponível!");
-    
+
+    // Compensação ambiental usando BMP280Hal + SI7021Hal
     if (_bmp280Online || _si7021Online) {
         float temp = 25.0f;
         float hum  = 50.0f;
-        
+
         if (_bmp280Online) {
-            float tempRead = _bmp280.readTemperature();
-            if (!isnan(tempRead) && tempRead >= TEMP_MIN_VALID && tempRead <= TEMP_MAX_VALID) {
-                temp = tempRead;
+            float t = _bmp280.readTemperature();
+            if (_validateReading(t, TEMP_MIN_VALID, TEMP_MAX_VALID)) {
+                temp = t;
             }
         }
-        
+
         if (_si7021Online) {
-            uint8_t cmd = 0xF5;
-            if (_i2c->write(SI7021_ADDRESS, &cmd, 1)) {
-                delay(20);
-                uint8_t hbuf[2] = {0};
-                if (_i2c->read(SI7021_ADDRESS, hbuf, 2)) {
-                    uint16_t rawHum = (hbuf[0] << 8) | hbuf[1];
-                    if (rawHum != 0xFFFF && rawHum != 0x0000) {
-                        float humRead = ((125.0f * rawHum) / 65536.0f) - 6.0f;
-                        if (humRead >= HUMIDITY_MIN_VALID && humRead <= HUMIDITY_MAX_VALID) {
-                            hum = humRead;
-                        }
-                    }
-                }
+            float h = NAN;
+            if (_si7021.readHumidity(h) &&
+                h >= HUMIDITY_MIN_VALID && h <= HUMIDITY_MAX_VALID) {
+                hum = h;
             }
         }
-        
+
         _ccs811.setEnvironmentalData(hum, temp);
         DEBUG_PRINTF("[SensorManager] CCS811: Compensação T=%.1f°C H=%.1f%%\n", temp, hum);
     }
-    
+
     return true;
 }
-
 
 bool SensorManager::_validateMPUReadings(float gx, float gy, float gz,
                                           float ax, float ay, float az,
@@ -1018,16 +955,19 @@ void SensorManager::_performHealthCheck() {
 
 
 bool SensorManager::_calibrateMPU9250() {
-    if (!_mpu9250Online) return false;
+    DEBUG_PRINTLN("[SensorManager] Calibrando MPU9250 (via _initMPU9250)...");
     
-    DEBUG_PRINTLN("[SensorManager] Calibrando MPU9250...");
+    bool ok = _initMPU9250();
+    _calibrated = ok;
     
-    _mpu9250.autoOffsets();
-    delay(100);
-    
-    DEBUG_PRINTLN("[SensorManager] Calibração concluída!");
-    return true;
+    if (ok) {
+        DEBUG_PRINTLN("[SensorManager] Calibração concluída!");
+    } else {
+        DEBUG_PRINTLN("[SensorManager] Falha na calibração da MPU9250");
+    }
+    return ok;
 }
+
 
 // OTIMIZADO: Multiplicação ao invés de divisão
 float SensorManager::_applyFilter(float newValue, float* buffer, float& sum) {
@@ -1098,26 +1038,4 @@ void SensorManager::_updateTemperatureRedundancy() {
         lastWarning = millis();
         DEBUG_PRINTLN("[SensorManager] CRÍTICO: Ambos sensores de temperatura falharam!");
     }
-}
-
-bool SensorManager::_softResetBMP280() {
-    DEBUG_PRINTLN("[SensorManager] Executando SOFT RESET do BMP280...");
-    const uint8_t BMP280_RESET_REG = 0xE0;
-    const uint8_t BMP280_RESET_CMD = 0xB6;
-    const uint8_t BMP280_ADDR      = BMP280_ADDR_1;
-
-    if (!_i2c) return false;
-
-    if (!_i2c->writeRegister(BMP280_ADDR, BMP280_RESET_REG, BMP280_RESET_CMD)) {
-        DEBUG_PRINTLN("[SensorManager] Erro ao enviar soft reset via HAL");
-        return false;
-    }
-
-    delay(100);
-
-    uint8_t id = _i2c->readRegister(BMP280_ADDR, 0xD0);
-    // opcional: checar id == 0x58
-
-    DEBUG_PRINTLN("[SensorManager] Soft reset executado com sucesso!");
-    return true;
 }

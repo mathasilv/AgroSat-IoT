@@ -1,0 +1,8 @@
+{
+  "name": "BMP280Hal",
+  "version": "1.0.0",
+  "build": {
+    "srcDir": ".",
+    "includeDir": "."
+  }
+}

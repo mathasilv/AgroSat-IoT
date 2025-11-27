@@ -2,9 +2,10 @@
 #define SENSORMANAGER_H
 
 #include <Arduino.h>
-#include <MPU9250_WE.h>
-#include <Adafruit_BMP280.h>
-#include <Adafruit_CCS811.h>
+#include "MPU9250Hal.h"
+#include "BMP280Hal.h"
+#include "SI7021Hal.h"
+#include "CCS811Hal.h"
 #include <HAL/interface/I2C.h>
 #include <HAL/board/ttgo_lora32_v21.h>
 #include "config.h"
@@ -57,13 +58,12 @@ public:
     void forceReinitBMP280();
 
 private:
-    // Novo: ponteiro/ref para HAL I2C
     HAL::I2C* _i2c;
 
-    // Mantém exatamente os mesmos membros que você já tem hoje
-    MPU9250_WE _mpu9250;
-    Adafruit_BMP280 _bmp280;
-    Adafruit_CCS811 _ccs811;
+    MPU9250Hal _mpu9250;
+    BMP280Hal  _bmp280;
+    SI7021Hal  _si7021;
+    CCS811Hal  _ccs811;
     
     // DADOS DOS SENSORES
     float _temperature, _temperatureBMP, _temperatureSI;
