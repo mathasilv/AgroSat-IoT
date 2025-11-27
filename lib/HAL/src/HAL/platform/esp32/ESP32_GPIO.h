@@ -10,7 +10,7 @@
 #ifndef ESP32_GPIO_H
 #define ESP32_GPIO_H
 
-#include "hal/interface/GPIO.h"
+#include <HAL/interface/GPIO.h>
 #include <Arduino.h>
 
 namespace HAL {
@@ -26,27 +26,27 @@ public:
     
     void pinMode(uint8_t pin, PinMode mode) override {
         switch (mode) {
-            case PinMode::INPUT:
+            case PinMode::Input:
                 ::pinMode(pin, INPUT);
                 break;
-            case PinMode::OUTPUT:
+            case PinMode::Output:
                 ::pinMode(pin, OUTPUT);
                 break;
-            case PinMode::INPUT_PULLUP:
+            case PinMode::InputPullup:
                 ::pinMode(pin, INPUT_PULLUP);
                 break;
-            case PinMode::INPUT_PULLDOWN:
+            case PinMode::InputPulldown:
                 ::pinMode(pin, INPUT_PULLDOWN);
                 break;
         }
     }
     
     void digitalWrite(uint8_t pin, PinState state) override {
-        ::digitalWrite(pin, static_cast<uint8_t>(state));
+        ::digitalWrite(pin, (state == PinState::High) ? HIGH : LOW);
     }
     
     PinState digitalRead(uint8_t pin) override {
-        return (::digitalRead(pin) == HIGH) ? PinState::HIGH : PinState::LOW;
+        return (::digitalRead(pin) == HIGH) ? PinState::High : PinState::Low;
     }
     
     void attachInterrupt(uint8_t pin, void (*callback)(), int mode) override {

@@ -10,7 +10,7 @@
 #ifndef ESP32_SPI_H
 #define ESP32_SPI_H
 
-#include "hal/interface/SPI.h"
+#include <HAL/interface/SPI.h>
 #include <SPI.h>
 
 namespace HAL {

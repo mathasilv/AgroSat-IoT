@@ -10,7 +10,7 @@
 #ifndef ESP32_I2C_H
 #define ESP32_I2C_H
 
-#include "hal/interface/I2C.h"
+#include <HAL/interface/I2C.h>
 #include <Wire.h>
 
 namespace HAL {

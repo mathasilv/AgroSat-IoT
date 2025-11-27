@@ -10,7 +10,7 @@
 #ifndef ESP32_UART_H
 #define ESP32_UART_H
 
-#include "hal/interface/UART.h"
+#include <HAL/interface/UART.h>
 #include <HardwareSerial.h>
 
 namespace HAL {
