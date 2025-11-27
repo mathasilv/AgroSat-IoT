@@ -6,14 +6,14 @@ const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
 DisplayManager* g_displayManagerPtr = nullptr;
 
 TelemetryManager::TelemetryManager(HAL::I2C& i2c) :
-    _i2c(&i2c),                 // novo: guarda ponteiro pro HAL I2C
-    _sensors(i2c),              // novo: passa HAL I2C pro SensorManager
+    _i2c(&i2c),
+    _sensors(i2c),
     _comm(),
     _storage(),
     _power(),
     _health(),
-    _displayMgr(), 
-    _rtc(),
+    _displayMgr(),
+    _rtc(i2c),          // <-- novo: injeta HAL no RTCManager
     _button(),
     _mode(MODE_INIT),
     _missionActive(false),
@@ -152,7 +152,7 @@ bool TelemetryManager::begin() {
     }
 
     DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC...");
-    if (_rtc.begin(&Wire)) {
+    if (_rtc.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] RTC OK");
         if (_useNewDisplay && displayOk) {

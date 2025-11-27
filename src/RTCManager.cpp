@@ -2,20 +2,24 @@
 #include <WiFi.h>
 #include <time.h>
 
-RTCManager::RTCManager() : _wire(nullptr), _initialized(false) {}
+RTCManager::RTCManager(HAL::I2C& i2c)
+    : _rtc(),
+      _i2c(&i2c),
+      _initialized(false) {}
 
-bool RTCManager::begin(TwoWire* wire) {
-    _wire = wire;
-    
-    DEBUG_PRINTLN("[RTC] Usando barramento I2C ja inicializado");
-    
-    // Limpar erros anteriores do barramento
-    _wire->clearWriteError();
-    
-    // Delay maior para estabilizacao do barramento
+// Usa HAL::I2C para detecção; RTClib continua usando Wire por baixo do HAL
+bool RTCManager::begin() {
+    if (!_i2c) {
+        DEBUG_PRINTLN("[RTC] Erro: HAL I2C nulo");
+        return false;
+    }
+
+    DEBUG_PRINTLN("[RTC] Usando barramento I2C via HAL");
+
+    // Delay maior para estabilização do barramento
     delay(1000);
     
-    // Tentar detectar RTC ate 3 vezes
+    // Tentar detectar RTC até 3 vezes
     bool rtcDetected = false;
     for (uint8_t attempt = 1; attempt <= 3; attempt++) {
         DEBUG_PRINTF("[RTC] Tentativa %d/3 de deteccao...\n", attempt);
@@ -39,12 +43,12 @@ bool RTCManager::begin(TwoWire* wire) {
     // Delay adicional antes de inicializar
     delay(500);
     
-    // Tentar inicializar com RTClib
+    // Tentar inicializar com RTClib (usa Wire configurado pelo HAL)
     if (!_rtc.begin()) {
         DEBUG_PRINTLN("[RTC] Falha ao inicializar biblioteca RTClib");
         DEBUG_PRINTLN("[RTC] Tentando inicializacao manual...");
         
-        // Forcar inicializacao manual
+        // Forçar inicialização manual
         _initialized = true;
         _rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
         
@@ -52,7 +56,7 @@ bool RTCManager::begin(TwoWire* wire) {
         return true;
     }
     
-    // Inicializacao bem-sucedida
+    // Inicialização bem-sucedida
     delay(100);
     
     // Verificar perda de energia
@@ -169,53 +173,19 @@ uint32_t RTCManager::getUnixTime() {
     return _rtc.now().unixtime() + RTC_TIMEZONE_OFFSET;
 }
 
+// Detecção via HAL: lê registrador de segundos (0x00) e valida faixa
 bool RTCManager::_detectRTC() {
-    // Limpar erros antes de tentar comunicacao
-    _wire->clearWriteError();
-    
-    // Tentar acessar registro de segundos (0x00)
-    _wire->beginTransmission(DS3231_ADDRESS);
-    _wire->write(0x00);
-    uint8_t error = _wire->endTransmission();
-    
-    if (error == 0) {
-        // Tentar ler para confirmar comunicacao - cast explicito para evitar ambiguidade
-        uint8_t bytesToRead = 1;
-        _wire->requestFrom((uint8_t)DS3231_ADDRESS, bytesToRead);
-        
-        if (_wire->available()) {
-            _wire->read(); // Descartar leitura
-            DEBUG_PRINTLN("[RTC] DS3231 respondeu corretamente");
-            return true;
-        } else {
-            DEBUG_PRINTLN("[RTC] DS3231 ACK mas sem dados");
-            return false;
-        }
+    if (!_i2c) return false;
+
+    // Ler registrador de segundos (0x00)
+    uint8_t secondsReg = _i2c->readRegister(DS3231_ADDRESS, 0x00);
+    uint8_t seconds = secondsReg & 0x7F;  // BCD, bit7 = CH
+
+    if (seconds <= 59) {
+        DEBUG_PRINTLN("[RTC] DS3231 respondeu corretamente (registro de segundos valido)");
+        return true;
     } else {
-        DEBUG_PRINTF("[RTC] DS3231 nao respondeu (erro I2C: %d)\n", error);
-        
-        // Decodificar erro
-        switch(error) {
-            case 1:
-                DEBUG_PRINTLN("[RTC] Erro: Dados muito longos para buffer");
-                break;
-            case 2:
-                DEBUG_PRINTLN("[RTC] Erro: NACK ao enviar endereco");
-                break;
-            case 3:
-                DEBUG_PRINTLN("[RTC] Erro: NACK ao enviar dados");
-                break;
-            case 4:
-                DEBUG_PRINTLN("[RTC] Erro: Outro erro I2C");
-                break;
-            case 5:
-                DEBUG_PRINTLN("[RTC] Erro: Timeout I2C");
-                break;
-            default:
-                DEBUG_PRINTF("[RTC] Erro: Codigo desconhecido %d\n", error);
-                break;
-        }
-        
+        DEBUG_PRINTF("[RTC] Leitura invalida do registro de segundos: 0x%02X\n", secondsReg);
         return false;
     }
 }
@@ -223,4 +193,3 @@ bool RTCManager::_detectRTC() {
 time_t RTCManager::_applyOffset(time_t utcTime) const {
     return utcTime + RTC_TIMEZONE_OFFSET;
 }
-
