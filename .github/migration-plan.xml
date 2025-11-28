@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<move>
+  <!-- MOVER HAL atual para lib/ (mantendo estrutura) -->
+  <file from="hal/interface/SPI.h" to="lib/HAL/interface/SPI.h"/>
+  <file from="hal/interface/SPI.cpp" to="lib/HAL/interface/SPI.cpp"/>
+  <file from="hal/interface/GPIO.h" to="lib/HAL/interface/GPIO.h"/>
+  <file from="hal/interface/GPIO.cpp" to="lib/HAL/interface/GPIO.cpp"/>
+  <file from="hal/interface/I2C.h" to="lib/HAL/interface/I2C.h"/>
+  <file from="hal/interface/I2C.cpp" to="lib/HAL/interface/I2C.h"/>
+  
+  <!-- MOVER HAL ESP32 para lib/ -->
+  <file from="hal/platform/esp32/ESP32_SPI.h" to="lib/HAL/platform/esp32/ESP32_SPI.h"/>
+  <file from="hal/platform/esp32/ESP32_SPI.cpp" to="lib/HAL/platform/esp32/ESP32_SPI.cpp"/>
+  <file from="hal/platform/esp32/ESP32_GPIO.h" to="lib/HAL/platform/esp32/ESP32_GPIO.h"/>
+  <file from="hal/platform/esp32/ESP32_GPIO.cpp" to="lib/HAL/platform/esp32/ESP32_GPIO.cpp"/>
+  <file from="hal/platform/esp32/ESP32_I2C.h" to="lib/HAL/platform/esp32/ESP32_I2C.h"/>
+  <file from="hal/platform/esp32/ESP32_I2C.cpp" to="lib/HAL/platform/esp32/ESP32_I2C.cpp"/>
+  
+  <!-- CRIAR estrutura Comms vazia -->
+  <directory path="lib/Comms"/>
+  <directory path="lib/HAL/LoRaHal"/>
+  
+  <!-- MOVER CommunicationManager para lib/Comms/ -->
+  <file from="src/managers/CommunicationManager.h" to="lib/Comms/CommsManager.h"/>
+  <file from="src/managers/CommunicationManager.cpp" to="lib/Comms/CommsManager.cpp"/>
+  
+  <!-- REMOVER pasta hal/ vazia -->
+  <delete path="hal"/>
+</move>
