@@ -5,17 +5,14 @@
 #include <HAL/interface/I2C.h>
 #include "BMP280Hal.h"
 #include "SI7021Hal.h"
-#include "config.h"
+#include "config.h"  // ✅ Usa as definições de config.h
 
-// Serviço de ambiente: BMP280 + SI7021 (temp, pressão, altitude, umidade)
+// Serviço de ambiente: BMP280 + SI7021
 class EnvService {
 public:
     EnvService(BMP280Hal& bmp, SI7021Hal& si7021, HAL::I2C& i2c);
 
-    // Inicializa BMP280 + SI7021 com método robusto
     bool begin();
-
-    // Atualiza leituras (chamar em ~SENSOR_READ_INTERVAL)
     void update();
 
     // Status
@@ -24,15 +21,17 @@ public:
     bool isBmpTempValid() const { return _bmpTempValid; }
     bool isSiTempValid()  const { return _siTempValid; }
 
-    // Valores individuais
+    // Valores
     float getBmpTemperature() const { return _temperatureBMP; }
     float getSiTemperature()  const { return _temperatureSI; }
     float getPressure()       const { return _pressure; }
     float getAltitude()       const { return _altitude; }
     float getHumidity()       const { return _humidity; }
-
-    // Temperatura “oficial” com redundância (SI7021 > BMP280)
     float getTemperature()    const { return _temperature; }
+
+    // ✅ Getters adicionais
+    uint8_t getBmpAddress()   const { return _bmpAddress; }
+    uint8_t getBmpMode()      const { return _bmpMode; }
 
 private:
     HAL::I2C*  _i2c;
@@ -44,7 +43,7 @@ private:
     bool _siOnline;
 
     // DADOS
-    float _temperature;      // escolhida (redundância)
+    float _temperature;
     float _temperatureBMP;
     float _temperatureSI;
     float _pressure;
@@ -58,7 +57,11 @@ private:
     uint8_t _siTempFailures;
     uint8_t _bmpFailCount;
 
-    // CONTROLE DE TEMPO / HISTÓRICO (BMP280)
+    // ✅ Novos membros
+    uint8_t _bmpAddress;
+    uint8_t _bmpMode;
+
+    // CONTROLE
     unsigned long _warmupStartTime;
     unsigned long _lastUpdateTime;
     float         _pressureHistory[5];
@@ -68,24 +71,50 @@ private:
     bool          _historyFull;
     float         _lastPressureRead;
     uint8_t       _identicalReadings;
-
-    // SI7021
     unsigned long _lastSiRead;
 
-    // Limite de falhas consecutivas de temperatura (SI7021)
+    // ========================================
+    // ✅ CONSTANTES APENAS DO BMP280 (não definidas em config.h)
+    // ========================================
+    
+    // Registradores BMP280
+    static constexpr uint8_t BMP280_REGISTER_CONTROL = 0xF4;
+    static constexpr uint8_t BMP280_REGISTER_STATUS  = 0xF3;
+    
+    // Bits do registrador de status
+    static constexpr uint8_t BMP280_STATUS_MEASURING = 0x08;
+    static constexpr uint8_t BMP280_STATUS_IM_UPDATE = 0x01;
+    
+    // Modos de operação
+    static constexpr uint8_t BMP280_MODE_SLEEP  = 0x00;
+    static constexpr uint8_t BMP280_MODE_FORCED = 0x01;
+    static constexpr uint8_t BMP280_MODE_NORMAL = 0x03;
+
+    // ========================================
+    // ✅ CONSTANTES ESPECÍFICAS (não em config.h)
+    // ========================================
+    
     static constexpr uint8_t MAX_TEMP_FAILURES = 5;
 
+    // ========================================
     // MÉTODOS INTERNOS
+    // ========================================
+    
+    // BMP280
     bool  _initBMP280();
-    bool  _initSI7021();
     void  _updateBMP280();
-    void  _updateSI7021();
-
+    bool  _forceBMP280Measurement();
+    bool  _isBMP280Ready();
     bool  _waitForBMP280Measurement();
     bool  _validateBMP280Reading();
     float _getMedian(float* values, uint8_t count);
     bool  _isOutlier(float value, float* history, uint8_t count);
 
+    // SI7021
+    bool  _initSI7021();
+    void  _updateSI7021();
+
+    // Comum
     bool  _validateReading(float value, float minValid, float maxValid);
     void  _updateTemperatureRedundancy();
     float _calculateAltitude(float pressure);
