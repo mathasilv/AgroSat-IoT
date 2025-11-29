@@ -7,7 +7,7 @@
 #define LORA_COMPATIBILITY_H
 
 #include <Arduino.h>
-#include <HAL/interface/SPI.h>
+#include <SPI.h>
 #include "SX127x.h"
 
 namespace SX127x {

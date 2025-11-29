@@ -16,13 +16,14 @@
 #include <ArduinoJson.h>
 #include <vector>
 #include "config.h"
+#include <HAL/platform/esp32/ESP32_SPI.h>
 
 class CommunicationManager {
 public:
     CommunicationManager();
     
     // Inicialização
-    bool begin();
+    bool begin();  // ← RECEBE SPI!
     bool initLoRa();
     bool retryLoRaInit(uint8_t maxAttempts = 3);
     
@@ -136,6 +137,16 @@ private:
         const TelemetryData& data,
         const GroundNodeBuffer& buffer,
         std::vector<uint16_t>& includedNodes);
+
+    HAL::ESP32_SPI halSPI;  // ← LOCAL DIRETO!
+    bool _halSPIInitialized;
+        // Métodos SX127x native
+    uint8_t _readRegister(uint8_t reg);
+    void _writeRegister(uint8_t reg, uint8_t value);
+    void _configureSX127xNative();
+        void _setFrequency(uint32_t freq);  // ← FALTAVA!
+    int _readRSSI();  // ← FALTAVA!
+
 };
 
 #endif // COMMUNICATION_MANAGER_H

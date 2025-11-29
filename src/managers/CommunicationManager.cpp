@@ -40,22 +40,55 @@ CommunicationManager::CommunicationManager() :
         _expectedSeqNum[i] = 0;
     }
 }
-
 bool CommunicationManager::begin() {
+    _halSPIInitialized = false;
+    
     DEBUG_PRINTLN("[CommunicationManager] ===========================================");
     DEBUG_PRINTLN("[CommunicationManager] Inicializando DUAL MODE (LoRa CBOR + WiFi)");
     DEBUG_PRINTLN("[CommunicationManager] Board: TTGO LoRa32 V2.1 (T3 V1.6)");
     DEBUG_PRINTLN("[CommunicationManager] ===========================================");
     
+    // HAL LOCAL
+    if (!halSPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, 8000000UL)) {
+        DEBUG_PRINTLN("[CommunicationManager] FALHA: halSPI.begin()!");
+        return false;
+    }
+    halSPI.configureCS(LORA_CS);
+    _halSPIInitialized = true;
+    DEBUG_PRINTLN("[CommunicationManager] HAL LOCAL ✓");
+    
     bool loraOk = initLoRa();
     bool wifiOk = connectWiFi();
     
     DEBUG_PRINTLN("[CommunicationManager] -------------------------------------------");
-    DEBUG_PRINTF("[CommunicationManager] Status Final: LoRa=%s WiFi=%s\n", 
+    DEBUG_PRINTF("[CommunicationManager] Status Final: LoRa=%s WiFi=%s\n",
                  loraOk ? "OK" : "FALHOU", wifiOk ? "OK" : "FALHOU");
-    DEBUG_PRINTLN("[CommunicationManager] ===========================================");
-    
     return (loraOk || wifiOk);
+}
+
+bool CommunicationManager::initLoRa() {
+    DEBUG_PRINTLN("[CommunicationManager] ━━━━━ SX127x NATIVE HAL ━━━━━");
+    
+    // 1. RESET
+    pinMode(LORA_RST, OUTPUT);
+    digitalWrite(LORA_RST, LOW); delay(10);
+    digitalWrite(LORA_RST, HIGH); delay(100);
+    
+    // 2. VERIFICAR CHIP
+    uint8_t version = _readRegister(0x42);
+    DEBUG_PRINTF("[CommunicationManager] SX127x version: 0x%02X ", version);
+    if (version != 0x12) {
+        DEBUG_PRINTLN("❌ FALHOU!");
+        return false;
+    }
+    DEBUG_PRINTLN("✅ OK!");
+    
+    // 3. CONFIGURAR NATIVE
+    _configureSX127xNative();
+    _loraInitialized = true;
+    
+    DEBUG_PRINTLN("[CommunicationManager] SX127x NATIVE ✓");
+    return true;
 }
 
 void CommunicationManager::_configureLoRaParameters() {
@@ -75,74 +108,42 @@ void CommunicationManager::_configureLoRaParameters() {
     
     LoRa.disableInvertIQ();
 }
-
-bool CommunicationManager::initLoRa() {
-    DEBUG_PRINTLN("[CommunicationManager] ━━━━━ INICIALIZANDO LORA (LilyGO) ━━━━━");
-    DEBUG_PRINTLN("[CommunicationManager] Board: TTGO LoRa32 V2.1 (T3 V1.6)");
-    
-    DEBUG_PRINTF("[CommunicationManager] Pinos SPI:\n");
-    DEBUG_PRINTF("[CommunicationManager]   SCK  = %d\n", LORA_SCK);
-    DEBUG_PRINTF("[CommunicationManager]   MISO = %d\n", LORA_MISO);
-    DEBUG_PRINTF("[CommunicationManager]   MOSI = %d\n", LORA_MOSI);
-    DEBUG_PRINTF("[CommunicationManager]   CS   = %d\n", LORA_CS);
-    DEBUG_PRINTF("[CommunicationManager]   RST  = %d\n", LORA_RST);
-    DEBUG_PRINTF("[CommunicationManager]   DIO0 = %d\n", LORA_DIO0);
-    
-    pinMode(LORA_RST, OUTPUT);
-    digitalWrite(LORA_RST, LOW);
-    delay(10);
-    digitalWrite(LORA_RST, HIGH);
-    delay(100);
-    DEBUG_PRINTLN("[CommunicationManager] Módulo LoRa resetado");
-    
-    SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
-    DEBUG_PRINTLN("[CommunicationManager] SPI inicializado");
-    
-    LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
-    DEBUG_PRINTLN("[CommunicationManager] Pinos configurados (CS, RST, DIO0)");
-    
-    DEBUG_PRINTF("[CommunicationManager] Tentando LoRa.begin(%.1f MHz)... ", LORA_FREQUENCY / 1E6);
-    if (!LoRa.begin(LORA_FREQUENCY)) {
-        DEBUG_PRINTLN("FALHOU!");
-        DEBUG_PRINTLN("[CommunicationManager] Erro: Chip LoRa não respondeu");
-        _loraInitialized = false;
-        return false;
-    }
-    DEBUG_PRINTLN("OK!");
-    
-    DEBUG_PRINTLN("[CommunicationManager] Configurando parâmetros LoRa...");
-    _configureLoRaParameters();
-    
-    DEBUG_PRINTF("[CommunicationManager]   TX Power: %d dBm\n", LORA_TX_POWER);
-    DEBUG_PRINTF("[CommunicationManager]   Bandwidth: %.0f kHz\n", LORA_SIGNAL_BANDWIDTH / 1000);
-    DEBUG_PRINTF("[CommunicationManager]   Spreading Factor: SF%d\n", LORA_SPREADING_FACTOR);
-    DEBUG_PRINTF("[CommunicationManager]   Preamble: %d símbolos\n", LORA_PREAMBLE_LENGTH);
-    DEBUG_PRINTF("[CommunicationManager]   Sync Word: 0x%02X\n", LORA_SYNC_WORD);
-    DEBUG_PRINTF("[CommunicationManager]   Coding Rate: 4/%d\n", LORA_CODING_RATE);
-    DEBUG_PRINTF("[CommunicationManager]   CRC: %s\n", LORA_CRC_ENABLED ? "HABILITADO" : "DESABILITADO");
-    
-    DEBUG_PRINTLN("[CommunicationManager] -------------------------------------------");
-    DEBUG_PRINTF("[CommunicationManager] ANATEL Duty Cycle: %.1f%% (máx)\n", LORA_DUTY_CYCLE_PERCENT);
-    DEBUG_PRINTF("[CommunicationManager] Intervalo mínimo TX: %lu s\n", LORA_MIN_INTERVAL_MS / 1000);
-    DEBUG_PRINTLN("[CommunicationManager] Formato de payload: CBOR (economia: ~75%)");
-    DEBUG_PRINTLN("[CommunicationManager] -------------------------------------------");
-    
-    _loraInitialized = true;
-    
-    DEBUG_PRINT("[CommunicationManager] Enviando pacote de teste... ");
-    String testMsg = "AGROSAT_BOOT_v7.0.0_CBOR";
-    if (sendLoRa(testMsg)) {
-        DEBUG_PRINTLN("OK!");
-    } else {
-        DEBUG_PRINTLN("FALHOU (mas LoRa está configurado)");
-    }
-    
-    LoRa.receive();
-    DEBUG_PRINTLN("[CommunicationManager] LoRa em modo RX (escutando sensores terrestres)");
-    DEBUG_PRINTLN("[CommunicationManager] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    
-    return true;
+uint8_t CommunicationManager::_readRegister(uint8_t reg) {
+    halSPI.beginTransaction(LORA_CS);  // ← SÓ PINO!
+    digitalWrite(LORA_CS, LOW);
+    halSPI.transfer(reg & 0x7F);
+    uint8_t value = halSPI.transfer(0x00);
+    digitalWrite(LORA_CS, HIGH);
+    halSPI.endTransaction(LORA_CS);    // ← COM PINO!
+    return value;
 }
+
+void CommunicationManager::_writeRegister(uint8_t reg, uint8_t value) {
+    halSPI.beginTransaction(LORA_CS);  // ← SÓ PINO!
+    digitalWrite(LORA_CS, LOW);
+    halSPI.transfer(reg | 0x80);
+    halSPI.transfer(value);
+    digitalWrite(LORA_CS, HIGH);
+    halSPI.endTransaction(LORA_CS);    // ← COM PINO!
+}
+
+void CommunicationManager::_setFrequency(uint32_t freq) {
+    uint64_t frf = ((uint64_t)freq << 19) / 32000000;
+    _writeRegister(0x06, (frf >> 16) & 0xFF);
+    _writeRegister(0x07, (frf >>  8) & 0xFF);
+    _writeRegister(0x08, (frf >>  0) & 0xFF);
+}
+
+void CommunicationManager::_configureSX127xNative() {
+    _writeRegister(0x40, 0x80);  // LoRa + Standby
+    _setFrequency(LORA_FREQUENCY);
+    _writeRegister(0x26, 0x04);  // SF7
+    _writeRegister(0x1D, 0x00);  // BW 125kHz  
+    _writeRegister(0x1E, 0x01);  // CR 4/5
+    _writeRegister(0x0E, 14);    // Tx power 14dBm
+    _writeRegister(0x40, 0x81);  // RX continuous
+}
+
 
 bool CommunicationManager::retryLoRaInit(uint8_t maxAttempts) {
     DEBUG_PRINTF("[CommunicationManager] Tentando reinicializar LoRa (máx %d tentativas)...\n", maxAttempts);
@@ -175,20 +176,29 @@ bool CommunicationManager::retryLoRaInit(uint8_t maxAttempts) {
 }
 
 bool CommunicationManager::_isChannelFree() {
-    const int RSSI_THRESHOLD = -90;  // dBm - canal livre se abaixo deste valor
+    const int RSSI_THRESHOLD = -90;
     const uint8_t CAD_CHECKS = 3;
     
     for (uint8_t i = 0; i < CAD_CHECKS; i++) {
-        int rssi = LoRa.rssi();
+        int rssi = _readRSSI();
+        DEBUG_PRINTF("[CommunicationManager] CAD %d: RSSI=%d dBm\n", i+1, rssi);
+        
         if (rssi > RSSI_THRESHOLD) {
             DEBUG_PRINTF("[CommunicationManager] Canal ocupado (RSSI: %d dBm)\n", rssi);
-            delay(random(50, 200));  // Backoff aleatório
+            delay(random(50, 200));
             return false;
         }
         delay(10);
     }
+    DEBUG_PRINTLN("[CommunicationManager] Canal LIVRE!");
     return true;
 }
+
+int CommunicationManager::_readRSSI() {
+    uint8_t rssiRaw = _readRegister(0x1B);  // REG_RSSI_VALUE
+    return -157 + (int)rssiRaw;  // SX127x 915MHz
+}
+
 
 void CommunicationManager::_adaptSpreadingFactor(float altitude) {
     uint8_t newSF = LORA_SPREADING_FACTOR;
@@ -615,47 +625,10 @@ String CommunicationManager::_createBinaryLoRaPayloadRelay(
 // ========================================
 
 bool CommunicationManager::receiveLoRaPacket(String& packet, int& rssi, float& snr) {
-    if (!_loraInitialized) {
-        return false;
-    }
-    
-    int packetSize = LoRa.parsePacket();
-    if (packetSize <= 0) {
-        return false;
-    }
-    
-    packet = "";
-    while (LoRa.available()) {
-        packet += (char)LoRa.read();
-    }
-    
-    rssi = LoRa.packetRssi();
-    snr = LoRa.packetSnr();
-    
-    const int MIN_RSSI = -120;
-    const float MIN_SNR = -15.0;
-    
-    if (rssi < MIN_RSSI) {
-        DEBUG_PRINTF("[CommunicationManager] Pacote descartado: RSSI muito baixo (%d dBm)\n", rssi);
-        return false;
-    }
-    
-    if (snr < MIN_SNR) {
-        DEBUG_PRINTF("[CommunicationManager] Pacote descartado: SNR muito baixo (%.1f dB)\n", snr);
-        return false;
-    }
-    
-    _loraRSSI = rssi;
-    _loraSNR = snr;
-    
-    DEBUG_PRINTLN("[CommunicationManager] ━━━━━ PACOTE LORA RECEBIDO ━━━━━");
-    DEBUG_PRINTF("[CommunicationManager] Dados: %s\n", packet.c_str());
-    DEBUG_PRINTF("[CommunicationManager] RSSI: %d dBm\n", rssi);
-    DEBUG_PRINTF("[CommunicationManager] SNR: %.1f dB\n", snr);
-    DEBUG_PRINTF("[CommunicationManager] Tamanho: %d bytes\n", packet.length());
-    
-    return true;
+    // TODO: Implementar RX completo depois
+    return false;
 }
+
 
 bool CommunicationManager::isLoRaOnline() {
     return _loraInitialized;

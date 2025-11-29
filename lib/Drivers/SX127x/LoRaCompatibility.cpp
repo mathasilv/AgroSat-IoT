@@ -4,7 +4,7 @@
  */
 
 #include "LoRaCompatibility.h"
-#include "lib/HAL/src/HAL/platform/esp32/ESP32_SPI.h"  // Caminho correto para HAL
+#include <HAL/platform/esp32/ESP32_SPI.h>   // usa HAL com -Ilib
 
 // ✅ INSTÂNCIA CONCRETA (não abstrata!)
 HAL::ESP32_SPI halSPI_global;

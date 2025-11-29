@@ -39,7 +39,7 @@
 #define SX127X_H
 
 #include <Arduino.h>
-#include <HAL/interface/SPI.h>
+#include <SPI.h>  // ← Path SIMPLES
 #include "SX127x_registers.h"
 #include "SX127x_hal_adapter.h"
 

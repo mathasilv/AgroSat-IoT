@@ -19,9 +19,10 @@
 #ifndef SX127X_HAL_ADAPTER_H
 #define SX127X_HAL_ADAPTER_H
 
-#include <HAL/interface/SPI.h>
+#include <SPI.h>
 #include <Arduino.h>
 #include "SX127x_registers.h"
+#include <HAL/interface/SPI.h>  // ← ADICIONAR ESTA LINHA (namespace HAL::SPI)
 
 namespace SX127x {
 

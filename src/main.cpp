@@ -5,12 +5,18 @@
  * @date 2025-11-24
  */
 #include <Arduino.h>
-#include <esp_task_wdt.h>
-#include "config.h"
+
 #include <HAL/platform/esp32/ESP32_I2C.h>
+#include <HAL/platform/esp32/ESP32_SPI.h>
 #include <HAL/board/ttgo_lora32_v21.h>
+
 #include "TelemetryManager.h"
-#include "Drivers/SX127x/LoRaCompatibility.h"
+#include "SensorManager.h"
+#include "CommunicationManager.h"
+#include "DisplayManager.h"
+#include "PowerManager.h"
+#include "SystemHealth.h"
+
 
 // HAL I2C global
 HAL::ESP32_I2C halI2C;
@@ -23,12 +29,20 @@ void setup() {
     Serial.begin(DEBUG_BAUDRATE);
     delay(1000);
     
-// Inicializar SPI CONCRETO
-    if (!halSPI.begin(18, 19, 23, 8000000)) {  // VSPI @ 8MHz
-        Serial.println("FALHA: SPI init!");
-        return;
+    DEBUG_PRINTLN("[Main] Inicializando HAL...");
+    
+    // HAL para sensores I2C
+    if (!halI2C.begin(21, 22, 400000)) {
+        DEBUG_PRINTLN("FALHA: I2C!");
+        while(1);
     }
-    halSPI.configureCS(LORA_CS);               // ✅ Existe na implementação
+    
+    // HAL para LoRa SPI
+    if (!halSPI.begin(5, 19, 27, 8000000UL)) {
+        DEBUG_PRINTLN("FALHA: SPI!");
+        while(1);
+    }
+    halSPI.configureCS(LORA_CS);
     
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, LOW);
@@ -51,7 +65,7 @@ void setup() {
     // Opcional: se quiser garantir o begin aqui, antes do _initI2CBus()
     // halI2C.begin(BOARD_I2C_SDA, BOARD_I2C_SCL, BOARD_I2C_FREQUENCY);
     
-    if (!telemetry.begin()) {
+    if (!telemetry.begin()) {  // SEM parâmetros!
         DEBUG_PRINTLN("[Main] ERRO CRÍTICO: Falha na inicialização!");
     }
     

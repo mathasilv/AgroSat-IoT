@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include <mutex>
 #include "config.h"
-#include <HAL/interface/I2C.h>      // <-- novo
+#include <HAL/interface/I2C.h>  // ← Path SIMPLES
 #include "SensorManager.h"
 #include "CommunicationManager.h"
 #include "StorageManager.h"
@@ -19,7 +19,8 @@ public:
     // Novo: injeção do HAL I2C
     explicit TelemetryManager(HAL::I2C& i2c);
     
-    bool begin();
+    bool begin();  // ← SEM PARÂMETRO!
+
     void loop();
     
     void startMission();
@@ -86,6 +87,7 @@ private:
     
     void _updateLEDIndicator(unsigned long currentTime);
     void _monitorHeapUsage(unsigned long currentTime);
+
 };
 
 #endif // TELEMETRYMANAGER_H
