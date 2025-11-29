@@ -1,0 +1,25 @@
+{
+    "name": "SX127x-LoRa-Driver",
+    "version": "1.0.0",
+    "description": "Custom SX127x LoRa driver for AgroSat-IoT CubeSat",
+    "keywords": "lora, sx127x, cubesat, iot",
+    "authors": {
+        "name": "AgroSat-IoT Team"
+    },
+    "repository": {
+        "type": "git",
+        "url": "."
+    },
+    "homepage": "https://github.com/AgroSat-IoT",
+    "frameworks": "arduino",
+    "platforms": "espressif32",
+    "build": {
+        "libArchive": false
+    },
+    "headers": [
+        "SX127x.h",
+        "SX127x_hal_adapter.h",
+        "LoRaCompatibility.h",
+        "SX127x_registers.h"
+    ]
+}

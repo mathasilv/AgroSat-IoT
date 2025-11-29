@@ -14,7 +14,7 @@
 #define PAYLOAD_MANAGER_H
 
 #include <Arduino.h>
-#include <LoRa.h>
+#include "LoRaCompatibility.h"
 #include "config.h"
 #include <SPI.h>
  

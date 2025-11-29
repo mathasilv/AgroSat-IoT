@@ -10,9 +10,11 @@
 #include <HAL/platform/esp32/ESP32_I2C.h>
 #include <HAL/board/ttgo_lora32_v21.h>
 #include "TelemetryManager.h"
+#include "Drivers/SX127x/LoRaCompatibility.h"
 
 // HAL I2C global
 HAL::ESP32_I2C halI2C;
+HAL::ESP32_SPI halSPI;  
 
 // TelemetryManager agora recebe o HAL I2C
 TelemetryManager telemetry(halI2C);
@@ -20,6 +22,13 @@ TelemetryManager telemetry(halI2C);
 void setup() {
     Serial.begin(DEBUG_BAUDRATE);
     delay(1000);
+    
+// Inicializar SPI CONCRETO
+    if (!halSPI.begin(18, 19, 23, 8000000)) {  // VSPI @ 8MHz
+        Serial.println("FALHA: SPI init!");
+        return;
+    }
+    halSPI.configureCS(LORA_CS);               // ✅ Existe na implementação
     
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, LOW);

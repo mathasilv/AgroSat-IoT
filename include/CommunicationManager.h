@@ -11,7 +11,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <LoRa.h>
+#include "LoRaCompatibility.h"
 #include <SPI.h>
 #include <ArduinoJson.h>
 #include <vector>
