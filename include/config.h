@@ -91,7 +91,7 @@ const ModeConfig PREFLIGHT_CONFIG = {
     true,    // serialLogsEnabled
     true,    // sdLogsVerbose
     true,    // loraEnabled
-    false,   // httpEnabled
+    true,   // httpEnabled
     60000,   // telemetrySendInterval: 60 s (antes 15000 / 30000)
     60000,   // storageSaveInterval: 60 s
     0,       // wifiDutyCycle (não usado aqui)
@@ -229,13 +229,13 @@ const ModeConfig SAFE_CONFIG = {
 #define MIN_TEMPERATURE -80
 #define MAX_TEMPERATURE 85
 
-// ========== NTP / RTC ==========
-#define NTP_SERVER_PRIMARY   "pool.ntp.org"
-#define NTP_SERVER_SECONDARY "time.google.com"
-#define NTP_SERVER_TERTIARY  "time.cloudflare.com"
-#define TIMEZONE_STRING      "<-03>3"
-#define RTC_TIMEZONE_OFFSET -10800
-
+#ifndef NTP_SERVER_PRIMARY
+#define NTP_SERVER_PRIMARY   "a.st1.ntp.br"
+#define NTP_SERVER_SECONDARY "b.st1.ntp.br"
+#define PERIODIC_SYNC_INTERVAL 3600000UL
+#endif
+#define RTC_TIMEZONE_OFFSET (-3 * 3600)  // UTC-3 Brasil
+#define DST_OFFSET 0                     // Sem horário de verão
 // ========== DEBUG SERIAL ==========
 #define DEBUG_SERIAL Serial
 #define DEBUG_BAUDRATE 115200

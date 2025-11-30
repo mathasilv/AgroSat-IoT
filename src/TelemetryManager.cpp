@@ -1,12 +1,14 @@
 /**
  * @file TelemetryManager.cpp
- * @brief VERSÃO OTIMIZADA PARA BALÃO METEOROLÓGICO (HAB)
- * @version 7.3.0 - HAB Edition + Relay Fix
- * @date 2025-11-25
+ * @brief VERSÃO OTIMIZADA PARA BALÃO METEOROLÓGICO (HAB) + UTC
+ * @version 7.4.0 - HAB Edition + UTC Standard
+ * @date 2025-11-30
  * 
- * CHANGELOG v7.3.0:
+ * CHANGELOG v7.4.0:
+ * - [NEW] RTC 100% UTC (CubeSat padrão internacional)
  * - [FIX] Reset de flag forwarded ao atualizar nó
  * - [FIX] Reset periódico de flags para retransmissão contínua
+ * - [NEW] Timestamp UTC em toda telemetria
  */
 #include "TelemetryManager.h"
 #include "config.h"
@@ -134,7 +136,7 @@ bool TelemetryManager::begin() {
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("  AgroSat-IoT HAB - OBSAT Fase 2");
     DEBUG_PRINTLN("  Equipe: Orbitalis");
-    DEBUG_PRINTLN("  Firmware: " FIRMWARE_VERSION " HAB");
+    DEBUG_PRINTLN("  Firmware: " FIRMWARE_VERSION " UTC");
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
 
@@ -169,10 +171,13 @@ bool TelemetryManager::begin() {
         }
     }
 
-    DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC...");
+    // ✅ RTC UTC PURO
+    DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC (UTC Mode)...");
     if (_rtc.begin(&Wire)) {
         subsystemsOk++;
-        DEBUG_PRINTLN("[TelemetryManager] RTC OK");
+        DEBUG_PRINTF("[TelemetryManager] RTC OK: %s (unix: %lu)\n", 
+                     _rtc.getUTCDateTime().c_str(), _rtc.getUnixTime());
+        
         if (_useNewDisplay && displayOk) {
             _displayMgr.showSensorInit("RTC", true);
         }
@@ -265,6 +270,11 @@ void TelemetryManager::loop() {
     delay(10);
     _comm.update(); 
     delay(5);
+    
+    // ✅ RTC UTC - Sync periódico
+    _rtc.update();
+    delay(5);
+    
     _handleButtonEvents();
     delay(5);
     
@@ -289,6 +299,7 @@ void TelemetryManager::loop() {
             receivedData.snr = snr;
             receivedData.lastLoraRx = millis();
             
+            // ✅ UTC TIMESTAMP
             if (_rtc.isInitialized()) {
                 receivedData.collectionTime = _rtc.getUnixTime();
             } else {
@@ -319,11 +330,9 @@ void TelemetryManager::loop() {
         _cleanupStaleNodes(NODE_TTL_MS);
     }
     
-    // ========================================
-    // ✅ RESET PERIÓDICO DE FLAGS DE RETRANSMISSÃO
-    // ========================================
+    // ========== RESET FLAGS RETRANSMISSÃO ==========
     static unsigned long lastFlagReset = 0;
-    const unsigned long FLAG_RESET_INTERVAL = 60000;  // 60 segundos
+    const unsigned long FLAG_RESET_INTERVAL = 60000;  // 60s
     
     if (currentTime - lastFlagReset >= FLAG_RESET_INTERVAL) {
         lastFlagReset = currentTime;
@@ -396,10 +405,7 @@ void TelemetryManager::_updateGroundNode(const MissionData& data) {
             
             existingNode = data;
             existingNode.lastLoraRx = millis();
-            
-            // ✅ RESETAR FLAG DE RETRANSMISSÃO
-            existingNode.forwarded = false;
-            
+            existingNode.forwarded = false;  // ✅ RESET FLAG
             existingNode.priority = _comm.calculatePriority(data);
             
             _groundNodeBuffer.lastUpdate[existingIndex] = millis();
@@ -504,8 +510,11 @@ void TelemetryManager::startMission() {
     DEBUG_PRINTLN("[TelemetryManager] INICIANDO MISSÃO HAB");
     DEBUG_PRINTLN("[TelemetryManager] ==========================================");
     
+    // ✅ UTC TIMESTAMP
     if (_rtc.isInitialized()) {
-        DEBUG_PRINTF("[TelemetryManager] Início: %s\n", _rtc.getDateTime().c_str());
+        DEBUG_PRINTF("[TelemetryManager] Início UTC: %s (unix: %lu)\n", 
+                     _rtc.getUTCDateTime().c_str(), _rtc.getUnixTime());
+        DEBUG_PRINTF("[TelemetryManager] Local: %s\n", _rtc.getLocalDateTime().c_str());
     }
     
     if (_useNewDisplay && _displayMgr.isOn()) {
@@ -538,8 +547,10 @@ void TelemetryManager::stopMission() {
     
     uint32_t missionDuration = millis() - _missionStartTime;
     
+    // ✅ UTC TIMESTAMP
     if (_rtc.isInitialized()) {
-        DEBUG_PRINTF("[TelemetryManager] Fim: %s\n", _rtc.getDateTime().c_str());
+        DEBUG_PRINTF("[TelemetryManager] Fim UTC: %s (unix: %lu)\n", 
+                     _rtc.getUTCDateTime().c_str(), _rtc.getUnixTime());
     }
     
     DEBUG_PRINTF("[TelemetryManager] Duração total: %lu min %lu seg\n", 
@@ -603,10 +614,11 @@ OperationMode TelemetryManager::getMode() {
 }
 
 void TelemetryManager::_collectTelemetryData() {
+    // ✅ UTC TIMESTAMP
     if (_rtc.isInitialized()) {
-        _telemetryData.timestamp = _rtc.getUnixTime();
+        _telemetryData.timestamp = _rtc.getUnixTime();  // UTC puro!
     } else {
-        _telemetryData.timestamp = millis();
+        _telemetryData.timestamp = millis() / 1000;
     }
     
     _telemetryData.missionTime = _health.getMissionTime();
@@ -677,21 +689,21 @@ void TelemetryManager::_collectTelemetryData() {
     _telemetryData.systemStatus = _health.getSystemStatus();
     _telemetryData.errorCount = _health.getErrorCount();
     
-// Gerar resumo simples dos nós
-if (_groundNodeBuffer.activeNodes > 0) {
-    snprintf(_telemetryData.payload, PAYLOAD_MAX_SIZE, 
-             "Nodes:%d", _groundNodeBuffer.activeNodes);
-} else {
-    _telemetryData.payload[0] = '\0';
-}
-
-
+    // Gerar resumo simples dos nós
+    if (_groundNodeBuffer.activeNodes > 0) {
+        snprintf(_telemetryData.payload, PAYLOAD_MAX_SIZE, 
+                 "Nodes:%d", _groundNodeBuffer.activeNodes);
+    } else {
+        _telemetryData.payload[0] = '\0';
+    }
 }
 
 void TelemetryManager::_sendTelemetry() {
     if (activeModeConfig->serialLogsEnabled) {
-        DEBUG_PRINTF("[TelemetryManager] Enviando telemetria [%s]...\n", 
-                     _rtc.getDateTime().c_str());
+        // ✅ UTC + LOCAL display
+        DEBUG_PRINTF("[TelemetryManager] TX [UTC: %s | Local: %s]\n", 
+                     _rtc.getUTCDateTime().c_str(),
+                     _rtc.getLocalDateTime().c_str());
         
         bool hasBMP = !isnan(_telemetryData.temperatureBMP);
         bool hasSI = !isnan(_telemetryData.temperatureSI);
@@ -742,7 +754,7 @@ void TelemetryManager::_saveToStorage() {
     if (!_storage.isAvailable()) return;
     
     if (_rtc.isInitialized()) {
-        DEBUG_PRINTF("[TelemetryManager] Salvando dados [%s]...\n", _rtc.getDateTime().c_str());
+        DEBUG_PRINTF("[TelemetryManager] Salvando [UTC: %s]...\n", _rtc.getUTCDateTime().c_str());
     } else {
         DEBUG_PRINTLN("[TelemetryManager] Salvando dados...");
     }
@@ -786,7 +798,7 @@ void TelemetryManager::_checkOperationalConditions() {
 
 void TelemetryManager::testLoRaTransmission() {
     DEBUG_PRINTLN("[TelemetryManager] Testando transmissão LoRa...");
-    _comm.sendLoRa("TEST_AGROSAT_HAB");
+    _comm.sendLoRa("TEST_AGROSAT_HAB_UTC");
 }
 
 void TelemetryManager::sendCustomLoRa(const String& message) {
@@ -928,6 +940,13 @@ void TelemetryManager::_monitorHeapUsage(unsigned long currentTime) {
     DEBUG_PRINTLN("========== STATUS DO SISTEMA ==========");
     DEBUG_PRINTF("Uptime: %lu s\n", currentTime / 1000);
     DEBUG_PRINTF("Modo: %d\n", _mode);
+    
+    // ✅ UTC STATUS
+    if (_rtc.isInitialized()) {
+        DEBUG_PRINTF("RTC UTC: %s\n", _rtc.getUTCDateTime().c_str());
+        DEBUG_PRINTF("Unix: %lu\n", _rtc.getUnixTime());
+    }
+    
     DEBUG_PRINTF("Heap atual: %lu KB\n", currentHeap / 1024);
     DEBUG_PRINTF("Heap mínimo: %lu KB\n", _minHeapSeen / 1024);
     

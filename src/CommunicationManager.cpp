@@ -989,27 +989,40 @@ bool CommunicationManager::testConnection() {
 String CommunicationManager::_createTelemetryJSON(const TelemetryData& data, const GroundNodeBuffer& groundBuffer) {
     StaticJsonDocument<JSON_MAX_SIZE> doc;
 
+    // === DADOS SATÉLITE ===
     doc["equipe"] = TEAM_ID;
     doc["bateria"] = (int)data.batteryPercentage;
     
-    float temp = isnan(data.temperature) ? 0.0 : data.temperature;
-    if (temp < TEMP_MIN_VALID || temp > TEMP_MAX_VALID) temp = 0.0;
-    doc["temperatura"] = temp;
+    // ✅ sprintf "%.2f" - 2 DECIMAIS GARANTIDAS
+    char tempStr[8]; 
+    sprintf(tempStr, "%.2f", isnan(data.temperature) ? 0.0f : data.temperature);
+    if (atof(tempStr) < TEMP_MIN_VALID || atof(tempStr) > TEMP_MAX_VALID) 
+        strcpy(tempStr, "0.00");
+    doc["temperatura"] = tempStr;
     
-    float press = isnan(data.pressure) ? 0.0 : data.pressure;
-    if (press < PRESSURE_MIN_VALID || press > PRESSURE_MAX_VALID) press = 0.0;
-    doc["pressao"] = press;
+    char pressStr[8]; 
+    sprintf(pressStr, "%.2f", isnan(data.pressure) ? 1013.25f : data.pressure);
+    if (atof(pressStr) < PRESSURE_MIN_VALID || atof(pressStr) > PRESSURE_MAX_VALID) 
+        strcpy(pressStr, "0.00");
+    doc["pressao"] = pressStr;
 
+    // Giroscópio (3 strings)
+    char gyroX[8]; sprintf(gyroX, "%.2f", isnan(data.gyroX) ? 0.0f : data.gyroX);
+    char gyroY[8]; sprintf(gyroY, "%.2f", isnan(data.gyroY) ? 0.0f : data.gyroY);
+    char gyroZ[8]; sprintf(gyroZ, "%.2f", isnan(data.gyroZ) ? 0.0f : data.gyroZ);
+    
     JsonArray giroscopio = doc.createNestedArray("giroscopio");
-    giroscopio.add(isnan(data.gyroX) ? 0.0 : data.gyroX);
-    giroscopio.add(isnan(data.gyroY) ? 0.0 : data.gyroY);
-    giroscopio.add(isnan(data.gyroZ) ? 0.0 : data.gyroZ);
+    giroscopio.add(gyroX); giroscopio.add(gyroY); giroscopio.add(gyroZ);
 
+    // Acelerômetro (3 strings)
+    char accelX[8]; sprintf(accelX, "%.2f", isnan(data.accelX) ? 0.0f : data.accelX);
+    char accelY[8]; sprintf(accelY, "%.2f", isnan(data.accelY) ? 0.0f : data.accelY);
+    char accelZ[8]; sprintf(accelZ, "%.2f", isnan(data.accelZ) ? 0.0f : data.accelZ);
+    
     JsonArray acelerometro = doc.createNestedArray("acelerometro");
-    acelerometro.add(isnan(data.accelX) ? 0.0 : data.accelX);
-    acelerometro.add(isnan(data.accelY) ? 0.0 : data.accelY);
-    acelerometro.add(isnan(data.accelZ) ? 0.0 : data.accelZ);
+    acelerometro.add(accelX); acelerometro.add(accelY); acelerometro.add(accelZ);
 
+    // === NÓS TERRESTRES ===
     JsonObject payload = doc.createNestedObject("payload");
     
     if (groundBuffer.activeNodes > 0) {
@@ -1020,55 +1033,65 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data, con
             
             JsonObject nodeObj = nodesArray.createNestedObject();
             nodeObj["id"] = node.nodeId;
-            nodeObj["sm"] = round(node.soilMoisture * 10) / 10;
-            nodeObj["t"] = round(node.ambientTemp * 10) / 10;
-            nodeObj["h"] = round(node.humidity * 10) / 10;
+            
+            char smStr[8]; sprintf(smStr, "%.2f", node.soilMoisture);
+            char tStr[8]; sprintf(tStr, "%.2f", node.ambientTemp);
+            char hStr[8]; sprintf(hStr, "%.2f", node.humidity);
+            char snrStr[8]; sprintf(snrStr, "%.2f", node.snr);
+            
+            nodeObj["sm"] = smStr;
+            nodeObj["t"] = tStr;
+            nodeObj["h"] = hStr;
             nodeObj["ir"] = node.irrigationStatus;
             nodeObj["rs"] = node.rssi;
-            nodeObj["snr"] = round(node.snr * 10) / 10;
+            nodeObj["snr"] = snrStr;
             nodeObj["seq"] = node.sequenceNumber;
         }
         
         payload["total_nodes"] = groundBuffer.activeNodes;
         payload["total_pkts"] = groundBuffer.totalPacketsCollected;
     }
-    
+
+    // === CAMPOS OPCIONAIS ===
     if (!isnan(data.altitude) && data.altitude >= 0) {
-        payload["alt"] = round(data.altitude * 10) / 10;
+        char altStr[8]; sprintf(altStr, "%.2f", data.altitude);
+        payload["alt"] = altStr;
     }
     
     if (!isnan(data.humidity) && data.humidity >= HUMIDITY_MIN_VALID && data.humidity <= HUMIDITY_MAX_VALID) {
-        payload["hum"] = (int)data.humidity;
+        char humStr[8]; sprintf(humStr, "%.2f", data.humidity);
+        payload["hum"] = humStr;
     }
     
     if (!isnan(data.co2) && data.co2 >= CO2_MIN_VALID && data.co2 <= CO2_MAX_VALID) {
-        payload["co2"] = (int)data.co2;
+        payload["co2"] = (int)roundf(data.co2);
     }
     
     if (!isnan(data.tvoc) && data.tvoc >= TVOC_MIN_VALID && data.tvoc <= TVOC_MAX_VALID) {
-        payload["tvoc"] = (int)data.tvoc;
+        payload["tvoc"] = (int)roundf(data.tvoc);
     }
     
     payload["stat"] = (data.systemStatus == STATUS_OK) ? "ok" : "err";
     payload["time"] = data.missionTime / 1000;
 
+    // === SERIALIZE SIMPLES ===
     char jsonBuffer[JSON_MAX_SIZE];
     size_t jsonSize = serializeJson(doc, jsonBuffer, sizeof(jsonBuffer));
     
-    if (jsonSize >= sizeof(jsonBuffer)) {
-        DEBUG_PRINTLN("[CommunicationManager] ERRO: JSON truncado!");
+    // ✅ DEBUG (remover após teste)
+    DEBUG_PRINTLN("=== JSON 2 DECIMAIS ===");
+    DEBUG_PRINTF("Tamanho: %d bytes\n", jsonSize);
+    DEBUG_PRINTF("JSON: %s\n", jsonBuffer);
+    DEBUG_PRINTLN("======================");
+
+    if (jsonSize >= sizeof(jsonBuffer) || jsonSize == 0) {
+        DEBUG_PRINTLN("ERRO: JSON inválido!");
         return "";
     }
-    
-    if (jsonSize == 0) {
-        DEBUG_PRINTLN("[CommunicationManager] ERRO: JSON vazio!");
-        return "";
-    }
-    
-    DEBUG_PRINTF("[CommunicationManager] JSON criado: %d bytes\n", jsonSize);
     
     return String(jsonBuffer);
 }
+
 
 bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
     if (jsonPayload.length() == 0 || jsonPayload == "{}" || jsonPayload == "null") {

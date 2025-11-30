@@ -78,8 +78,8 @@ private:
     // Detecção de travamento
     float _lastPressureRead;
     uint8_t _identicalReadings;
-    static constexpr uint8_t MAX_IDENTICAL_READINGS = 50;
-    
+    static constexpr float PRESSURE_TOLERANCE = 0.01f;
+    static constexpr uint16_t MAX_IDENTICAL_READINGS = 500;
     // Limites de validação (do config.h)
     static constexpr float PRESSURE_MIN = PRESSURE_MIN_VALID;
     static constexpr float PRESSURE_MAX = PRESSURE_MAX_VALID;
@@ -118,6 +118,8 @@ private:
     
     // Utilitário
     float _calculateAltitude(float pressure) const;
+    bool _readRawFast();
+
 };
 
 #endif // BMP280MANAGER_H
