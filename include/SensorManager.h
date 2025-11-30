@@ -1,113 +1,84 @@
+/**
+ * @file SensorManager.h
+ * @brief SensorManager V6.0.0 - Arquitetura Modular Completa
+ * @version 6.0.0
+ * @date 2025-11-30
+ */
+
 #ifndef SENSORMANAGER_H
 #define SENSORMANAGER_H
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <MPU9250_WE.h>
-#include <Adafruit_CCS811.h>
 #include "config.h"
-#include "BMP280Manager.h"  // ← NOVO: Usar módulo dedicado
+#include "MPU9250Manager.h"
+#include "BMP280Manager.h"
+#include "SI7021Manager.h"
+#include "CCS811Manager.h"
 
 class SensorManager {
 public:
     SensorManager();
+    
     bool begin();
     void update();
     void resetAll();
     
-    // Getters de temperatura
-    float getTemperature();
-    float getTemperatureSI7021();
-    float getTemperatureBMP280();
+    // TEMPERATURA (Redundância automática)
+    float getTemperature() const { return _temperature; }
+    float getTemperatureSI7021() const { return _si7021Manager.getTemperature(); }
+    float getTemperatureBMP280() const { return _bmp280Manager.getTemperature(); }
     
-    // Getters de sensores
-    float getPressure();
-    float getAltitude();
-    float getGyroX();
-    float getGyroY();
-    float getGyroZ();
-    float getAccelX();
-    float getAccelY();
-    float getAccelZ();
-    float getAccelMagnitude();
-    float getMagX();
-    float getMagY();
-    float getMagZ();
-    float getHumidity();
-    float getCO2();
-    float getTVOC();
+    // PRESSÃO/ALTITUDE
+    float getPressure() const { return _bmp280Manager.getPressure(); }
+    float getAltitude() const { return _bmp280Manager.getAltitude(); }
     
-    // Status dos sensores
-    bool isMPU6050Online();
-    bool isMPU9250Online();
-    bool isBMP280Online();
-    bool isSI7021Online();
-    bool isCCS811Online();
-    bool isCalibrated();
+    // IMU (MPU9250Manager)
+    float getGyroX() const { return _mpu9250Manager.getGyroX(); }
+    float getGyroY() const { return _mpu9250Manager.getGyroY(); }
+    float getGyroZ() const { return _mpu9250Manager.getGyroZ(); }
+    float getAccelX() const { return _mpu9250Manager.getAccelX(); }
+    float getAccelY() const { return _mpu9250Manager.getAccelY(); }
+    float getAccelZ() const { return _mpu9250Manager.getAccelZ(); }
+    float getAccelMagnitude() const { return _mpu9250Manager.getAccelMagnitude(); }
+    float getMagX() const { return _mpu9250Manager.getMagX(); }
+    float getMagY() const { return _mpu9250Manager.getMagY(); }
+    float getMagZ() const { return _mpu9250Manager.getMagZ(); }
     
-    // Utilitários
+    // AMBIENTAL (CCS811Manager CORRIGIDO)
+    float getHumidity() const { return _si7021Manager.getHumidity(); }
+    float getCO2() const { return _ccs811Manager.geteCO2(); }      // ← CORRIGIDO
+    float getTVOC() const { return _ccs811Manager.getTVOC(); }
+    
+    // STATUS
+    bool isMPU9250Online() const { return _mpu9250Manager.isOnline(); }
+    bool isBMP280Online() const { return _bmp280Manager.isOnline(); }
+    bool isSI7021Online() const { return _si7021Manager.isOnline(); }
+    bool isCCS811Online() const { return _ccs811Manager.isOnline(); }
+    bool isCalibrated() const { return _mpu9250Manager.isCalibrated(); }
+    
+    // UTILITÁRIOS
     void getRawData(float& gx, float& gy, float& gz,
-                    float& ax, float& ay, float& az);
-    void printSensorStatus();
-    bool calibrateIMU();
+                    float& ax, float& ay, float& az,
+                    float& mx, float& my, float& mz) const;
+    void printSensorStatus() const;
     void scanI2C();
-    void forceReinitBMP280();
-
+    
 private:
-    // OBJETOS DE HARDWARE
-    MPU9250_WE _mpu9250;
-    BMP280Manager _bmp280Manager;  // ← MODIFICADO: Usar BMP280Manager
-    Adafruit_CCS811 _ccs811;
+    MPU9250Manager _mpu9250Manager;
+    BMP280Manager _bmp280Manager;
+    SI7021Manager _si7021Manager;
+    CCS811Manager _ccs811Manager;
     
-    // DADOS DOS SENSORES (sem BMP280 - agora no BMP280Manager)
-    float _temperature, _temperatureSI;
-    float _humidity, _co2Level, _tvoc;
-    float _gyroX, _gyroY, _gyroZ;
-    float _accelX, _accelY, _accelZ;
-    float _magX, _magY, _magZ;
-    float _magOffsetX, _magOffsetY, _magOffsetZ;
-    
-    // STATUS DOS SENSORES
-    bool _mpu9250Online, _si7021Online, _ccs811Online;
-    bool _calibrated;
-    bool _si7021TempValid;
-    uint8_t _si7021TempFailures;
-    static constexpr uint8_t MAX_TEMP_FAILURES = 5;
-    
-    // CONTROLE DE TEMPO
-    unsigned long _lastReadTime, _lastCCS811Read, _lastSI7021Read;
-    unsigned long _lastHealthCheck;
+    mutable float _temperature;
+    uint32_t _lastHealthCheck;
     uint8_t _consecutiveFailures;
     
-    // FILTRO DE MÉDIA MÓVEL
-    float _accelXBuffer[CUSTOM_FILTER_SIZE];
-    float _accelYBuffer[CUSTOM_FILTER_SIZE];
-    float _accelZBuffer[CUSTOM_FILTER_SIZE];
-    uint8_t _filterIndex;
-    float _sumAccelX, _sumAccelY, _sumAccelZ;
-    
-    // MÉTODOS INTERNOS - INICIALIZAÇÃO
-    bool _initMPU9250();
-    bool _initSI7021();
-    bool _initCCS811();
-    
-    // MÉTODOS INTERNOS - ATUALIZAÇÃO
-    void _updateIMU();
-    void _updateSI7021();
-    void _updateCCS811();
     void _updateTemperatureRedundancy();
-    
-    // MÉTODOS INTERNOS - VALIDAÇÃO
-    bool _validateReading(float value, float minValid, float maxValid);
-    bool _validateMPUReadings(float gx, float gy, float gz,
-                             float ax, float ay, float az,
-                             float mx, float my, float mz);
-    bool _validateCCSReadings(float co2, float tvoc);
-    
-    // OUTROS MÉTODOS INTERNOS
     void _performHealthCheck();
-    bool _calibrateMPU9250();
-    float _applyFilter(float newValue, float* buffer, float& sum);
+    
+    static constexpr uint32_t HEALTH_CHECK_INTERVAL = 30000;
+    static constexpr uint8_t MAX_CONSECUTIVE_FAILURES = 10;
 };
 
-#endif // SENSORMANAGER_H
+#endif // SENSORMANAGER_H  ← FINAL CORRETO
