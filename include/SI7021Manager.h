@@ -1,6 +1,7 @@
 /**
  * @file SI7021Manager.h
- * @brief SI7021Manager V3.0 - FIX Compilação
+ * @brief SI7021Manager - Wrapper com cache e recuperação
+ * @version 3.2
  */
 #ifndef SI7021MANAGER_H
 #define SI7021MANAGER_H
@@ -8,6 +9,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "config.h"
+#include "SI7021.h"  // ← USA A BIBLIOTECA
 
 class SI7021Manager {
 public:
@@ -17,33 +19,31 @@ public:
     void update();
     void reset();
     
-    float getHumidity() const;
-    float getTemperature() const;
-    bool isOnline() const { return _online; }
-    bool isTempValid() const { return _tempValid; }
+    // Getters (wrappers sobre SI7021 nativo)
+    float getTemperature() const { return _lastTemp; }
+    float getHumidity() const { return _lastHum; }
+    
+    // Status
+    bool isOnline() const { return _online && _si7021.isOnline(); }
+    bool isTempValid() const { return _online && _lastTemp > -100.0; }
+    bool isHumValid() const { return _online && _lastHum >= 0.0; }
     uint8_t getFailCount() const { return _failCount; }
-    uint32_t getWarmupProgress() const;
+    uint32_t getWarmupProgress() const { return _warmupProgress; }
     
     void printStatus() const;
     
 private:
-    float _humidity, _temperature;
-    bool _online, _tempValid;
+    SI7021 _si7021;  // ← INSTÂNCIA DO DRIVER NATIVO
+    bool _online;
+    float _lastTemp;
+    float _lastHum;
     uint8_t _failCount;
-    uint32_t _initTime, _lastReadTime, _warmupProgress;
+    uint32_t _lastRead;
+    uint32_t _initTime;
+    uint32_t _warmupProgress;
     
-    static constexpr uint32_t READ_INTERVAL = 2000;
-    static constexpr uint32_t WARMUP_TIME = 5000;
-    
-    // CONSTANTES LOCAIS (sem conflito com config.h)
-    static constexpr uint8_t _SI7021_ADDR = 0x40;
-    static constexpr uint8_t _CMD_SOFT_RESET = 0xFE;
-    static constexpr uint8_t _CMD_MEASURE_RH_NOHOLD = 0xF5;
-    static constexpr uint8_t _CMD_MEASURE_T_NOHOLD = 0xF3;
-    
-    bool _testRealHumidityRead();
-    bool _validateHumidity(float hum);
-    bool _validateTemperature(float temp);
+    static constexpr uint32_t READ_INTERVAL_MS = 2000;  // 2s
+    static constexpr uint32_t WARMUP_TIME_MS = 5000;    // 5s
 };
 
 #endif

@@ -1,189 +1,112 @@
 /**
  * @file SI7021Manager.cpp
- * @brief SI7021Manager V3.0 - COMPILAÇÃO OK
+ * @brief SI7021Manager - Implementação do gerenciador
  */
 #include "SI7021Manager.h"
 
-// ============================================================================
-// CONSTRUTOR
 SI7021Manager::SI7021Manager() 
-    : _humidity(NAN), _temperature(NAN), 
-      _online(false), _tempValid(false),
-      _failCount(0), _lastReadTime(0),
-      _initTime(0), _warmupProgress(0) {}
+    : _si7021(Wire), 
+      _online(false), 
+      _lastTemp(-999.0), 
+      _lastHum(-999.0),
+      _failCount(0),
+      _lastRead(0),
+      _initTime(0),
+      _warmupProgress(0) {}
 
-// ============================================================================
-// INICIALIZAÇÃO
 bool SI7021Manager::begin() {
     DEBUG_PRINTLN("[SI7021Manager] ========================================");
-    DEBUG_PRINTLN("[SI7021Manager] Inicializando SI7021 (modo rigoroso)");
+    DEBUG_PRINTLN("[SI7021Manager] Inicializando SI7021Manager...");
     
-    _online = false;
-    _failCount = 0;
     _initTime = millis();
-    
-    // TESTE 1: Presença física
-    Wire.beginTransmission(_SI7021_ADDR);
-    if (Wire.endTransmission() != 0) {
-        DEBUG_PRINTLN("[SI7021Manager] FALHA: Não detectado (0x40)");
+    _warmupProgress = WARMUP_TIME_MS / 1000;
+
+    // Inicializar driver nativo
+    if (!_si7021.begin()) {
+        DEBUG_PRINTLN("[SI7021Manager] ❌ Falha ao inicializar driver");
+        _online = false;
         return false;
     }
-    
-    // TESTE 2: Soft Reset
-    Wire.beginTransmission(_SI7021_ADDR);
-    Wire.write(_CMD_SOFT_RESET);
-    if (Wire.endTransmission() != 0) {
-        DEBUG_PRINTLN("[SI7021Manager] FALHA: Soft Reset");
-        return false;
-    }
-    delay(50);
-    
-    // TESTE 3: Leitura CRÍTICA (detecta chip falso)
-    if (!_testRealHumidityRead()) {
-        DEBUG_PRINTLN("[SI7021Manager] FALHA: CHIP FALSO/DEFETUOSO (0x40 responde mas não lê)");
-        return false;
-    }
-    
+
+    // Driver OK → considera online, mesmo que a primeira leitura não seja perfeita
     _online = true;
-    _warmupProgress = WARMUP_TIME;
+
+    // Leitura inicial (opcional, só para preencher cache)
+    float temp, hum;
+    if (_si7021.readTemperature(temp) && _si7021.readHumidity(hum)) {
+        _lastTemp = temp;
+        _lastHum  = hum;
+        DEBUG_PRINTF("[SI7021Manager] ✅ OK: T=%.1f°C RH=%.1f%%\n", temp, hum);
+    } else {
+        DEBUG_PRINTLN("[SI7021Manager] ⚠ Leitura inicial falhou (mantendo cache inválido)");
+        _lastTemp = -999.0f;
+        _lastHum  = -999.0f;
+    }
+
     DEBUG_PRINTLN("[SI7021Manager] INICIALIZADO COM SUCESSO!");
+    DEBUG_PRINTLN("[SI7021Manager] ========================================");
     return true;
 }
 
-// ============================================================================
-// TESTE CRÍTICO - Leitura real
-bool SI7021Manager::_testRealHumidityRead() {
-    Wire.beginTransmission(_SI7021_ADDR);
-    Wire.write(_CMD_MEASURE_RH_NOHOLD);
-    if (Wire.endTransmission() != 0) return false;
-    
-    delay(25);
-    
-    for (uint8_t retry = 0; retry < 3; retry++) {
-        Wire.requestFrom((uint8_t)_SI7021_ADDR, (uint8_t)3);  // ← FIX: casts explícitos
-        if (Wire.available() >= 2) {
-            uint8_t msb = Wire.read();
-            uint8_t lsb = Wire.read();
-            if (Wire.available()) Wire.read(); // CRC
-            
-            uint16_t rawHum = (msb << 8) | lsb;
-            
-            if (rawHum > 0x0100 && rawHum < 0xFE00) {
-                float hum = ((125.0 * rawHum) / 65536.0) - 6.0;
-                if (_validateHumidity(hum)) {
-                    _humidity = hum;
-                    DEBUG_PRINTF("[SI7021Manager] Teste OK: RH=%.1f%%\n", hum);
-                    return true;
-                }
-            }
-        }
-        delay(10);
-    }
-    return false;
-}
-
-// ============================================================================
-// UPDATE
 void SI7021Manager::update() {
     if (!_online) return;
     
-    uint32_t currentTime = millis();
+    uint32_t now = millis();
     
+    // Countdown do warmup
     if (_warmupProgress > 0) {
-        _warmupProgress = (WARMUP_TIME - (currentTime - _initTime)) / 1000;
-        if (_warmupProgress <= 0) _warmupProgress = 0;
+        uint32_t elapsed = (now - _initTime) / 1000;
+        _warmupProgress = (WARMUP_TIME_MS / 1000 > elapsed) ? (WARMUP_TIME_MS / 1000 - elapsed) : 0;
         return;
     }
     
-    if (currentTime - _lastReadTime < READ_INTERVAL) return;
-    _lastReadTime = currentTime;
+    if (now - _lastRead < READ_INTERVAL_MS) return;
     
-    // UMIDADE
-    bool humSuccess = false;
-    Wire.beginTransmission(_SI7021_ADDR);
-    Wire.write(_CMD_MEASURE_RH_NOHOLD);
-    if (Wire.endTransmission() == 0) {
-        delay(25);
-        Wire.requestFrom((uint8_t)_SI7021_ADDR, (uint8_t)3);  // ← FIX
-        if (Wire.available() >= 2) {
-            uint8_t msb = Wire.read();
-            uint8_t lsb = Wire.read();
-            if (Wire.available()) Wire.read();
-            
-            uint16_t rawHum = (msb << 8) | lsb;
-            if (rawHum > 0x0100 && rawHum < 0xFE00) {
-                float hum = ((125.0 * rawHum) / 65536.0) - 6.0;
-                if (_validateHumidity(hum)) {
-                    _humidity = hum;
-                    humSuccess = true;
-                }
-            }
-        }
-    }
+    _lastRead = now;
     
-    // TEMPERATURA
-    bool tempSuccess = false;
-    delay(10);
-    Wire.beginTransmission(_SI7021_ADDR);
-    Wire.write(_CMD_MEASURE_T_NOHOLD);
-    if (Wire.endTransmission() == 0) {
-        delay(25);
-        Wire.requestFrom((uint8_t)_SI7021_ADDR, (uint8_t)2);  // ← FIX: 2 bytes temp
-        if (Wire.available() >= 2) {
-            uint8_t msb = Wire.read();
-            uint8_t lsb = Wire.read();
-            
-            uint16_t rawTemp = (msb << 8) | lsb;
-            if (rawTemp > 0x0100 && rawTemp < 0xFE00) {
-                float temp = ((175.72 * rawTemp) / 65536.0) - 46.85;
-                if (_validateTemperature(temp)) {
-                    _temperature = temp;
-                    _tempValid = true;
-                    tempSuccess = true;
-                }
-            }
-        }
-    }
+    // Ler temperatura e umidade
+    float temp, hum;
+    bool tempOk = _si7021.readTemperature(temp);
+    bool humOk = _si7021.readHumidity(hum);
     
-    if (!humSuccess || !tempSuccess) {
+    if (tempOk && humOk) {
+        _lastTemp = temp;
+        _lastHum = hum;
+        _failCount = 0;
+    } else {
         _failCount++;
+        
         if (_failCount >= 5) {
-            DEBUG_PRINTLN("[SI7021Manager] OFFLINE (5 falhas)");
+            DEBUG_PRINTLN("[SI7021Manager] ⚠ 5 falhas consecutivas - OFFLINE");
             _online = false;
         }
-    } else {
-        _failCount = 0;
     }
-}
-
-// ============================================================================
-// GETTERS + STATUS
-float SI7021Manager::getHumidity() const { return _online ? _humidity : NAN; }
-float SI7021Manager::getTemperature() const { return _online && _tempValid ? _temperature : NAN; }
-uint32_t SI7021Manager::getWarmupProgress() const { return _warmupProgress; }
-
-void SI7021Manager::printStatus() const {
-    DEBUG_PRINTF(" SI7021: %s", _online ? "ONLINE" : "OFFLINE");
-    if (_online && _warmupProgress == 0) {
-        DEBUG_PRINTF(" RH=%.1f%%", _humidity);
-        if (_tempValid) DEBUG_PRINTF(" T=%.1f°C", _temperature);
-    }
-    DEBUG_PRINTLN();
 }
 
 void SI7021Manager::reset() {
-    Wire.beginTransmission(_SI7021_ADDR);
-    Wire.write(_CMD_SOFT_RESET);
-    Wire.endTransmission();
-    delay(100);
+    DEBUG_PRINTLN("[SI7021Manager] Reset...");
+    _si7021.reset();
+    delay(50);
+    
     _online = false;
     _failCount = 0;
+    _lastTemp = -999.0;
+    _lastHum = -999.0;
+    _warmupProgress = 0;
+    
+    // Reinicializar
+    begin();
 }
 
-bool SI7021Manager::_validateHumidity(float hum) {
-    return hum >= 0.0f && hum <= 100.0f && !isnan(hum);
-}
-
-bool SI7021Manager::_validateTemperature(float temp) {
-    return temp >= -40.0f && temp <= 125.0f && !isnan(temp);
+void SI7021Manager::printStatus() const {
+    if (_online) {
+        if (_warmupProgress > 0) {
+            DEBUG_PRINTF(" SI7021: ONLINE (warm-up: %lus)\n", _warmupProgress);
+        } else {
+            DEBUG_PRINTF(" SI7021: ONLINE (T=%.1f°C H=%.1f%% Erros=%d)\n", 
+                        _lastTemp, _lastHum, _failCount);
+        }
+    } else {
+        DEBUG_PRINTLN(" SI7021: OFFLINE");
+    }
 }

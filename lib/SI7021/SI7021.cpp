@@ -1,157 +1,213 @@
 /**
  * @file SI7021.cpp
- * @brief SI7021 Driver - FIX Chip Falso (Error 263)
+ * @brief Driver nativo SI7021 - Implementação
  */
+
 #include "SI7021.h"
 
-// ============================================================================
-// CONSTRUTOR
-SI7021::SI7021(TwoWire& wire) : _wire(&wire), _addr(SI7021_I2C_ADDR), _online(false), _deviceID(0) {}
+// Se não houver macros de debug definidas em outro lugar, define padrão
+#ifndef DEBUG_PRINTLN
+#define DEBUG_PRINTLN(x)      Serial.println(x)
+#define DEBUG_PRINTF(...)     Serial.printf(__VA_ARGS__)
+#endif
 
-// ============================================================================
-// INICIALIZAÇÃO - COM TESTE RIGOROSO
-bool SI7021::begin(uint8_t addr) {
-    _addr = addr;
-    
-    #ifdef DEBUG_SI7021
-    Serial.printf("[SI7021] Testando 0x%02X...\n", _addr);
-    #endif
-    
+// Timeouts e delays
+static constexpr uint16_t SI7021_MEASURE_TIMEOUT_MS = 20;  // Conversão típica ~12ms
+static constexpr uint8_t  SI7021_RESET_DELAY_MS     = 15;
+static constexpr uint8_t  SI7021_INIT_DELAY_MS      = 50;
+
+SI7021::SI7021(TwoWire& wire)
+    : _wire(&wire),
+      _addr(SI7021_I2C_ADDR),
+      _online(false),
+      _deviceID(0)
+{
+}
+
+bool SI7021::begin(uint8_t addr)
+{
+    _addr   = addr;
     _online = false;
-    
-    // PASSO 1: Soft Reset (15ms)
-    if (!_writeCommand(SI7021_CMD_SOFT_RESET)) {
-        #ifdef DEBUG_SI7021
-        Serial.println("[SI7021] FALHA: Reset");
-        #endif
+
+    DEBUG_PRINTLN("[SI7021] ========================================");
+    DEBUG_PRINTLN("[SI7021] Inicializando driver nativo...");
+
+    // Verificar presença no barramento (ACK no endereço)
+    if (!_verifyPresence()) {
+        DEBUG_PRINTLN("[SI7021] Sensor não detectado no endereço I2C informado");
         return false;
     }
-    delay(20);
-    
-    // PASSO 2: Verificar presença (simples ACK)
-    Wire.beginTransmission(_addr);
-    if (Wire.endTransmission() != 0) {
-        #ifdef DEBUG_SI7021
-        Serial.printf("[SI7021] FALHA: Não responde (0x%02X)\n", _addr);
-        #endif
+
+    // Soft reset para garantir estado conhecido
+    reset();
+    delay(SI7021_INIT_DELAY_MS);
+
+    // Ler User Register (validação simples de comunicação)
+    uint8_t userReg = 0;
+    if (!_readRegister(SI7021_CMD_READ_USER_REG, &userReg, 1)) {
+        DEBUG_PRINTLN("[SI7021] Falha ao ler User Register (0xE7)");
         return false;
     }
-    
-    // PASSO 3: TESTE CRÍTICO - Leitura real de umidade (0xF5)
-    if (!_testRealHumidityRead()) {
-        #ifdef DEBUG_SI7021
-        Serial.println("[SI7021] FALHA: Não lê dados reais (CHIP FALSO?)");
-        #endif
+
+    // Armazena esse valor em _deviceID apenas como referência simples
+    _deviceID = userReg;
+    DEBUG_PRINTF("[SI7021] User Register: 0x%02X\n", _deviceID);
+
+    // Teste de leitura inicial de umidade
+    float testHum = 0.0f;
+    if (!readHumidity(testHum)) {
+        DEBUG_PRINTLN("[SI7021] Falha no teste inicial de umidade");
         return false;
     }
-    
-    // PASSO 4: Ler Device ID (opcional)
-    _readRegister(SI7021_CMD_READ_ID, &_deviceID, 1);
-    
+
+    if (testHum < 0.0f || testHum > 100.0f) {
+        DEBUG_PRINTF("[SI7021] Leitura inicial inválida de umidade: %.1f%%\n", testHum);
+        return false;
+    }
+
     _online = true;
-    #ifdef DEBUG_SI7021
-    Serial.printf("[SI7021] ONLINE! ID=0x%02X\n", _deviceID);
-    #endif
+    DEBUG_PRINTF("[SI7021] Inicializado com sucesso! RH=%.1f%%\n", testHum);
+    DEBUG_PRINTLN("[SI7021] ========================================");
+
     return true;
 }
 
-// ============================================================================
-// TESTE CRÍTICO - Leitura real (detecta chip falso)
-bool SI7021::_testRealHumidityRead() {
-    // Comando umidade NO HOLD (0xF5)
-    if (!_writeCommand(SI7021_CMD_MEASURE_RH_NOHOLD)) return false;
-    
-    // Aguardar conversão (máx 12ms para 12-bit)
-    delay(20);
-    
-    // TENTAR LEITURA 3x
-    for (uint8_t retry = 0; retry < 3; retry++) {
-        Wire.requestFrom(_addr, (uint8_t)3);
-        if (Wire.available() >= 2) {
-            uint8_t msb = Wire.read();
-            uint8_t lsb = Wire.read();
-            uint8_t crc = Wire.available() ? Wire.read() : 0;
-            
-            uint16_t raw = (msb << 8) | lsb;
-            
-            // VALIDAÇÃO RIGOROSA (não 0x0000 nem 0xFFFF)
-            if (raw > 0x0100 && raw < 0xFE00) {
-                float hum = ((125.0 * raw) / 65536.0) - 6.0;
-                if (hum >= 0.0f && hum <= 100.0f) {
-                    #ifdef DEBUG_SI7021
-                    Serial.printf("[SI7021] Teste OK: raw=0x%04X hum=%.1f%%\n", raw, hum);
-                    #endif
-                    return true;
-                }
-            }
-        }
-        delay(10);
+bool SI7021::readHumidity(float& humidity)
+{
+    if (!_online) {
+        humidity = -999.0f;
+        return false;
     }
+
+    // Enviar comando de medição (NO HOLD MODE)
+    if (!_writeCommand(SI7021_CMD_MEASURE_RH_NOHOLD)) {
+        DEBUG_PRINTLN("[SI7021] Erro ao enviar comando de leitura de umidade (0xF5)");
+        humidity = -999.0f;
+        return false;
+    }
+
+    // Aguardar conversão (datasheet: tipicamente ~12 ms para 12-bit)
+    delay(SI7021_MEASURE_TIMEOUT_MS);
+
+    // Ler 2 bytes de dados (ignorando CRC)
+    uint8_t data[2] = {0, 0};
+    if (!_readBytes(data, 2)) {
+        DEBUG_PRINTLN("[SI7021] Timeout/erro ao ler bytes de umidade");
+        humidity = -999.0f;
+        return false;
+    }
+
+    // Conversão conforme datasheet:
+    // RH = (125 * raw / 65536) - 6
+    const uint16_t raw = static_cast<uint16_t>((data[0] << 8) | data[1]);
+    humidity = (125.0f * static_cast<float>(raw) / 65536.0f) - 6.0f;
+
+    // Limita para faixa física 0..100 %
+    if (humidity < 0.0f)  humidity = 0.0f;
+    if (humidity > 100.0f) humidity = 100.0f;
+
+    return true;
+}
+
+bool SI7021::readTemperature(float& temperature)
+{
+    if (!_online) {
+        temperature = -999.0f;
+        return false;
+    }
+
+    // Enviar comando de medição (NO HOLD MODE)
+    if (!_writeCommand(SI7021_CMD_MEASURE_T_NOHOLD)) {
+        DEBUG_PRINTLN("[SI7021] Erro ao enviar comando de leitura de temperatura (0xF3)");
+        temperature = -999.0f;
+        return false;
+    }
+
+    // Aguardar conversão
+    delay(SI7021_MEASURE_TIMEOUT_MS);
+
+    // Ler 2 bytes de dados (ignorando CRC)
+    uint8_t data[2] = {0, 0};
+    if (!_readBytes(data, 2)) {
+        DEBUG_PRINTLN("[SI7021] Timeout/erro ao ler bytes de temperatura");
+        temperature = -999.0f;
+        return false;
+    }
+
+    // Conversão conforme datasheet:
+    // T = (175.72 * raw / 65536) - 46.85
+    const uint16_t raw = static_cast<uint16_t>((data[0] << 8) | data[1]);
+    temperature = (175.72f * static_cast<float>(raw) / 65536.0f) - 46.85f;
+
+    // Validação básica: faixa típica do sensor
+    if (temperature < -40.0f || temperature > 125.0f) {
+        DEBUG_PRINTF("[SI7021] Temperatura fora da faixa esperada: %.1f°C\n", temperature);
+        temperature = -999.0f;
+        return false;
+    }
+
+    return true;
+}
+
+void SI7021::reset()
+{
+    DEBUG_PRINTLN("[SI7021] Executando soft reset...");
+    _writeCommand(SI7021_CMD_SOFT_RESET);
+    delay(SI7021_RESET_DELAY_MS);
+}
+
+// ============================================================================
+// MÉTODOS PRIVADOS
+// ============================================================================
+
+bool SI7021::_verifyPresence()
+{
+    _wire->beginTransmission(_addr);
+    const uint8_t error = _wire->endTransmission();
+    return (error == 0);
+}
+
+bool SI7021::_writeCommand(uint8_t cmd)
+{
+    _wire->beginTransmission(_addr);
+    _wire->write(cmd);
+    const uint8_t error = _wire->endTransmission();
+    return (error == 0);
+}
+
+bool SI7021::_readBytes(uint8_t* buf, size_t len)
+{
+    if (buf == nullptr || len == 0) {
+        return false;
+    }
+
+    uint8_t attempts = 0;
+    static constexpr uint8_t MAX_ATTEMPTS = 5;
+
+    while (attempts++ < MAX_ATTEMPTS) {
+        const size_t received = _wire->requestFrom(_addr, static_cast<uint8_t>(len));
+        if (received == len) {
+            for (size_t i = 0; i < len; i++) {
+                buf[i] = _wire->read();
+            }
+            return true;
+        }
+
+        // Pequeno delay antes de tentar novamente
+        delay(5);
+    }
+
     return false;
 }
 
-// ============================================================================
-// LEITURA UMIDADE
-bool SI7021::readHumidity(float& humidity) {
-    if (!_online) return false;
-    
-    if (!_writeCommand(SI7021_CMD_MEASURE_RH_NOHOLD)) return false;
-    delay(20);
-    
-    uint8_t buf[3];
-    if (!_readBytes(buf, 3)) return false;
-    
-    uint16_t raw = (buf[0] << 8) | buf[1];
-    if (raw <= 0x0100 || raw >= 0xFE00) return false;
-    
-    humidity = ((125.0 * raw) / 65536.0) - 6.0;
-    return (humidity >= 0.0f && humidity <= 100.0f);
-}
-
-// ============================================================================
-// LEITURA TEMPERATURA
-bool SI7021::readTemperature(float& temperature) {
-    if (!_online) return false;
-    
-    if (!_writeCommand(SI7021_CMD_MEASURE_T_NOHOLD)) return false;
-    delay(20);
-    
-    uint8_t buf[3];
-    if (!_readBytes(buf, 2)) return false;  // Temp = 2 bytes
-    
-    uint16_t raw = (buf[0] << 8) | buf[1];
-    if (raw <= 0x0100 || raw >= 0xFE00) return false;
-    
-    temperature = ((175.72 * raw) / 65536.0) - 46.85;
-    return (temperature >= -40.0f && temperature <= 125.0f);
-}
-
-// ============================================================================
-// MÉTODOS BAIXO NÍVEL (robustos)
-bool SI7021::_writeCommand(uint8_t cmd) {
-    Wire.beginTransmission(_addr);
-    Wire.write(cmd);
-    return (Wire.endTransmission() == 0);
-}
-
-bool SI7021::_readBytes(uint8_t* buf, size_t len) {
-    Wire.requestFrom(_addr, (uint8_t)len);
-    if (Wire.available() < len) return false;
-    
-    for (size_t i = 0; i < len; i++) {
-        buf[i] = Wire.read();
+bool SI7021::_readRegister(uint8_t cmd, uint8_t* data, size_t len)
+{
+    if (!_writeCommand(cmd)) {
+        return false;
     }
-    return true;
-}
 
-bool SI7021::_readRegister(uint8_t cmd, uint8_t* data, size_t len) {
-    if (!_writeCommand(cmd)) return false;
-    delay(10);
+    // Pequeno delay para o sensor preparar o dado
+    delay(5);
+
     return _readBytes(data, len);
-}
-
-void SI7021::reset() {
-    _writeCommand(SI7021_CMD_SOFT_RESET);
-    delay(50);
-    _online = false;
 }
