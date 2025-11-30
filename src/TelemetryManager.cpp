@@ -171,7 +171,6 @@ bool TelemetryManager::begin() {
         }
     }
 
-    // ✅ RTC UTC PURO
     DEBUG_PRINTLN("[TelemetryManager] Inicializando RTC (UTC Mode)...");
     if (_rtc.begin(&Wire)) {
         subsystemsOk++;
@@ -235,6 +234,37 @@ bool TelemetryManager::begin() {
         success = false;
     }
 
+    if (_rtc.isInitialized() && WiFi.status() == WL_CONNECTED) {
+        DEBUG_PRINTLN("");
+        DEBUG_PRINTLN("[TelemetryManager] ========================================");
+        DEBUG_PRINTLN("[TelemetryManager] Iniciando sincronização NTP...");
+        DEBUG_PRINTLN("[TelemetryManager] ========================================");
+        
+        if (_rtc.syncWithNTP()) {
+            DEBUG_PRINTLN("[TelemetryManager] RTC sincronizado com NTP!");
+            DEBUG_PRINTF("[TelemetryManager] Hora local (BRT): %s\n", 
+                        _rtc.getDateTime().c_str());
+            DEBUG_PRINTF("[TelemetryManager] Unix timestamp: %lu\n", 
+                        _rtc.getUnixTime());
+            
+            if (_useNewDisplay && displayOk) {
+                _displayMgr.showSensorInit("NTP Sync", true);
+                delay(1000);
+            }
+        } else {
+            DEBUG_PRINTLN("[TelemetryManager] NTP sync falhou - usando compile time");
+            
+            if (_useNewDisplay && displayOk) {
+                _displayMgr.showSensorInit("NTP Sync", false);
+                delay(1000);
+            }
+        }
+        DEBUG_PRINTLN("[TelemetryManager] ========================================");
+        DEBUG_PRINTLN("");
+    } else {
+        DEBUG_PRINTLN("[TelemetryManager] WiFi offline - NTP sync não disponível");
+    }
+
     if (_useNewDisplay && displayOk) {
         _displayMgr.showReady();
     }
@@ -258,6 +288,7 @@ bool TelemetryManager::begin() {
     return success;
 }
 
+
 void TelemetryManager::loop() {
     uint32_t currentTime = millis();
     
@@ -271,7 +302,6 @@ void TelemetryManager::loop() {
     _comm.update(); 
     delay(5);
     
-    // ✅ RTC UTC - Sync periódico
     _rtc.update();
     delay(5);
     
@@ -299,7 +329,6 @@ void TelemetryManager::loop() {
             receivedData.snr = snr;
             receivedData.lastLoraRx = millis();
             
-            // ✅ UTC TIMESTAMP
             if (_rtc.isInitialized()) {
                 receivedData.collectionTime = _rtc.getUnixTime();
             } else {

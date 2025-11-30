@@ -1,7 +1,7 @@
 #include "RTCManager.h"
 #include <WiFi.h>
 #include <time.h>
-#include "config.h"  // ✅ ADICIONADO - macros DEBUG_*
+#include "config.h"
 
 RTCManager::RTCManager() : _wire(nullptr), _initialized(false), _lost_power(true) {}
 
@@ -37,6 +37,7 @@ bool RTCManager::begin(TwoWire* wire) {
     
     _lost_power = _rtc.lostPower();
     if (_lost_power) {
+        DEBUG_PRINTLN("[RTC] Bateria perdida - ajustando compile time");
         _rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     }
     
@@ -44,10 +45,11 @@ bool RTCManager::begin(TwoWire* wire) {
     
     DateTime now = _rtc.now();
     if (now.year() < 2020 || now.year() > 2100) {
+        DEBUG_PRINTF("[RTC] Data invalida: %d\n", now.year());
         _rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     }
     
-    DEBUG_PRINTF("[RTC] OK: %s\n", getDateTime().c_str());
+    DEBUG_PRINTF("[RTC] OK: %s (unix: %lu)\n", getDateTime().c_str(), getUnixTime());
     return true;
 }
 
@@ -72,59 +74,76 @@ String RTCManager::getDateTime() {
 }
 
 bool RTCManager::syncWithNTP() {
-    if (!_initialized || WiFi.status() != WL_CONNECTED) {
+    if (!_initialized) {
+        DEBUG_PRINTLN("[RTC] RTC nao inicializado - impossivel sincronizar");
         return false;
     }
     
-    DEBUG_PRINTLN("[RTC] Sync NTP...");
+    if (WiFi.status() != WL_CONNECTED) {
+        DEBUG_PRINTLN("[RTC] WiFi desconectado - impossivel sincronizar NTP");
+        return false;
+    }
     
-    // ✅ FIX: Somente timezone, SEM DST offset (0)
-    configTime(RTC_TIMEZONE_OFFSET, 0, NTP_SERVER_PRIMARY, NTP_SERVER_SECONDARY);
+    DEBUG_PRINTLN("[RTC] ========================================");
+    DEBUG_PRINTLN("[RTC] SINCRONIZANDO COM NTP");
+    DEBUG_PRINTF("[RTC] Servidor primario: %s\n", NTP_SERVER_PRIMARY);
+    DEBUG_PRINTF("[RTC] Servidor secundario: %s\n", NTP_SERVER_SECONDARY);
+    DEBUG_PRINTLN("[RTC] ========================================");
+    
+    // ✅ UTC puro (offset=0)
+    configTime(0, 0, NTP_SERVER_PRIMARY, NTP_SERVER_SECONDARY);
     
     time_t now = 0;
     struct tm timeinfo;
     uint8_t attempts = 0;
+    const uint8_t MAX_ATTEMPTS = 40;
     
-    // Timeout 20s
-    while (attempts++ < 40) {
-        delay(500);
+    DEBUG_PRINTLN("[RTC] Aguardando resposta NTP...");
+    while (attempts < MAX_ATTEMPTS) {
         if (getLocalTime(&timeinfo)) {
             time(&now);
-            if (now > 1704067200) {  // Pós 2024
-                DEBUG_PRINTF("[RTC] NTP raw: %ld (local)\n", now);
+            if (now > 1704067200) {
+                DEBUG_PRINTF("[RTC] NTP respondeu! UTC: %04d-%02d-%02d %02d:%02d:%02d\n",
+                            timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                            timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
                 break;
             }
+        }
+        delay(500);
+        attempts++;
+        
+        if (attempts % 5 == 0) {
+            DEBUG_PRINTF("[RTC] Tentativa %d/%d...\n", attempts, MAX_ATTEMPTS);
         }
     }
     
     if (now < 1704067200) {
-        DEBUG_PRINTLN("[RTC] NTP timeout");
+        DEBUG_PRINTLN("[RTC] ❌ TIMEOUT NTP (20 segundos)");
         return false;
     }
     
-    // ✅ FIX CRÍTICO: Converter LOCAL → UTC removendo timezone offset
-    time_t utcTime = now - RTC_TIMEZONE_OFFSET;
-    
-    struct tm timeinfoUTC;
-    gmtime_r(&utcTime, &timeinfoUTC);
-    
-    DateTime ntpTime(
-        timeinfoUTC.tm_year + 1900,
-        timeinfoUTC.tm_mon + 1,
-        timeinfoUTC.tm_mday,
-        timeinfoUTC.tm_hour,
-        timeinfoUTC.tm_min,
-        timeinfoUTC.tm_sec
-    );
+    // Salvar UTC no RTC
+    DateTime ntpTime(timeinfo.tm_year + 1900, 
+                     timeinfo.tm_mon + 1, 
+                     timeinfo.tm_mday,
+                     timeinfo.tm_hour, 
+                     timeinfo.tm_min, 
+                     timeinfo.tm_sec);
     
     _rtc.adjust(ntpTime);
     _lost_power = false;
     
-    DEBUG_PRINTF("[RTC] NTP OK: RAW=%ld LOCAL=%ld UTC=%ld\n", now, now, utcTime);
-    DEBUG_PRINTF("[RTC] RTC ajustado: %s\n", getDateTime().c_str());
+    DEBUG_PRINTLN("[RTC] ========================================");
+    DEBUG_PRINTLN("[RTC] ✅ SINCRONIZADO COM SUCESSO!");
+    DEBUG_PRINTF("[RTC] UTC armazenado: %04d-%02d-%02d %02d:%02d:%02d\n",
+                timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    DEBUG_PRINTF("[RTC] Hora local (BRT): %s\n", getDateTime().c_str());
+    DEBUG_PRINTF("[RTC] Unix timestamp: %lu\n", getUnixTime());
+    DEBUG_PRINTLN("[RTC] ========================================");
+    
     return true;
 }
-
 
 bool RTCManager::_detectRTC() {
     _wire->clearWriteError();
