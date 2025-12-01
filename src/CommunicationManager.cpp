@@ -16,39 +16,33 @@
 
 CommunicationManager::CommunicationManager() :
     _lora(),
-    _http(),              // opcional, default
-    _connected(false),
-    _rssi(0),
-    _ipAddress(),
+    _http(),
+    _wifi(),              // ← NOVO
     _packetsSent(0),
     _packetsFailed(0),
     _totalRetries(0),
-    _lastConnectionAttempt(0),
     _httpEnabled(true)
 {
     memset(&_lastMissionData, 0, sizeof(MissionData));
     for (int i = 0; i < MAX_GROUND_NODES; i++) {
         _expectedSeqNum[i] = 0;
-        _seqNodeId[i]      = 0;   // NOVO
+        _seqNodeId[i]      = 0;
     }
 }
 
-
 bool CommunicationManager::begin() {
-    DEBUG_PRINTLN("[CommunicationManager] Inicializando DUAL MODE (LoRa + WiFi/HTTP)");
-    DEBUG_PRINTLN("[CommunicationManager] Board: TTGO LoRa32 V2.1 T3 V1.6");
+    DEBUG_PRINTLN("[CommunicationManager] Inicializando DUAL MODE");
 
     bool loraOk = _lora.begin();
-    bool wifiOk = connectWiFi();
+    bool wifiOk = _wifi.begin();  // ← usar WiFiService
 
-    DEBUG_PRINTLN("[CommunicationManager] -------------------------------------------");
-    DEBUG_PRINTF("[CommunicationManager] Status Final: LoRa=%s, WiFi=%s\n",
+    DEBUG_PRINTF("[CommunicationManager] LoRa=%s, WiFi=%s\n",
                  loraOk ? "OK" : "FALHOU",
                  wifiOk ? "OK" : "FALHOU");
 
-    // Prossegue se pelo menos um canal (LoRa OU WiFi) estiver OK
     return loraOk || wifiOk;
 }
+
 
 bool CommunicationManager::initLoRa() {
     // Mantido por compatibilidade: delega para LoRaService
@@ -111,7 +105,8 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data,
     }
 
     // HTTP opcional (mesma lógica que você já tinha)
-    if (_httpEnabled && _connected) {
+    if (_httpEnabled && _wifi.isConnected()) {
+
         String jsonPayload = _createTelemetryJSON(data, groundBuffer);
         DEBUG_PRINTLN("[CommunicationManager] Enviando HTTP OBSAT JSON...");
         DEBUG_PRINTF("[CommunicationManager] JSON size = %d bytes\n", jsonPayload.length());
@@ -145,9 +140,9 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data,
             }
             httpSuccess = ok;
         }
-    } else if (_httpEnabled && !_connected) {
-        DEBUG_PRINTLN("[CommunicationManager] HTTP habilitado mas WiFi offline");
-    }
+} else if (_httpEnabled && !_wifi.isConnected()) {
+    DEBUG_PRINTLN("[CommunicationManager] HTTP habilitado mas WiFi offline");
+}
 
     return loraSuccess || httpSuccess;
 }
@@ -518,61 +513,15 @@ bool CommunicationManager::_validateChecksum(const String& packet) {
 }
 
 void CommunicationManager::update() {
-    // Monitorar estado do WiFi
-    if (WiFi.status() == WL_CONNECTED) {
-        if (!_connected) {
-            _connected = true;
-            _rssi = WiFi.RSSI();
-            _ipAddress = WiFi.localIP().toString();
-            DEBUG_PRINTF("[CommunicationManager] WiFi conectado! IP=%s, RSSI=%d dBm\n",
-                         _ipAddress.c_str(), _rssi);
-        } else {
-            _rssi = WiFi.RSSI();
-        }
-    } else if (_connected) {
-        _connected = false;
-        DEBUG_PRINTLN("[CommunicationManager] WiFi desconectado!");
-    }
+    _wifi.update();  // ← delegar para WiFiService
 }
 
 bool CommunicationManager::connectWiFi() {
-    if (_connected) return true;
-
-    uint32_t currentTime = millis();
-    if (_lastConnectionAttempt != 0 &&
-        (currentTime - _lastConnectionAttempt) < 5000) {
-        return false;
-    }
-
-    _lastConnectionAttempt = currentTime;
-
-    DEBUG_PRINTF("[CommunicationManager] Conectando WiFi: %s...\n", WIFI_SSID);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-    uint32_t startTime = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        if (millis() - startTime > WIFI_TIMEOUT_MS) {
-            DEBUG_PRINTLN("[CommunicationManager] Timeout WiFi");
-            return false;
-        }
-        DEBUG_PRINT(".");
-        delay(500);
-    }
-
-    _connected = true;
-    _rssi = WiFi.RSSI();
-    _ipAddress = WiFi.localIP().toString();
-
-    DEBUG_PRINTF("[CommunicationManager] WiFi OK! IP=%s, RSSI=%d dBm\n",
-                 _ipAddress.c_str(), _rssi);
-
-    return true;
+    return _wifi.connect();
 }
 
 void CommunicationManager::disconnectWiFi() {
-    WiFi.disconnect();
-    _connected = false;
-    DEBUG_PRINTLN("[CommunicationManager] WiFi desconectado");
+    _wifi.disconnect();
 }
 
 void CommunicationManager::enableLoRa(bool enable) {
@@ -584,15 +533,15 @@ void CommunicationManager::enableHTTP(bool enable) {
 }
 
 bool CommunicationManager::isConnected() {
-    return _connected;
+    return _wifi.isConnected();
 }
 
 int8_t CommunicationManager::getRSSI() {
-    return _rssi;
+    return _wifi.getRSSI();
 }
 
 String CommunicationManager::getIPAddress() {
-    return _ipAddress;
+    return _wifi.getIPAddress();
 }
 
 void CommunicationManager::getStatistics(uint16_t& sent, uint16_t& failed, uint16_t& retries) {
@@ -602,15 +551,15 @@ void CommunicationManager::getStatistics(uint16_t& sent, uint16_t& failed, uint1
 }
 
 bool CommunicationManager::testConnection() {
-    if (!_connected) return false;
+    if (!_wifi.isConnected()) return false;
 
     HTTPClient http;
-    String url = "https://obsat.org.br/testepost/index.php";
-    http.begin(url);
+    http.begin("https://obsat.org.br/testepost/index.php");
     http.setTimeout(5000);
-
+    
     int httpCode = http.GET();
     http.end();
+    
     return httpCode == 200;
 }
 

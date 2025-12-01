@@ -17,6 +17,7 @@
 #include "config.h"
 #include "comm/LoRaService/LoRaService.h"   // novo serviço de rádio
 #include "comm/HttpService/HttpService.h" 
+#include "comm/WiFiService/WiFiService.h" 
 
 class CommunicationManager {
 public:
@@ -108,14 +109,9 @@ private:
     // Variáveis de Estado
     // ========================================
 
-    // WiFi / HTTP
-    bool          _connected;
-    int8_t        _rssi;
-    String        _ipAddress;
     uint16_t      _packetsSent;          // HTTP OK
     uint16_t      _packetsFailed;        // HTTP falhas
     uint16_t      _totalRetries;
-    unsigned long _lastConnectionAttempt;
 
     // Controle de features
     bool          _httpEnabled;
@@ -126,6 +122,8 @@ private:
     uint16_t      _seqNodeId[MAX_GROUND_NODES];
 
     HttpService _http;
+    WiFiService  _wifi;  // ← NOVO
+
 };
 
 #endif // COMMUNICATION_MANAGER_H
