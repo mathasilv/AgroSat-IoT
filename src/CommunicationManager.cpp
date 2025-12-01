@@ -16,6 +16,7 @@
 
 CommunicationManager::CommunicationManager() :
     _lora(),
+    _http(),              // opcional, default
     _connected(false),
     _rssi(0),
     _ipAddress(),
@@ -131,7 +132,7 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& data,
                                  attempt + 1, WIFI_RETRY_ATTEMPTS);
                     delay(1000);
                 }
-                if (_sendHTTPPost(jsonPayload)) {
+                if (_http.postJson(jsonPayload)) {
                     _packetsSent++;
                     ok = true;
                     DEBUG_PRINTLN("[CommunicationManager] HTTP OK!");
@@ -717,62 +718,6 @@ String CommunicationManager::_createTelemetryJSON(const TelemetryData& data, con
     }
     
     return String(jsonBuffer);
-}
-
-
-bool CommunicationManager::_sendHTTPPost(const String& jsonPayload) {
-    if (jsonPayload.length() == 0 || jsonPayload == "{}" || jsonPayload == "null") {
-        DEBUG_PRINTLN("[CommunicationManager] ERRO: Payload HTTP inválido");
-        return false;
-    }
-    
-    if (jsonPayload.length() > JSON_MAX_SIZE) {
-        DEBUG_PRINTF("[CommunicationManager] ERRO: Payload muito grande (%d > %d)\n",
-                     jsonPayload.length(), JSON_MAX_SIZE);
-        return false;
-    }
-    
-    HTTPClient http;
-    String url = String("https://") + HTTP_SERVER + HTTP_ENDPOINT;
-    
-    http.begin(url);
-    http.setTimeout(HTTP_TIMEOUT_MS);
-    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-    http.addHeader("Content-Type", "application/json");
-    
-    DEBUG_PRINTF("[CommunicationManager] POST para: %s\n", url.c_str());
-    
-    int httpCode = http.POST(jsonPayload);
-    bool success = false;
-    
-    if (httpCode > 0) {
-        DEBUG_PRINTF("[CommunicationManager] HTTP Code: %d\n", httpCode);
-        
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
-            String response = http.getString();
-            DEBUG_PRINTF("[CommunicationManager] Resposta: %s\n", response.c_str());
-            
-            success = (response.indexOf("sucesso") >= 0 || response.indexOf("Sucesso") >= 0);
-            
-            if (!success) {
-                StaticJsonDocument<256> responseDoc;
-                if (deserializeJson(responseDoc, response) == DeserializationError::Ok) {
-                    const char* status = responseDoc["Status"];
-                    if (status != nullptr) {
-                        success = (String(status).indexOf("Sucesso") >= 0);
-                    }
-                } else {
-                    success = true;
-                }
-            }
-        }
-    } else {
-        DEBUG_PRINTF("[CommunicationManager] Erro HTTP: %s\n", 
-                    http.errorToString(httpCode).c_str());
-    }
-    
-    http.end();
-    return success;
 }
 
 uint8_t CommunicationManager::calculatePriority(const MissionData& node) {

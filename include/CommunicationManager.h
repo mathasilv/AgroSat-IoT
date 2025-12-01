@@ -16,6 +16,7 @@
 
 #include "config.h"
 #include "comm/LoRaService/LoRaService.h"   // novo serviço de rádio
+#include "comm/HttpService/HttpService.h" 
 
 class CommunicationManager {
 public:
@@ -98,8 +99,6 @@ private:
     // ========================================
     String _createTelemetryJSON(const TelemetryData& data,
                                 const GroundNodeBuffer& groundBuffer);
-    bool   _sendHTTPPost(const String& jsonPayload);
-
     // ========================================
     // Utilidades
     // ========================================
@@ -125,6 +124,8 @@ private:
     MissionData   _lastMissionData;
     uint16_t      _expectedSeqNum[MAX_GROUND_NODES];
     uint16_t      _seqNodeId[MAX_GROUND_NODES];
+
+    HttpService _http;
 };
 
 #endif // COMMUNICATION_MANAGER_H
