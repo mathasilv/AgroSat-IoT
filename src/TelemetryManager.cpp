@@ -95,7 +95,9 @@ bool TelemetryManager::_initI2CBus() {
     return true;
 }
 
-void TelemetryManager::applyModeConfig(OperationMode mode) {
+void TelemetryManager::applyModeConfig(uint8_t modeIndex) {
+    OperationMode mode = static_cast<OperationMode>(modeIndex);  // ← ADICIONAR
+    
     switch(mode) {
         case MODE_PREFLIGHT: 
             activeModeConfig = &PREFLIGHT_CONFIG; 
@@ -186,7 +188,7 @@ bool TelemetryManager::begin() {
     _button.begin();
 
     DEBUG_PRINTLN("[TelemetryManager] Inicializando System Health...");
-    if (_health.begin()) {
+    if (_systemHealth.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] System Health OK");
     } else {
@@ -293,7 +295,7 @@ void TelemetryManager::loop() {
     uint32_t currentTime = millis();
     
     // Atualizar subsistemas
-    _health.update(); 
+    _systemHealth.update();
     delay(5);
     _power.update(); 
     delay(5);
@@ -303,6 +305,7 @@ void TelemetryManager::loop() {
     delay(5);
     
     _rtc.update();
+
     delay(5);
     
     _handleButtonEvents();
@@ -366,7 +369,6 @@ void TelemetryManager::loop() {
     if (currentTime - lastFlagReset >= FLAG_RESET_INTERVAL) {
         lastFlagReset = currentTime;
         
-        std::lock_guard<std::mutex> lock(_bufferMutex);
         uint8_t resetCount = 0;
         
         for (uint8_t i = 0; i < _groundNodeBuffer.activeNodes; i++) {
@@ -409,7 +411,6 @@ void TelemetryManager::loop() {
 }
 
 void TelemetryManager::_updateGroundNode(const MissionData& data) {
-    std::lock_guard<std::mutex> lock(_bufferMutex);
     
     int existingIndex = -1;
     
@@ -501,7 +502,6 @@ void TelemetryManager::_replaceLowestPriorityNode(const MissionData& newData) {
 }
 
 void TelemetryManager::_cleanupStaleNodes(unsigned long maxAge) {
-    std::lock_guard<std::mutex> lock(_bufferMutex);
     
     unsigned long now = millis();
     uint8_t removedCount = 0;
@@ -650,7 +650,7 @@ void TelemetryManager::_collectTelemetryData() {
         _telemetryData.timestamp = millis() / 1000;
     }
     
-    _telemetryData.missionTime = _health.getMissionTime();
+    _telemetryData.missionTime = _systemHealth.getMissionTime();
     _telemetryData.batteryVoltage = _power.getVoltage();
     _telemetryData.batteryPercentage = _power.getPercentage();
     
@@ -715,8 +715,8 @@ void TelemetryManager::_collectTelemetryData() {
         }
     }
     
-    _telemetryData.systemStatus = _health.getSystemStatus();
-    _telemetryData.errorCount = _health.getErrorCount();
+    _telemetryData.systemStatus = _systemHealth.getSystemStatus();
+    _telemetryData.errorCount = _systemHealth.getErrorCount();
     
     // Gerar resumo simples dos nós
     if (_groundNodeBuffer.activeNodes > 0) {
@@ -799,10 +799,10 @@ void TelemetryManager::_saveToStorage() {
 
 void TelemetryManager::_checkOperationalConditions() {
     if (_power.isCritical()) { 
-        _health.reportError(STATUS_BATTERY_CRIT, "Critical battery level"); 
+        _systemHealth.reportError(STATUS_BATTERY_CRIT, "Critical battery level"); 
         _power.enablePowerSave(); 
     } else if (_power.isLow()) { 
-        _health.reportError(STATUS_BATTERY_LOW, "Low battery level"); 
+        _systemHealth.reportError(STATUS_BATTERY_LOW, "Low battery level"); 
     }
     
     static unsigned long lastSensorCheck = 0;
@@ -810,7 +810,7 @@ void TelemetryManager::_checkOperationalConditions() {
         lastSensorCheck = millis();
         
         if (!_sensors.isMPU9250Online()) { 
-            _health.reportError(STATUS_SENSOR_ERROR, "IMU offline"); 
+            _systemHealth.reportError(STATUS_SENSOR_ERROR, "IMU offline"); 
             
             if (millis() - _lastSensorReset >= 300000) {
                 DEBUG_PRINTLN("[TelemetryManager] Tentando recuperação de sensores...");
@@ -820,7 +820,7 @@ void TelemetryManager::_checkOperationalConditions() {
         }
         
         if (!_sensors.isBMP280Online()) { 
-            _health.reportError(STATUS_SENSOR_ERROR, "BMP280 offline"); 
+            _systemHealth.reportError(STATUS_SENSOR_ERROR, "BMP280 offline"); 
         }
     }
 }
@@ -981,7 +981,7 @@ void TelemetryManager::_monitorHeapUsage(unsigned long currentTime) {
     
     if (currentHeap < 15000) {
         DEBUG_PRINTLN("ALERTA: Heap baixo!");
-        _health.reportError(STATUS_WATCHDOG, "Low memory");
+        _systemHealth.reportError(STATUS_WATCHDOG, "Low memory");
     }
     
     if (currentHeap < 8000) {
@@ -997,5 +997,111 @@ void TelemetryManager::_monitorHeapUsage(unsigned long currentTime) {
     }
     
     DEBUG_PRINTLN("=======================================");
+    DEBUG_PRINTLN("");
+}
+
+/**
+ * @brief Processa comandos externos (via Serial, LoRa, etc)
+ * @param cmd Comando em string (case-insensitive, já convertido para uppercase)
+ * @return true se comando foi reconhecido e processado
+ */
+bool TelemetryManager::handleCommand(const String& cmd) {
+    // ========================================
+    // COMANDOS DE SENSORES
+    // ========================================
+    
+    if (cmd == "STATUS_SENSORES" || cmd == "STATUS") {
+        _sensors.printDetailedStatus();
+        return true;
+    }
+    
+    if (cmd == "RECALIBRAR_MAG" || cmd == "CALIB_MAG") {
+        DEBUG_PRINTLN("[TelemetryManager] Delegando recalibração para SensorManager...");
+        bool success = _sensors.recalibrateMagnetometer();
+        
+        if (success) {
+            DEBUG_PRINTLN("[TelemetryManager] ✓ Recalibração concluída com sucesso!");
+        } else {
+            DEBUG_PRINTLN("[TelemetryManager] ⚠ Recalibração falhou");
+        }
+        
+        return true;
+    }
+    
+    if (cmd == "LIMPAR_MAG" || cmd == "CLEAR_MAG") {
+        DEBUG_PRINTLN("[TelemetryManager] Limpando calibração do magnetômetro...");
+        _sensors.clearMagnetometerCalibration();
+        DEBUG_PRINTLN("[TelemetryManager] ⚠ Reinicie o sistema para recalibrar");
+        return true;
+    }
+    
+    if (cmd == "VER_MAG" || cmd == "INFO_MAG") {
+        _sensors.printMagnetometerCalibration();
+        return true;
+    }
+    
+    // ========================================
+    // COMANDOS CCS811
+    // ========================================
+    
+    if (cmd == "SALVAR_BASELINE" || cmd == "SAVE_BASELINE") {
+        DEBUG_PRINTLN("[TelemetryManager] Salvando baseline do CCS811...");
+        
+        if (_sensors.saveCCS811Baseline()) {
+            DEBUG_PRINTLN("[TelemetryManager] ✓ Baseline salvo com sucesso!");
+        } else {
+            DEBUG_PRINTLN("[TelemetryManager] ⚠ Falha ao salvar baseline");
+        }
+        
+        return true;
+    }
+    
+    if (cmd == "RESTAURAR_BASELINE" || cmd == "RESTORE_BASELINE") {
+        DEBUG_PRINTLN("[TelemetryManager] Restaurando baseline do CCS811...");
+        
+        if (_sensors.restoreCCS811Baseline()) {
+            DEBUG_PRINTLN("[TelemetryManager] ✓ Baseline restaurado!");
+        } else {
+            DEBUG_PRINTLN("[TelemetryManager] ⚠ Nenhum baseline salvo encontrado");
+        }
+        
+        return true;
+    }
+    
+    // ========================================
+    // COMANDOS DE SISTEMA
+    // ========================================
+    
+    if (cmd == "HELP" || cmd == "?") {
+        _printHelpMenu();
+        return true;
+    }
+    
+    // Comando não reconhecido
+    return false;
+}
+
+
+/**
+ * @brief Exibe menu de ajuda (interno ao TelemetryManager)
+ */
+void TelemetryManager::_printHelpMenu() {
+    DEBUG_PRINTLN("");
+    DEBUG_PRINTLN("========================================");
+    DEBUG_PRINTLN("COMANDOS DISPONÍVEIS:");
+    DEBUG_PRINTLN("========================================");
+    DEBUG_PRINTLN("SENSORES:");
+    DEBUG_PRINTLN("  STATUS_SENSORES   - Status detalhado de todos sensores");
+    DEBUG_PRINTLN("  RECALIBRAR_MAG    - Recalibrar magnetômetro MPU9250");
+    DEBUG_PRINTLN("  LIMPAR_MAG        - Limpar calibração salva (força recalibração)");
+    DEBUG_PRINTLN("  VER_MAG           - Ver calibração atual do magnetômetro");
+    DEBUG_PRINTLN("");
+    DEBUG_PRINTLN("CCS811 (Qualidade do Ar):");
+    DEBUG_PRINTLN("  SALVAR_BASELINE   - Salvar baseline (após 48h de operação)");
+    DEBUG_PRINTLN("  RESTAURAR_BASELINE- Restaurar baseline salvo da memória");
+    DEBUG_PRINTLN("");
+    DEBUG_PRINTLN("SISTEMA:");
+    DEBUG_PRINTLN("  HELP              - Mostrar este menu");
+    DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("");
 }

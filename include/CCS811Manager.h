@@ -44,6 +44,7 @@ public:
     // Status
     bool isOnline() const { return _online; }
     bool isWarmupComplete() const;
+    bool isDataReliable() const;  // ← NOVO: verifica se passou 20 min
     uint32_t getWarmupProgress() const; // 0-100%
     
     // Diagnóstico
@@ -77,7 +78,6 @@ private:
     static constexpr uint16_t TVOC_MAX = 1187;
     
     // Métodos internos
-    bool _initSensor();
     bool _performWarmup();
     bool _validateData(uint16_t eco2, uint16_t tvoc) const;
 };

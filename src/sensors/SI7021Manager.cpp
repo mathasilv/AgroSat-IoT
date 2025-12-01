@@ -15,38 +15,49 @@ SI7021Manager::SI7021Manager()
       _warmupProgress(0) {}
 
 bool SI7021Manager::begin() {
-    DEBUG_PRINTLN("[SI7021Manager] ========================================");
-    DEBUG_PRINTLN("[SI7021Manager] Inicializando SI7021Manager...");
+    DEBUG_PRINTLN("[SI7021Manager] Inicializando SI7021...");
     
     _initTime = millis();
     _warmupProgress = WARMUP_TIME_MS / 1000;
 
-    // Inicializar driver nativo
-    if (!_si7021.begin()) {
-        DEBUG_PRINTLN("[SI7021Manager] ❌ Falha ao inicializar driver");
+    // Delay maior após power-on (100ms em vez de 50ms)
+    delay(100);
+    
+    // Inicializar driver nativo com retry
+    bool initialized = false;
+    for (int retry = 0; retry < 3; retry++) {
+        if (_si7021.begin()) {
+            initialized = true;
+            break;
+        }
+        DEBUG_PRINTF("[SI7021Manager] Tentativa %d/3 falhou\n", retry + 1);
+        delay(100);
+    }
+    
+    if (!initialized) {
+        DEBUG_PRINTLN("[SI7021Manager] Falha após 3 tentativas");
         _online = false;
         return false;
     }
 
-    // Driver OK → considera online, mesmo que a primeira leitura não seja perfeita
     _online = true;
-
-    // Leitura inicial (opcional, só para preencher cache)
+    
+    // Teste de leitura com retry
     float temp, hum;
-    if (_si7021.readTemperature(temp) && _si7021.readHumidity(hum)) {
-        _lastTemp = temp;
-        _lastHum  = hum;
-        DEBUG_PRINTF("[SI7021Manager] ✅ OK: T=%.1f°C RH=%.1f%%\n", temp, hum);
-    } else {
-        DEBUG_PRINTLN("[SI7021Manager] ⚠ Leitura inicial falhou (mantendo cache inválido)");
-        _lastTemp = -999.0f;
-        _lastHum  = -999.0f;
+    for (int retry = 0; retry < 3; retry++) {
+        if (_si7021.readTemperature(temp) && _si7021.readHumidity(hum)) {
+            _lastTemp = temp;
+            _lastHum = hum;
+            DEBUG_PRINTF("[SI7021Manager] OK: T=%.1f°C RH=%.1f%%\n", temp, hum);
+            return true;
+        }
+        delay(50);
     }
-
-    DEBUG_PRINTLN("[SI7021Manager] INICIALIZADO COM SUCESSO!");
-    DEBUG_PRINTLN("[SI7021Manager] ========================================");
-    return true;
+    
+    DEBUG_PRINTLN("[SI7021Manager] Sensor online mas leitura falhou");
+    return true;  // Considerar online mesmo assim
 }
+
 
 void SI7021Manager::update() {
     if (!_online) return;

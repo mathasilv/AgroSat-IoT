@@ -1,14 +1,15 @@
 /**
  * @file MPU9250Manager.h
  * @brief MPU9250Manager - 9-axis IMU com calibração automática
- * @version 1.0.0
- * @date 2025-11-30
+ * @version 1.1.0
+ * @date 2025-12-01
  * 
  * Features:
  * - Auto-calibração magnetômetro (10s com feedback)
+ * - Persistência de offsets em EEPROM/Preferences
  * - Filtro média móvel para acelerômetro
  * - Health monitoring com reinicialização automática
- * - Offsets persistentes (gyro + accel + mag)
+ * - I2C bypass para acesso ao magnetômetro AK8963
  */
 
 #ifndef MPU9250MANAGER_H
@@ -16,6 +17,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <Preferences.h>  // ← NOVO: Para ESP32 (melhor que EEPROM)
 #include "MPU9250.h"
 #include "config.h"
 
@@ -54,6 +56,13 @@ public:
     void getMagOffsets(float& x, float& y, float& z) const;
     void setMagOffsets(float x, float y, float z);
     
+    // ← NOVO: Gerenciamento de offsets na EEPROM/Preferences
+    bool saveOffsetsToMemory();           // Salvar offsets atuais
+    bool loadOffsetsFromMemory();         // Carregar offsets salvos
+    bool hasValidOffsetsInMemory();       // Verificar se há offsets salvos
+    void clearOffsetsFromMemory();        // Limpar offsets salvos
+    void printSavedOffsets() const;       // Debug: mostrar offsets salvos
+    
     // RAW DATA (sem filtro)
     void getRawData(float& gx, float& gy, float& gz, 
                     float& ax, float& ay, float& az,
@@ -76,6 +85,15 @@ private:
     // Offsets de calibração
     float _magOffsetX, _magOffsetY, _magOffsetZ;
     
+    // ← NOVO: Preferences para persistência (ESP32)
+    Preferences _prefs;
+    static constexpr const char* PREFS_NAMESPACE = "mpu9250";
+    static constexpr const char* KEY_OFFSET_X = "mag_offset_x";
+    static constexpr const char* KEY_OFFSET_Y = "mag_offset_y";
+    static constexpr const char* KEY_OFFSET_Z = "mag_offset_z";
+    static constexpr const char* KEY_VALID = "mag_valid";
+    static constexpr uint32_t OFFSET_MAGIC = 0xCAFEBABE;  // Magic number para validação
+    
     // Filtro média móvel (acelerômetro)
     static constexpr uint8_t FILTER_SIZE = 5;
     float _accelXBuffer[FILTER_SIZE];
@@ -90,11 +108,15 @@ private:
     // Métodos privados
     bool _initMPU();
     bool _initMagnetometer();
+    bool _enableI2CBypass();
     void _updateIMU();
     bool _validateReadings(float gx, float gy, float gz,
                            float ax, float ay, float az,
                            float mx, float my, float mz);
     float _applyFilter(float newValue, float* buffer, float& sum);
+    
+    // ← NOVO: Validação de offsets
+    bool _validateOffsets(float x, float y, float z) const;
 };
 
-#endif
+#endif // MPU9250MANAGER_H

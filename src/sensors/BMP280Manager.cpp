@@ -35,7 +35,7 @@ BMP280Manager::BMP280Manager()
 
 bool BMP280Manager::begin() {
     DEBUG_PRINTLN("[BMP280Manager] ========================================");
-    DEBUG_PRINTLN("[BMP280Manager] Inicializando sensor BMP280");
+    DEBUG_PRINTLN("[BMP280Manager] Inicializando BMP280 Pressure Sensor");
     DEBUG_PRINTLN("[BMP280Manager] ========================================");
     
     _online = false;
@@ -44,83 +44,114 @@ bool BMP280Manager::begin() {
     _identicalReadings = 0;
     _lastPressureRead = 0.0f;
     _failCount = 0;
+    _historyIndex = 0;
+    _historyFull = false;
+    _lastUpdateTime = 0;
     
-    // Soft reset
-    if (!_softReset()) {
-        DEBUG_PRINTLN("[BMP280Manager] Soft reset falhou");
+    // Inicializar histórico com valores padrão
+    for (uint8_t i = 0; i < HISTORY_SIZE; i++) {
+        _pressureHistory[i] = 1013.25f;  // Pressão ao nível do mar
+        _altitudeHistory[i] = 0.0f;
+        _tempHistory[i] = 20.0f;
     }
-    delay(200);
     
-    // Tentar endereços
+    // PASSO 1: Soft reset
+    DEBUG_PRINTLN("[BMP280Manager] PASSO 1: Soft reset...");
+    if (!_softReset()) {
+        DEBUG_PRINTLN("[BMP280Manager] ⚠ Soft reset falhou (continuando)");
+    } else {
+        DEBUG_PRINTLN("[BMP280Manager] ✓ Soft reset OK");
+    }
+    delay(200);  // Aguardar sensor reiniciar
+    
+    // PASSO 2: Tentar endereços I2C
+    DEBUG_PRINTLN("[BMP280Manager] PASSO 2: Detectando sensor...");
     uint8_t addresses[] = {BMP280::I2C_ADDR_PRIMARY, BMP280::I2C_ADDR_SECONDARY};
     bool found = false;
     
     for (uint8_t addr : addresses) {
-        DEBUG_PRINTF("[BMP280Manager] Tentando 0x%02X...\n", addr);
+        DEBUG_PRINTF("[BMP280Manager]   Testando 0x%02X... ", addr);
         
         if (_bmp280.begin(addr)) {
             found = true;
-            DEBUG_PRINTF("[BMP280Manager] Detectado 0x%02X\n", addr);
+            DEBUG_PRINTF("✓ DETECTADO!\n");
+            break;
+        }
+        DEBUG_PRINTLN("✗");
+        delay(100);
+    }
+    
+    if (!found) {
+        DEBUG_PRINTLN("[BMP280Manager] ❌ FALHA: Sensor não detectado");
+        return false;
+    }
+    
+    // PASSO 3: Configurar sensor (baseado no datasheet)
+    DEBUG_PRINTLN("[BMP280Manager] PASSO 3: Configurando sensor...");
+    DEBUG_PRINTLN("[BMP280Manager]   Mode: NORMAL (medição contínua)");
+    DEBUG_PRINTLN("[BMP280Manager]   Temp Oversampling: x1");
+    DEBUG_PRINTLN("[BMP280Manager]   Press Oversampling: x8 (alta resolução)");
+    DEBUG_PRINTLN("[BMP280Manager]   Filter: OFF");
+    DEBUG_PRINTLN("[BMP280Manager]   Standby: 125ms");
+    
+    if (!_bmp280.configure(
+        BMP280::Mode::NORMAL,
+        BMP280::TempOversampling::X1,
+        BMP280::PressOversampling::X8,  // Alta resolução
+        BMP280::Filter::OFF,
+        BMP280::StandbyTime::MS_125
+    )) {
+        DEBUG_PRINTLN("[BMP280Manager] ❌ FALHA: Configuração falhou");
+        return false;
+    }
+    
+    DEBUG_PRINTLN("[BMP280Manager] ✓ Configuração OK");
+    
+    // PASSO 4: Warm-up (2 segundos)
+    DEBUG_PRINTLN("[BMP280Manager] PASSO 4: Warm-up (2 segundos)...");
+    uint32_t start = millis();
+    while (millis() - start < 2000) {
+        if (_readRawFast()) {
+            DEBUG_PRINTLN("[BMP280Manager] ✓ Primeira leitura OK");
             break;
         }
         delay(100);
     }
     
-    if (!found) {
-        DEBUG_PRINTLN("[BMP280Manager] Sensor não detectado");
-        return false;
-    }
-    
-    // Configuração mínima (evita freeze)
-    if (!_bmp280.configure(
-        BMP280::Mode::NORMAL,
-        BMP280::TempOversampling::X1,
-        BMP280::PressOversampling::X8,
-        BMP280::Filter::OFF,
-        BMP280::StandbyTime::MS_125
-    )) {
-        DEBUG_PRINTLN("[BMP280Manager] Config falhou");
-        return false;
-    }
-    
-    DEBUG_PRINTLN("[BMP280Manager] Config OK");
-    
-    // Estabilização rápida (2s máximo)
-    DEBUG_PRINTLN("[BMP280Manager] Estabilizando (2s)...");
-    uint32_t start = millis();
-    while (millis() - start < 2000) {
-        if (_readRawFast()) break;
-        delay(100);
-    }
-    
-    // Teste rápido (3 leituras)
-    DEBUG_PRINTLN("[BMP280Manager] Teste rápido...");
+    // PASSO 5: Teste de leituras (3 tentativas)
+    DEBUG_PRINTLN("[BMP280Manager] PASSO 5: Teste de leituras...");
     float temp, press, alt;
     int okCount = 0;
     
     for (int i = 0; i < 3; i++) {
         if (_readRaw(temp, press, alt)) {
-            DEBUG_PRINTF("[BMP280Manager] L%d: T=%.1f°C P=%.0f hPa\n", i+1, temp, press);
+            DEBUG_PRINTF("[BMP280Manager]   Leitura %d: T=%.1f°C P=%.0f hPa A=%.0f m\n", 
+                        i+1, temp, press, alt);
             okCount++;
         } else {
-            DEBUG_PRINTF("[BMP280Manager] L%d: FALHOU\n", i+1);
+            DEBUG_PRINTF("[BMP280Manager]   Leitura %d: ✗ FALHOU\n", i+1);
         }
         delay(100);
     }
     
     if (okCount < 2) {
-        DEBUG_PRINTLN("[BMP280Manager] Poucas leituras válidas");
+        DEBUG_PRINTLN("[BMP280Manager] ❌ FALHA: Poucas leituras válidas");
         return false;
     }
     
-    // Sucesso
+    // SUCESSO!
     _online = true;
     _tempValid = true;
     _failCount = 0;
     _warmupStartTime = millis();
     
     DEBUG_PRINTLN("[BMP280Manager] ========================================");
-    DEBUG_PRINTLN("[BMP280Manager] ONLINE (2s warm-up)");
+    DEBUG_PRINTLN("[BMP280Manager] ✅ BMP280 INICIALIZADO COM SUCESSO!");
+    DEBUG_PRINTLN("[BMP280Manager] ========================================");
+    DEBUG_PRINTLN("[BMP280Manager] OBSERVAÇÕES:");
+    DEBUG_PRINTLN("[BMP280Manager] - Warm-up de 2s para estabilização");
+    DEBUG_PRINTLN("[BMP280Manager] - Detecção automática de travamento");
+    DEBUG_PRINTLN("[BMP280Manager] - Validação estatística ativa");
     DEBUG_PRINTLN("[BMP280Manager] ========================================");
     
     return true;
@@ -257,43 +288,56 @@ bool BMP280Manager::_readRawFast() {
 // MÉTODOS INTERNOS - VALIDAÇÃO
 // ============================================================================
 bool BMP280Manager::_validateReading(float temp, float press, float alt) {
-    // Validação básica de range
+    // 1. Validar range de temperatura (datasheet: -40°C a +85°C)
     if (temp < TEMP_MIN || temp > TEMP_MAX) {
-        DEBUG_PRINTF("[BMP280Manager] Temperatura fora do range: %.1f°C\n", temp);
+        DEBUG_PRINTF("[BMP280Manager] ⚠ Temperatura fora do range: %.1f°C (válido: %.0f a %.0f)\n", 
+                    temp, TEMP_MIN, TEMP_MAX);
         return false;
     }
     
+    // 2. Validar range de pressão (datasheet: 300 hPa a 1100 hPa)
     if (press < PRESSURE_MIN || press > PRESSURE_MAX) {
-        DEBUG_PRINTF("[BMP280Manager] Pressão fora do range: %.0f hPa\n", press);
+        DEBUG_PRINTF("[BMP280Manager] ⚠ Pressão fora do range: %.0f hPa (válido: %.0f a %.0f)\n", 
+                    press, PRESSURE_MIN, PRESSURE_MAX);
         return false;
     }
     
-    // Detecção de travamento
+    // 3. Detecção de travamento (leituras idênticas consecutivas)
     if (_isFrozen(press)) {
+        DEBUG_PRINTLN("[BMP280Manager] ⚠ Sensor travado detectado");
         return false;
     }
     
-    // Durante warm-up, aceitar leituras
+    // 4. Durante warm-up inicial, aceitar leituras sem validação adicional
     unsigned long warmupElapsed = millis() - _warmupStartTime;
     if (warmupElapsed < WARMUP_DURATION) {
         return true;
     }
     
-    // Após warm-up, validar taxa de mudança
+    // 5. Após warm-up, validar taxa de mudança
     if (_lastUpdateTime > 0) {
-        float deltaTime = (millis() - _lastUpdateTime) / 1000.0f;
+        float deltaTime = (millis() - _lastUpdateTime) / 1000.0f;  // segundos
+        
+        // Validar apenas se deltaTime está em range razoável
         if (deltaTime > 0.1f && deltaTime < 10.0f) {
             if (!_checkRateOfChange(temp, press, alt, deltaTime)) {
+                DEBUG_PRINTLN("[BMP280Manager] ⚠ Taxa de mudança anormal");
                 return false;
             }
         }
     }
     
-    // Detecção de outliers
+    // 6. Detecção de outliers estatísticos (apenas se houver histórico suficiente)
     if (_historyFull || _historyIndex >= 3) {
         uint8_t count = _historyFull ? HISTORY_SIZE : _historyIndex;
+        
         if (_isOutlier(press, _pressureHistory, count)) {
-            DEBUG_PRINTF("[BMP280Manager] Pressão outlier: %.0f hPa\n", press);
+            DEBUG_PRINTF("[BMP280Manager] ⚠ Pressão é outlier: %.0f hPa\n", press);
+            return false;
+        }
+        
+        if (_isOutlier(temp, _tempHistory, count)) {
+            DEBUG_PRINTF("[BMP280Manager] ⚠ Temperatura é outlier: %.1f°C\n", temp);
             return false;
         }
     }
@@ -302,28 +346,36 @@ bool BMP280Manager::_validateReading(float temp, float press, float alt) {
 }
 
 bool BMP280Manager::_checkRateOfChange(float temp, float press, float alt, float deltaTime) {
+    // Obter índice da última leitura no histórico
     uint8_t prevIdx = (_historyIndex + HISTORY_SIZE - 1) % HISTORY_SIZE;
     
-    float pressRate = abs(press - _pressureHistory[prevIdx]) / deltaTime;
+    // 1. Validar taxa de mudança de pressão
+    float pressRate = fabs(press - _pressureHistory[prevIdx]) / deltaTime;
     if (pressRate > MAX_PRESSURE_RATE) {
-        DEBUG_PRINTF("[BMP280Manager] Taxa pressão anormal: %.1f hPa/s\n", pressRate);
+        DEBUG_PRINTF("[BMP280Manager] ⚠ Taxa de pressão anormal: %.1f hPa/s (max: %.1f)\n", 
+                    pressRate, MAX_PRESSURE_RATE);
         return false;
     }
     
-    float altRate = abs(alt - _altitudeHistory[prevIdx]) / deltaTime;
+    // 2. Validar taxa de mudança de altitude
+    float altRate = fabs(alt - _altitudeHistory[prevIdx]) / deltaTime;
     if (altRate > MAX_ALTITUDE_RATE) {
-        DEBUG_PRINTF("[BMP280Manager] Taxa altitude anormal: %.1f m/s\n", altRate);
+        DEBUG_PRINTF("[BMP280Manager] ⚠ Taxa de altitude anormal: %.1f m/s (max: %.1f)\n", 
+                    altRate, MAX_ALTITUDE_RATE);
         return false;
     }
     
-    float tempRate = abs(temp - _tempHistory[prevIdx]) / deltaTime;
+    // 3. Validar taxa de mudança de temperatura
+    float tempRate = fabs(temp - _tempHistory[prevIdx]) / deltaTime;
     if (tempRate > MAX_TEMP_RATE) {
-        DEBUG_PRINTF("[BMP280Manager] Taxa temp anormal: %.2f°C/s\n", tempRate);
+        DEBUG_PRINTF("[BMP280Manager] ⚠ Taxa de temperatura anormal: %.2f°C/s (max: %.1f)\n", 
+                    tempRate, MAX_TEMP_RATE);
         return false;
     }
     
     return true;
 }
+
 // Na função _isFrozen() - linha ~320
 bool BMP280Manager::_isFrozen(float currentPressure) {
     // Mudar de 50 → 200 leituras idênticas
@@ -335,7 +387,7 @@ bool BMP280Manager::_isFrozen(float currentPressure) {
     }
     
     // ✅ Adicionar tolerância pequena para flutuação normal
-    float tolerance = 0.01f;  // 0.01 hPa (~ruído normal)
+    float tolerance = 0.05f;  // 0.01 hPa (~ruído normal)
     bool withinTolerance = fabs(currentPressure - _lastPressureRead) < 0.05f;  
     
     if (withinTolerance && _lastPressureRead != 0.0f) {
@@ -350,26 +402,36 @@ bool BMP280Manager::_isFrozen(float currentPressure) {
 
 
 bool BMP280Manager::_isOutlier(float value, float* history, uint8_t count) const {
-    if (count < 3) return false;
+    if (count < 3) return false;  // Mínimo de 3 amostras
     
+    // 1. Calcular mediana do histórico
     float median = _getMedian(history, count);
-    float deviations[HISTORY_SIZE];
     
+    // 2. Calcular desvios absolutos
+    float deviations[HISTORY_SIZE];
     for (uint8_t i = 0; i < count; i++) {
-        deviations[i] = abs(history[i] - median);
+        deviations[i] = fabs(history[i] - median);
     }
     
+    // 3. Calcular MAD (mediana dos desvios)
     float mad = _getMedian(deviations, count);
+    
+    // 4. Evitar divisão por zero (todos valores idênticos)
     if (mad < 0.1f) mad = 0.1f;
     
-    float score = abs(value - median) / mad;
+    // 5. Calcular score (quantos MADs o valor está da mediana)
+    float score = fabs(value - median) / mad;
+    
+    // 6. Considerar outlier se score > 3.0 (critério estatístico padrão)
     return (score > 3.0f);
 }
 
 float BMP280Manager::_getMedian(float* values, uint8_t count) const {
+    // Criar cópia para não modificar array original
     float sorted[HISTORY_SIZE];
     memcpy(sorted, values, count * sizeof(float));
     
+    // Bubble sort (eficiente para arrays pequenos como HISTORY_SIZE=10)
     for (uint8_t i = 0; i < count - 1; i++) {
         for (uint8_t j = 0; j < count - i - 1; j++) {
             if (sorted[j] > sorted[j + 1]) {
@@ -380,6 +442,7 @@ float BMP280Manager::_getMedian(float* values, uint8_t count) const {
         }
     }
     
+    // Retornar elemento do meio
     return sorted[count / 2];
 }
 

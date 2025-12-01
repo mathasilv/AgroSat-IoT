@@ -72,82 +72,82 @@ bool SI7021::begin(uint8_t addr)
     return true;
 }
 
-bool SI7021::readHumidity(float& humidity)
-{
-    if (!_online) {
-        humidity = -999.0f;
+bool SI7021::readHumidity(float& humidity) {
+    // Iniciar conversão
+    Wire.beginTransmission(_addr);
+    Wire.write(SI7021_CMD_MEASURE_RH_NOHOLD);
+    if (Wire.endTransmission() != 0) {
+        humidity = -999.0;
         return false;
     }
-
-    // Enviar comando de medição (NO HOLD MODE)
-    if (!_writeCommand(SI7021_CMD_MEASURE_RH_NOHOLD)) {
-        DEBUG_PRINTLN("[SI7021] Erro ao enviar comando de leitura de umidade (0xF5)");
-        humidity = -999.0f;
-        return false;
+    
+    // ✅ AGUARDAR CONVERSÃO COMPLETA (umidade demora ~12-20ms)
+    delay(50);  // Aumentado de 15ms para 30ms para evitar timeout
+    
+    // ✅ TENTAR LER COM RETRY (até 5 tentativas)
+    uint8_t retries = 5;  
+    while (retries-- > 0) {
+        uint8_t received = Wire.requestFrom(_addr, (uint8_t)2);
+        
+        if (received == 2) {
+            // Leitura bem-sucedida
+            uint16_t rawHum = Wire.read() << 8 | Wire.read();
+            humidity = ((125.0 * rawHum) / 65536.0) - 6.0;
+            
+            // Validar range (conforme datasheet)
+            if (humidity < 0.0) humidity = 0.0;
+            if (humidity > 100.0) humidity = 100.0;
+            
+            return true;
+        }
+        
+        // Sensor ainda processando, aguardar mais
+        delay(10);
     }
-
-    // Aguardar conversão (datasheet: tipicamente ~12 ms para 12-bit)
-    delay(SI7021_MEASURE_TIMEOUT_MS);
-
-    // Ler 2 bytes de dados (ignorando CRC)
-    uint8_t data[2] = {0, 0};
-    if (!_readBytes(data, 2)) {
-        DEBUG_PRINTLN("[SI7021] Timeout/erro ao ler bytes de umidade");
-        humidity = -999.0f;
-        return false;
-    }
-
-    // Conversão conforme datasheet:
-    // RH = (125 * raw / 65536) - 6
-    const uint16_t raw = static_cast<uint16_t>((data[0] << 8) | data[1]);
-    humidity = (125.0f * static_cast<float>(raw) / 65536.0f) - 6.0f;
-
-    // Limita para faixa física 0..100 %
-    if (humidity < 0.0f)  humidity = 0.0f;
-    if (humidity > 100.0f) humidity = 100.0f;
-
-    return true;
+    
+    // Falhou após todas as tentativas
+    humidity = -999.0;
+    return false;
 }
 
-bool SI7021::readTemperature(float& temperature)
-{
-    if (!_online) {
-        temperature = -999.0f;
+
+bool SI7021::readTemperature(float &temperature) {
+    // Iniciar conversão
+    Wire.beginTransmission(_addr);
+    Wire.write(SI7021_CMD_MEASURE_T_NOHOLD);
+    if (Wire.endTransmission() != 0) {
+        temperature = -999.0;
         return false;
     }
-
-    // Enviar comando de medição (NO HOLD MODE)
-    if (!_writeCommand(SI7021_CMD_MEASURE_T_NOHOLD)) {
-        DEBUG_PRINTLN("[SI7021] Erro ao enviar comando de leitura de temperatura (0xF3)");
-        temperature = -999.0f;
-        return false;
+    
+    // ✅ AGUARDAR CONVERSÃO (temperatura demora ~10ms)
+    delay(50);  // Margem de segurança
+    
+    // ✅ TENTAR LER COM RETRY
+    uint8_t retries = 5;
+    while (retries-- > 0) {
+        uint8_t received = Wire.requestFrom(_addr, (uint8_t)2);
+        
+        if (received == 2) {
+            // Leitura bem-sucedida
+            uint16_t rawTemp = Wire.read() << 8 | Wire.read();
+            temperature = ((175.72 * rawTemp) / 65536.0) - 46.85;
+            
+            // Validar range típico (-40°C a +125°C)
+            if (temperature < -40.0) temperature = -40.0;
+            if (temperature > 125.0) temperature = 125.0;
+            
+            return true;
+        }
+        
+        delay(10);
     }
-
-    // Aguardar conversão
-    delay(SI7021_MEASURE_TIMEOUT_MS);
-
-    // Ler 2 bytes de dados (ignorando CRC)
-    uint8_t data[2] = {0, 0};
-    if (!_readBytes(data, 2)) {
-        DEBUG_PRINTLN("[SI7021] Timeout/erro ao ler bytes de temperatura");
-        temperature = -999.0f;
-        return false;
-    }
-
-    // Conversão conforme datasheet:
-    // T = (175.72 * raw / 65536) - 46.85
-    const uint16_t raw = static_cast<uint16_t>((data[0] << 8) | data[1]);
-    temperature = (175.72f * static_cast<float>(raw) / 65536.0f) - 46.85f;
-
-    // Validação básica: faixa típica do sensor
-    if (temperature < -40.0f || temperature > 125.0f) {
-        DEBUG_PRINTF("[SI7021] Temperatura fora da faixa esperada: %.1f°C\n", temperature);
-        temperature = -999.0f;
-        return false;
-    }
-
-    return true;
+    
+    // Falhou
+    temperature = -999.0;
+    return false;
 }
+
 
 void SI7021::reset()
 {

@@ -1,16 +1,21 @@
 /**
  * @file BMP280Manager.h
- * @brief Gerenciador dedicado do sensor BMP280 - Módulo isolado
- * @version 1.0.0
- * @date 2025-11-30
+ * @brief Gerenciador BMP280 - Sensor de Pressão e Temperatura
+ * @version 2.0.0
+ * @date 2025-12-01
  * 
  * CARACTERÍSTICAS:
- * - Usa biblioteca BMP280 nativa (sem Adafruit)
- * - Validação avançada com histórico e detecção de outliers
- * - Reinicialização automática em caso de falhas
- * - Detecção de sensor travado
- * - Warm-up com período de estabilização
- * - Interface limpa para integração com SensorManager
+ * - Detecção automática de endereço I2C (0x76 ou 0x77)
+ * - Validação rigorosa de leituras baseada no datasheet
+ * - Detecção de sensor travado com tolerância ajustada
+ * - Histórico para detecção de outliers
+ * - Reinicialização automática após falhas
+ * - Filtro de taxa de mudança
+ * 
+ * DATASHEET RANGES:
+ * - Temperatura: -40°C a +85°C
+ * - Pressão: 300 hPa a 1100 hPa
+ * - Resolução: 0.01 hPa (pressão), 0.01°C (temperatura)
  */
 
 #ifndef BMP280MANAGER_H
@@ -28,13 +33,13 @@ public:
     // Inicialização e controle
     bool begin();
     void update();
-    void forceReinit();
     void reset();
+    void forceReinit();
     
     // Getters principais
-    float getTemperature() const { return _temperature; }
-    float getPressure() const { return _pressure; }
-    float getAltitude() const { return _altitude; }
+    float getTemperature() const { return _temperature; }  // °C
+    float getPressure() const { return _pressure; }        // hPa
+    float getAltitude() const { return _altitude; }        // metros
     
     // Status
     bool isOnline() const { return _online; }
@@ -49,9 +54,9 @@ private:
     BMP280 _bmp280;
     
     // Dados atuais
-    float _temperature;
-    float _pressure;
-    float _altitude;
+    float _temperature;  // °C
+    float _pressure;     // hPa
+    float _altitude;     // metros
     
     // Estado
     bool _online;
@@ -59,54 +64,49 @@ private:
     uint8_t _failCount;
     uint8_t _tempFailures;
     
-    // Histórico para validação (5 últimas leituras)
-    static constexpr uint8_t HISTORY_SIZE = 5;
+    // Warm-up
+    unsigned long _warmupStartTime;
+    static constexpr unsigned long WARMUP_DURATION = 2000;  // 2 segundos
+    
+    // Reinicialização
+    unsigned long _lastReinitTime;
+    static constexpr unsigned long REINIT_COOLDOWN = 10000;  // 10 segundos
+    
+    // Histórico para detecção de outliers
+    static constexpr uint8_t HISTORY_SIZE = 10;
     float _pressureHistory[HISTORY_SIZE];
     float _altitudeHistory[HISTORY_SIZE];
     float _tempHistory[HISTORY_SIZE];
     uint8_t _historyIndex;
     bool _historyFull;
-    
-    // Controle de reinicialização
-    unsigned long _lastReinitTime;
-    static constexpr unsigned long REINIT_COOLDOWN = 10000; // 10s
-    
-    // Warm-up
-    unsigned long _warmupStartTime;
-    static constexpr unsigned long WARMUP_DURATION = 30000; // 30s
-    
-    // Detecção de travamento
-    float _lastPressureRead;
-    uint8_t _identicalReadings;
-    static constexpr float PRESSURE_TOLERANCE = 0.01f;
-    static constexpr uint16_t MAX_IDENTICAL_READINGS = 500;
-    // Limites de validação (do config.h)
-    static constexpr float PRESSURE_MIN = PRESSURE_MIN_VALID;
-    static constexpr float PRESSURE_MAX = PRESSURE_MAX_VALID;
-    static constexpr float TEMP_MIN = TEMP_MIN_VALID;
-    static constexpr float TEMP_MAX = TEMP_MAX_VALID;
-    
-    // Taxa máxima de mudança
-    static constexpr float MAX_PRESSURE_RATE = 20.0;  // hPa/s
-    static constexpr float MAX_ALTITUDE_RATE = 150.0; // m/s
-    static constexpr float MAX_TEMP_RATE = 0.1;       // °C/s
-    
     unsigned long _lastUpdateTime;
     
-    // Métodos internos - Inicialização
-    bool _initSensor();
-    bool _softReset();
-    bool _waitForMeasurement();
+    // Detecção de sensor travado
+    float _lastPressureRead;
+    uint16_t _identicalReadings;
+    static constexpr uint16_t MAX_IDENTICAL_READINGS = 200;  // ← CORRIGIDO de 50 para 200
+    
+    // Limites de validação (datasheet BMP280)
+    static constexpr float TEMP_MIN = -40.0f;      // °C
+    static constexpr float TEMP_MAX = 85.0f;       // °C
+    static constexpr float PRESSURE_MIN = 300.0f;  // hPa
+    static constexpr float PRESSURE_MAX = 1100.0f; // hPa
+    
+    // Taxa máxima de mudança por segundo
+    static constexpr float MAX_PRESSURE_RATE = 5.0f;   // hPa/s (mais realista)
+    static constexpr float MAX_ALTITUDE_RATE = 50.0f;  // m/s
+    static constexpr float MAX_TEMP_RATE = 1.0f;       // °C/s
     
     // Métodos internos - Leitura
     bool _readRaw(float& temp, float& press, float& alt);
-    bool _validateReading(float temp, float press, float alt);
+    bool _readRawFast();
     
-    // Métodos internos - Validação avançada
+    // Métodos internos - Validação
+    bool _validateReading(float temp, float press, float alt);
     bool _checkRateOfChange(float temp, float press, float alt, float deltaTime);
+    bool _isFrozen(float currentPressure);
     bool _isOutlier(float value, float* history, uint8_t count) const;
     float _getMedian(float* values, uint8_t count) const;
-    bool _isFrozen(float currentPressure);
     
     // Métodos internos - Histórico
     void _updateHistory(float temp, float press, float alt);
@@ -115,11 +115,11 @@ private:
     // Métodos internos - Reinicialização
     bool _needsReinit() const;
     bool _canReinit() const;
+    bool _softReset();
+    bool _waitForMeasurement();
     
-    // Utilitário
+    // Métodos internos - Cálculos
     float _calculateAltitude(float pressure) const;
-    bool _readRawFast();
-
 };
 
 #endif // BMP280MANAGER_H
