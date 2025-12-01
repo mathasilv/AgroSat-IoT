@@ -1,0 +1,19 @@
+# Diretório `app/`
+
+Este diretório concentra a lógica de aplicação do projeto AgroSat-IoT, separada dos drivers de hardware e dos gerenciadores de serviços de baixo nível.[memory:208]
+
+## Objetivo
+
+Os arquivos em `app/` implementam o comportamento específico da missão, como regras de telemetria, gerenciamento de nós terrestres e tratamento de comandos, usando as interfaces já expostas por módulos como `SensorManager`, `CommunicationManager` e `StorageManager`.[memory:208]
+
+## Componentes principais
+
+- `GroundNodeManager`: gerencia o buffer de nós terrestres recebidos via LoRa, incluindo atualização de dados, cálculo de prioridade, limpeza de nós antigos e controle da flag de retransmissão.
+- (Futuro) `TelemetryService` ou módulo equivalente: responsável por montar estruturas de telemetria a partir dos sensores e do estado do sistema, enviar pelos links disponíveis e salvar em armazenamento local.
+- (Futuro) Módulo de comandos: centraliza o processamento de comandos de depuração e calibração, integrando com os gerenciadores de sensores e telemetria.
+
+## Boas práticas neste diretório
+
+- Manter aqui apenas lógica de “negócio” da missão (regras de voo, política de retransmissão, formato de telemetria), evitando acesso direto a registradores ou detalhes de hardware.
+- Utilizar os serviços já existentes (sensores, comunicação, energia, armazenamento, RTC) em vez de duplicar código de baixo nível.
+- Priorizar classes e funções pequenas, focadas em uma responsabilidade clara, para facilitar testes e manutenção.

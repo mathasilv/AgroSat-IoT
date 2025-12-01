@@ -50,16 +50,41 @@ bool SystemHealth::begin() {
     return true;
 }
 
+void SystemHealth::_updateHeapStatus(uint32_t now) {
+    const uint32_t HEAP_CHECK_INTERVAL_MS = 30000;
+    if (now - _lastHeapCheck < HEAP_CHECK_INTERVAL_MS) {
+        return;
+    }
+    _lastHeapCheck = now;
+
+    uint32_t currentHeap = ESP.getFreeHeap();
+    if (currentHeap < _minHeapSeen) {
+        _minHeapSeen = currentHeap;
+    }
+
+    if (currentHeap < 5000) {
+        _heapStatus = HeapStatus::FATAL_HEAP;
+        reportError(STATUS_WATCHDOG, "Heap fatal");
+    } else if (currentHeap < 8000) {
+        _heapStatus = HeapStatus::CRITICAL_HEAP;
+        reportError(STATUS_WATCHDOG, "Heap critical");
+    } else if (currentHeap < 15000) {
+        _heapStatus = HeapStatus::LOW_HEAP;
+        reportError(STATUS_WATCHDOG, "Heap low");
+    } else {
+        _heapStatus = HeapStatus::OK;
+    }
+}
 void SystemHealth::update() {
     uint32_t currentTime = millis();
-    
-    // Verificar saúde do sistema periodicamente
+
     if (currentTime - _lastHealthCheck >= SYSTEM_HEALTH_INTERVAL) {
         _lastHealthCheck = currentTime;
         _checkSystemHealth();
     }
-    
-    // Feed watchdog automaticamente
+
+    _updateHeapStatus(currentTime);
+
     feedWatchdog();
 }
 
