@@ -146,7 +146,7 @@ bool BMP280Manager::begin() {
     _warmupStartTime = millis();
     
     DEBUG_PRINTLN("[BMP280Manager] ========================================");
-    DEBUG_PRINTLN("[BMP280Manager] ✅ BMP280 INICIALIZADO COM SUCESSO!");
+    DEBUG_PRINTLN("[BMP280Manager] BMP280 INICIALIZADO COM SUCESSO!");
     DEBUG_PRINTLN("[BMP280Manager] ========================================");
     DEBUG_PRINTLN("[BMP280Manager] OBSERVAÇÕES:");
     DEBUG_PRINTLN("[BMP280Manager] - Warm-up de 2s para estabilização");

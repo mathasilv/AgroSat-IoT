@@ -57,7 +57,7 @@ bool TelemetryManager::_initI2CBus() {
     
     if (!i2cInitialized) {
         Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
-        Wire.setClock(100000);
+        Wire.setClock(50000);
         Wire.setTimeOut(1000);
         delay(1000);
         i2cInitialized = true;
@@ -309,9 +309,31 @@ void TelemetryManager::loop() {
     }
 
     _power.update();
-    _sensors.update();
+
+    // --- NOVO: agendamento das leituras de sensores ---
+    const unsigned long FAST_PERIOD_MS   = 500;   
+    const unsigned long SLOW_PERIOD_MS   = 2000;   
+    const unsigned long HEALTH_PERIOD_MS = 60000;  
+
+    if (currentTime - _lastFastSensorUpdate >= FAST_PERIOD_MS) {
+        _lastFastSensorUpdate = currentTime;
+        _sensors.updateFast();
+    }
+
+    if (currentTime - _lastSlowSensorUpdate >= SLOW_PERIOD_MS) {
+        _lastSlowSensorUpdate = currentTime;
+        _sensors.updateSlow();
+    }
+
+    if (currentTime - _lastSensorHealthUpdate >= HEALTH_PERIOD_MS) {
+        _lastSensorHealthUpdate = currentTime;
+        _sensors.updateHealth();
+    }
+    // --- FIM NOVO ---
+
     _comm.update();
     _rtc.update();
+
 
     _handleButtonEvents();
     _updateLEDIndicator(currentTime);

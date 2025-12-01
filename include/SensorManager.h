@@ -17,10 +17,16 @@
 
 class SensorManager {
 public:
-    SensorManager();
-    
-    // Inicialização e controle
+    SensorManager();      // <-- ADICIONAR / CONFIRMAR ESTA LINHA
+
     bool begin();
+
+    // Novo: atualizações separadas
+    void updateFast();    // MPU9250 + BMP280
+    void updateSlow();    // SI7021 + CCS811
+    void updateHealth();  // health check/reset
+
+    // Mantém o update() antigo se ainda quiser usar em testes
     void update();
     void reset();
     void resetAll();  // ← ADICIONAR

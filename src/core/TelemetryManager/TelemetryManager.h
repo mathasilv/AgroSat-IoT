@@ -104,6 +104,9 @@ private:
     void _handleButtonEvents();
     void _checkOperationalConditions();
     void _updateLEDIndicator(unsigned long currentTime);
+    unsigned long _lastFastSensorUpdate = 0;
+    unsigned long _lastSlowSensorUpdate = 0;
+    unsigned long _lastSensorHealthUpdate = 0;
 };
 
 #endif // TELEMETRYMANAGER_H

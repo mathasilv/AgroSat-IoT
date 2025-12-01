@@ -72,12 +72,12 @@ bool SensorManager::begin() {
 
 bool SensorManager::recalibrateMagnetometer() {
     if (!_mpu9250.isOnline()) {
-        DEBUG_PRINTLN("[SensorManager] ❌ MPU9250 offline - não é possível calibrar");
+        DEBUG_PRINTLN("[SensorManager] MPU9250 offline - não é possível calibrar");
         return false;
     }
     
     if (!_mpu9250.isMagOnline()) {
-        DEBUG_PRINTLN("[SensorManager] ❌ Magnetômetro offline - não é possível calibrar");
+        DEBUG_PRINTLN("[SensorManager] Magnetômetro offline - não é possível calibrar");
         return false;
     }
     
@@ -98,7 +98,7 @@ bool SensorManager::recalibrateMagnetometer() {
     
     if (success) {
         DEBUG_PRINTLN("[SensorManager] ========================================");
-        DEBUG_PRINTLN("[SensorManager] ✅ RECALIBRAÇÃO CONCLUÍDA COM SUCESSO!");
+        DEBUG_PRINTLN("[SensorManager] RECALIBRAÇÃO CONCLUÍDA COM SUCESSO!");
         DEBUG_PRINTLN("[SensorManager] ========================================");
         
         float x, y, z;
@@ -106,7 +106,7 @@ bool SensorManager::recalibrateMagnetometer() {
         DEBUG_PRINTF("[SensorManager] Novos offsets: X=%.2f Y=%.2f Z=%.2f µT\n", x, y, z);
     } else {
         DEBUG_PRINTLN("[SensorManager] ========================================");
-        DEBUG_PRINTLN("[SensorManager] ⚠ RECALIBRAÇÃO FALHOU");
+        DEBUG_PRINTLN("[SensorManager]  RECALIBRAÇÃO FALHOU");
         DEBUG_PRINTLN("[SensorManager] ========================================");
     }
     
@@ -123,8 +123,8 @@ void SensorManager::clearMagnetometerCalibration() {
     
     _mpu9250.clearOffsetsFromMemory();
     
-    DEBUG_PRINTLN("[SensorManager] ✓ Calibração removida da memória");
-    DEBUG_PRINTLN("[SensorManager] ⚠ Será necessária nova calibração no próximo boot");
+    DEBUG_PRINTLN("[SensorManager] Calibração removida da memória");
+    DEBUG_PRINTLN("[SensorManager] Será necessária nova calibração no próximo boot");
     DEBUG_PRINTLN("[SensorManager] ========================================");
 }
 
@@ -168,38 +168,53 @@ void SensorManager::printMagnetometerCalibration() const {
 }
 
 
-// ============================================================================
-// LOOP PRINCIPAL - ATUALIZAÇÃO (50Hz)
-// ============================================================================
-void SensorManager::update() {
+// Atualizações rápidas (pode ser 5–10 Hz)
+void SensorManager::updateFast() {
+    // Antes você chamava tudo aqui dentro de update()
+    _mpu9250.update();
+    _bmp280.update();
+
+    // Redundância de temperatura usando SI7021/BMP280
+    _updateTemperatureRedundancy();
+}
+
+// Atualizações lentas (pode ser ~1 Hz)
+void SensorManager::updateSlow() {
+    _si7021.update();
+    _ccs811.update();
+
+    // Compensação ambiental do CCS811 a cada 60 s
+    _autoApplyEnvironmentalCompensation();
+}
+
+// Só health check / recuperação
+void SensorManager::updateHealth() {
     uint32_t currentTime = millis();
-    
+
     // Health check a cada 30s
     if (currentTime - _lastHealthCheck >= HEALTH_CHECK_INTERVAL) {
         _lastHealthCheck = currentTime;
         _performHealthCheck();
     }
-    
-    // Atualizar todos os managers
-    _mpu9250.update();
-    _bmp280.update();
-    _si7021.update();
-    _ccs811.update();
-    
-    // Redundância temperatura
-    _updateTemperatureRedundancy();
-    
+
     // Contar falhas consecutivas
-    bool anyOnline = _mpu9250.isOnline() || 
-                     _bmp280.isOnline() || 
-                     _si7021.isOnline() || 
+    bool anyOnline = _mpu9250.isOnline() ||
+                     _bmp280.isOnline()  ||
+                     _si7021.isOnline()  ||
                      _ccs811.isOnline();
-    
+
     if (!anyOnline) {
         _consecutiveFailures++;
     } else {
         _consecutiveFailures = 0;
     }
+}
+
+// Wrapper antigo (se ainda for usado em algum lugar)
+void SensorManager::update() {
+    updateFast();
+    updateSlow();
+    updateHealth();
 }
 
 // ============================================================================
@@ -218,7 +233,7 @@ void SensorManager::_updateTemperatureRedundancy() {
         return;
     }
     
-    // Nenhum sensor disponível
+    // Nenhum sensor disponí vel
     _temperature = NAN;
 }
 

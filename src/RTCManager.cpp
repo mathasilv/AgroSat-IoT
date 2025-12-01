@@ -78,72 +78,81 @@ bool RTCManager::syncWithNTP() {
         DEBUG_PRINTLN("[RTC] RTC nao inicializado - impossivel sincronizar");
         return false;
     }
-    
+
     if (WiFi.status() != WL_CONNECTED) {
         DEBUG_PRINTLN("[RTC] WiFi desconectado - impossivel sincronizar NTP");
         return false;
     }
-    
+
     DEBUG_PRINTLN("[RTC] ========================================");
     DEBUG_PRINTLN("[RTC] SINCRONIZANDO COM NTP");
     DEBUG_PRINTF("[RTC] Servidor primario: %s\n", NTP_SERVER_PRIMARY);
     DEBUG_PRINTF("[RTC] Servidor secundario: %s\n", NTP_SERVER_SECONDARY);
     DEBUG_PRINTLN("[RTC] ========================================");
-    
-    // ✅ UTC puro (offset=0)
+
     configTime(0, 0, NTP_SERVER_PRIMARY, NTP_SERVER_SECONDARY);
-    
-    time_t now = 0;
+
+    time_t   now = 0;
     struct tm timeinfo;
-    uint8_t attempts = 0;
-    const uint8_t MAX_ATTEMPTS = 40;
-    
+    uint8_t  attempts = 0;
+
+    // Tempo máximo total de espera (ms)
+    const uint32_t MAX_WAIT_MS      = 20000;  // 20 s total
+    const uint32_t PER_CALL_TIMEOUT = 1000;   // 1 s por getLocalTime
+    const uint32_t RETRY_DELAY_MS   = 250;    // 0.25 s entre tentativas
+
+    uint32_t startMs = millis();
+
     DEBUG_PRINTLN("[RTC] Aguardando resposta NTP...");
-    while (attempts < MAX_ATTEMPTS) {
-        if (getLocalTime(&timeinfo)) {
+    while (millis() - startMs < MAX_WAIT_MS) {
+        // getLocalTime com timeout curto para nao travar a task por muito tempo
+        if (getLocalTime(&timeinfo, PER_CALL_TIMEOUT)) {
             time(&now);
-            if (now > 1704067200) {
+            if (now > 1704067200) { // ~2024-01-01, só pra filtrar datas zoadas
                 DEBUG_PRINTF("[RTC] NTP respondeu! UTC: %04d-%02d-%02d %02d:%02d:%02d\n",
-                            timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                            timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+                             timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                             timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
                 break;
             }
         }
-        delay(500);
+
         attempts++;
-        
         if (attempts % 5 == 0) {
-            DEBUG_PRINTF("[RTC] Tentativa %d/%d...\n", attempts, MAX_ATTEMPTS);
+            DEBUG_PRINTF("[RTC] Tentativa %d (t=%lu ms)...\n",
+                         attempts, millis() - startMs);
         }
+
+        delay(RETRY_DELAY_MS);  // cede CPU, alimenta WDT
     }
-    
-    if (now < 1704067200) {
-        DEBUG_PRINTLN("[RTC] ❌ TIMEOUT NTP (20 segundos)");
+
+    if (now <= 1704067200) {
+        DEBUG_PRINTLN("[RTC] TIMEOUT NTP (sem resposta valida em ~20s)");
         return false;
     }
-    
+
     // Salvar UTC no RTC
-    DateTime ntpTime(timeinfo.tm_year + 1900, 
-                     timeinfo.tm_mon + 1, 
+    DateTime ntpTime(timeinfo.tm_year + 1900,
+                     timeinfo.tm_mon + 1,
                      timeinfo.tm_mday,
-                     timeinfo.tm_hour, 
-                     timeinfo.tm_min, 
+                     timeinfo.tm_hour,
+                     timeinfo.tm_min,
                      timeinfo.tm_sec);
-    
+
     _rtc.adjust(ntpTime);
     _lost_power = false;
-    
+
     DEBUG_PRINTLN("[RTC] ========================================");
-    DEBUG_PRINTLN("[RTC] ✅ SINCRONIZADO COM SUCESSO!");
+    DEBUG_PRINTLN("[RTC] SINCRONIZADO COM SUCESSO!");
     DEBUG_PRINTF("[RTC] UTC armazenado: %04d-%02d-%02d %02d:%02d:%02d\n",
-                timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+                 timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                 timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
     DEBUG_PRINTF("[RTC] Hora local (BRT): %s\n", getDateTime().c_str());
     DEBUG_PRINTF("[RTC] Unix timestamp: %lu\n", getUnixTime());
     DEBUG_PRINTLN("[RTC] ========================================");
-    
+
     return true;
 }
+
 
 bool RTCManager::_detectRTC() {
     _wire->clearWriteError();
