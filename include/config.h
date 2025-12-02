@@ -1,8 +1,8 @@
 /**
  * @file config.h
  * @brief Configurações globais do CubeSat AgroSat-IoT - Store-and-Forward LEO
- * @version 6.0.1
- * @date 2025-11-24
+ * @version 7.1.1 (Correção de Compilação)
+ * @date 2025-12-02
  */
 
 #ifndef CONFIG_H
@@ -10,22 +10,10 @@
 
 #include <Arduino.h>
 
-#define MISSION_NAME "AgroSat-IoT"
-#define TEAM_CATEGORY "N3"
-#define FIRMWARE_VERSION "6.0.1"
-#define BUILD_DATE __DATE__
-#define BUILD_TIME __TIME__
+// Identificação
 #define TEAM_ID 666
 
-// ========== DISPLAY OLED ==========
-#define OLED_SDA 21
-#define OLED_SCL 22
-#ifndef OLED_RST
-#define OLED_RST 16
-#endif
-#define OLED_ADDRESS 0x3C
-
-// ========== LORA SX1276 ==========
+// ========== LORA SX1276 (TTGO LoRa32) ==========
 #define LORA_SCK 5
 #define LORA_MISO 19
 #define LORA_MOSI 27
@@ -44,15 +32,14 @@
 // ========== I2C SENSORS ==========
 #define SENSOR_I2C_SDA 21
 #define SENSOR_I2C_SCL 22
-#define I2C_FREQUENCY 100000
-#define I2C_TIMEOUT_MS 2000   // ✅ ADICIONAR: 2 segundos (era 1000ms)
-
+#define I2C_FREQUENCY 50000   // 50kHz (Robustez CCS811)
+#define I2C_TIMEOUT_MS 3000   // 3s (Clock Stretching CCS811)
 
 // ========== POWER MANAGEMENT ==========
 #define BATTERY_PIN 35
 #define BATTERY_SAMPLES 16
-#define BATTERY_VREF 3.6
-#define BATTERY_DIVIDER 2.0
+#define BATTERY_VREF 3.6      
+#define BATTERY_DIVIDER 2.0   
 
 // ========== GPIO DISPONÍVEIS ==========
 #ifndef LED_BUILTIN
@@ -60,9 +47,9 @@
 #endif
 
 // ========== BOTÃO DE CONTROLE ==========
-#define BUTTON_PIN 4                    // GPIO 4 (livre)
-#define BUTTON_DEBOUNCE_TIME 50         // 50ms debounce
-#define BUTTON_LONG_PRESS_TIME 3000     // 3 segundos para long press
+#define BUTTON_PIN 4                    
+#define BUTTON_DEBOUNCE_TIME 50         
+#define BUTTON_LONG_PRESS_TIME 3000     
 
 // ========== MODOS DE OPERAÇÃO ==========
 enum OperationMode : uint8_t {
@@ -83,63 +70,46 @@ struct ModeConfig {
     bool httpEnabled;
     uint32_t telemetrySendInterval;
     uint32_t storageSaveInterval;
-    uint8_t wifiDutyCycle;
-    uint32_t loraRxWindowDuration;
-    uint32_t loraRxTxInterval;
 };
 
+// Configuração Pré-Voo (Debug total)
 const ModeConfig PREFLIGHT_CONFIG = {
-    true,    // displayEnabled
-    true,    // serialLogsEnabled
-    true,    // sdLogsVerbose
-    true,    // loraEnabled
-    true,    // httpEnabled
-    60000,   // telemetrySendInterval
-    60000,   // storageSaveInterval
-    0,       // wifiDutyCycle
-    0,       // loraRxWindowDuration
-    60000    // loraRxTxInterval
+    true,    // display
+    true,    // serialLogs
+    true,    // sdLogs
+    true,    // lora
+    true,    // http
+    60000,   // envio a cada 60s
+    10000    // salva no SD a cada 10s
 };
 
+// Configuração de Voo (Otimizado)
 const ModeConfig FLIGHT_CONFIG = {
-    false,
-    false,
-    false,
-    true,
-    true,
-    60000,
-    10000,
-    0,
-    0,
-    60000
+    false,   // display OFF
+    false,   // serialLogs OFF
+    false,   // sdLogs verbose OFF
+    true,    // lora ON
+    true,    // http ON
+    60000,   // envio 60s
+    10000    // salva SD 10s
 };
 
+// Configuração de Segurança (Bateria Crítica/Erro)
 const ModeConfig SAFE_CONFIG = {
     false,
+    true,    // logs ON para diagnóstico
     true,
-    true,
-    true,
-    false,
-    60000,
-    300000,
-    0,
-    0,
-    60000
+    true,    // lora ON (Beacon)
+    false,   // http OFF
+    120000,  // envio lento (2 min)
+    300000   // salva SD lento (5 min)
 };
-
-// ========== SENSORES HABILITADOS ==========
-#define USE_MPU9250
-#define USE_BMP280
-#define USE_SI7021
-#define USE_CCS811
 
 // ========== ENDEREÇOS I2C ==========
 #define MPU9250_ADDRESS 0x69
 #define BMP280_ADDR_1 0x76
-#define BMP280_ADDR_2 0x77
 #define SI7021_ADDRESS 0x40
 #define CCS811_ADDR_1 0x5A
-#define CCS811_ADDR_2 0x5B
 #define DS3231_ADDRESS 0x68
 
 // ========== LIMITES DE VALIDAÇÃO ==========
@@ -150,9 +120,9 @@ const ModeConfig SAFE_CONFIG = {
 #define HUMIDITY_MIN_VALID 0.0
 #define HUMIDITY_MAX_VALID 100.0
 #define CO2_MIN_VALID 350.0
-#define CO2_MAX_VALID 5000.0
+#define CO2_MAX_VALID 8192.0 
 #define TVOC_MIN_VALID 0.0
-#define TVOC_MAX_VALID 1000.0
+#define TVOC_MAX_VALID 1200.0
 #define MAG_MIN_VALID -4800.0
 #define MAG_MAX_VALID 4800.0
 #define ACCEL_MIN_VALID -16.0
@@ -160,9 +130,7 @@ const ModeConfig SAFE_CONFIG = {
 #define GYRO_MIN_VALID -2000.0
 #define GYRO_MAX_VALID 2000.0
 
-#define SENSOR_INIT_TIMEOUT 2000
-
-// ========== LORA - PARÂMETROS RF ==========
+// ========== LORA ==========
 #define LORA_FREQUENCY 915E6
 #define LORA_SPREADING_FACTOR 7         
 #define LORA_SPREADING_FACTOR_SAFE 12   
@@ -173,30 +141,30 @@ const ModeConfig SAFE_CONFIG = {
 #define LORA_SYNC_WORD 0x12             
 #define LORA_CRC_ENABLED true           
 #define LORA_MAX_TX_TIME_MS 400
-#define LORA_DUTY_CYCLE_PERCENT 2.86
 #define LORA_MIN_INTERVAL_MS 20000
-#define LORA_TX_TIMEOUT_MS 2000         
 #define LORA_MAX_PAYLOAD_SIZE 255       
 #define LORA_TX_TIMEOUT_MS_NORMAL 2000   
 #define LORA_TX_TIMEOUT_MS_SAFE   5000   
 
-// ========== WIFI ==========
+// ========== WIFI & HTTP ==========
 #define WIFI_SSID "MATHEUS "
 #define WIFI_PASSWORD "12213490"
-#define WIFI_TIMEOUT_MS 60000
-#define WIFI_RETRY_ATTEMPTS 5
+#define WIFI_TIMEOUT_MS 10000 
+#define WIFI_RETRY_ATTEMPTS 3
 
-// ========== HTTP ==========
 #define HTTP_SERVER "obsat.org.br"
 #define HTTP_PORT 443
 #define HTTP_ENDPOINT "/teste_post/envio.php"
-#define HTTP_TIMEOUT_MS 3000
+#define HTTP_TIMEOUT_MS 5000
 
-// ========== BUFFERS ==========
-#define JSON_MAX_SIZE 768
-#define PAYLOAD_MAX_SIZE 180
+// ========== BUFFERS & REDE (Correção de Erros) ==========
+#define JSON_MAX_SIZE 2048 
+#define PAYLOAD_MAX_SIZE 250
+#define MAX_GROUND_NODES 8              // Necessário para GroundNodeManager
+#define NODE_TTL_MS 1800000             // 30 min (TTL de nós no buffer)
+#define NODE_INACTIVITY_TIMEOUT_MS 600000 
 
-// ========== INTERVALOS DE TELEMETRIA ==========
+// ========== INTERVALOS ==========
 #define TELEMETRY_SEND_INTERVAL PREFLIGHT_CONFIG.telemetrySendInterval
 #define STORAGE_SAVE_INTERVAL PREFLIGHT_CONFIG.storageSaveInterval
 
@@ -204,46 +172,35 @@ const ModeConfig SAFE_CONFIG = {
 #define SD_LOG_FILE "/telemetry.csv"
 #define SD_MISSION_FILE "/mission.csv"
 #define SD_ERROR_FILE "/errors.log"
-#define SD_MAX_FILE_SIZE 10485760
+#define SD_SYSTEM_LOG "/system.log"
+#define SD_MAX_FILE_SIZE 5242880 // 5MB
 
 // ========== BATERIA ==========
-#define BATTERY_MIN_VOLTAGE 3.7
+#define BATTERY_MIN_VOLTAGE 3.5
 #define BATTERY_MAX_VOLTAGE 4.2
-#define BATTERY_CRITICAL 3.9
-#define BATTERY_LOW 3.8
+#define BATTERY_CRITICAL 3.6
+#define BATTERY_LOW 3.7
 
 // ========== SISTEMA ==========
-#define DEEP_SLEEP_DURATION 3600
-#define MISSION_DURATION_MS 7200000
-#define WATCHDOG_TIMEOUT 60
+#define MISSION_DURATION_MS 7200000 // 2 horas
+#define WATCHDOG_TIMEOUT 60         // 60 segundos
 #define SYSTEM_HEALTH_INTERVAL 10000
 
-// ========== LIMITES OPERACIONAIS ==========
-#define MAX_ALTITUDE 30000
-#define MIN_TEMPERATURE -80
-#define MAX_TEMPERATURE 85
-
+// ========== RTC & NTP ==========
 #ifndef NTP_SERVER_PRIMARY
-#define NTP_SERVER_PRIMARY   "a.st1.ntp.br"
-#define NTP_SERVER_SECONDARY "b.st1.ntp.br"
-#define PERIODIC_SYNC_INTERVAL 3600000UL
+#define NTP_SERVER_PRIMARY   "pool.ntp.org"
+#define NTP_SERVER_SECONDARY "time.nist.gov"
 #endif
 #define RTC_TIMEZONE_OFFSET (-3 * 3600)  // UTC-3 Brasil
-#define DST_OFFSET 0                     // Sem horário de verão
 
 // ========== DEBUG SERIAL ==========
 #define DEBUG_SERIAL Serial
 #define DEBUG_BAUDRATE 115200
-extern bool currentSerialLogsEnabled;
+extern bool currentSerialLogsEnabled; 
+
 #define DEBUG_PRINT(x) if(currentSerialLogsEnabled){DEBUG_SERIAL.print(x);}
 #define DEBUG_PRINTLN(x) if(currentSerialLogsEnabled){DEBUG_SERIAL.println(x);}
 #define DEBUG_PRINTF(...) if(currentSerialLogsEnabled){DEBUG_SERIAL.printf(__VA_ARGS__);}
-
-// ========== BUFFERS DE DADOS ==========
-#define TELEMETRY_BUFFER_SIZE 10
-#define MAX_GROUND_NODES 8              
-#define NODE_TTL_MS 1800000              
-#define NODE_INACTIVITY_TIMEOUT_MS 600000 
 
 // ========== ESTRUTURAS DE DADOS ==========
 struct TelemetryData {
@@ -252,9 +209,10 @@ struct TelemetryData {
     
     float batteryVoltage;
     float batteryPercentage;
-    float temperature;        // Temperatura FINAL (com fallback automático)
-    float temperatureBMP;     // ← ADICIONAR ESTA LINHA
-    float temperatureSI;      // Já existe
+    
+    float temperature;    
+    float temperatureBMP; 
+    float temperatureSI;  
     float pressure;
     
     float gyroX, gyroY, gyroZ;
@@ -288,7 +246,7 @@ struct MissionData {
     unsigned long collectionTime;
     uint8_t priority;
     bool forwarded;
-    char originalPayloadHex[20];  // 16 chars + null + margem
+    char originalPayloadHex[20];
     uint8_t payloadLength;
 };
 
@@ -299,7 +257,7 @@ struct GroundNodeBuffer {
     uint16_t totalPacketsCollected;
 };
 
-enum SystemStatus : uint8_t {
+enum SystemStatusErrors : uint8_t {
     STATUS_OK = 0x00,
     STATUS_WIFI_ERROR = 0x01,
     STATUS_SD_ERROR = 0x02,
@@ -310,7 +268,5 @@ enum SystemStatus : uint8_t {
     STATUS_TEMP_ALARM = 0x40,
     STATUS_WATCHDOG = 0x80
 };
-
-
 
 #endif // CONFIG_H

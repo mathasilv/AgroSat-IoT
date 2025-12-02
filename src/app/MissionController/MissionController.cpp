@@ -1,164 +1,126 @@
 /**
  * @file MissionController.cpp
- * @brief Implementação do controlador de missão HAB
- * @version 1.0.0
- * @date 2025-12-01
+ * @brief Implementação com recuperação de falhas (NVS)
  */
 
 #include "MissionController.h"
 
-MissionController::MissionController(
-    RTCManager& rtc, 
-    GroundNodeManager& nodes
-) : 
-    _rtc(rtc),
-    _nodes(nodes),
-    _active(false),
-    _startTime(0),
-    _startTimestampUTC(0)
-{
+MissionController::MissionController(RTCManager& rtc, GroundNodeManager& nodes) 
+    : _rtc(rtc), _nodes(nodes), _active(false), _startTime(0), _startTimestampUTC(0)
+{}
+
+bool MissionController::begin() {
+    // Tenta recuperar missão interrompida (ex: Watchdog reset em voo)
+    _prefs.begin("mission", true); // Read-only
+    bool wasActive = _prefs.getBool("active", false);
+    uint32_t savedStartUTC = _prefs.getUInt("start_utc", 0);
+    _prefs.end();
+
+    if (wasActive && savedStartUTC > 0) {
+        _active = true;
+        _startTimestampUTC = savedStartUTC;
+        
+        // Recalcula o _startTime (millis) aproximado baseado no RTC
+        // Se o RTC falhar, assume que o boot foi agora (melhor que nada)
+        if (_rtc.isInitialized()) {
+            uint32_t currentUnix = _rtc.getUnixTime();
+            uint32_t elapsedSec = (currentUnix > _startTimestampUTC) ? (currentUnix - _startTimestampUTC) : 0;
+            _startTime = millis() - (elapsedSec * 1000);
+        } else {
+            _startTime = millis(); 
+        }
+
+        DEBUG_PRINTLN("[Mission] ⚠ MISSÃO RECUPERADA DE REINICIALIZAÇÃO!");
+        DEBUG_PRINTF("[Mission] Início original: %u (Unix)\n", _startTimestampUTC);
+        return true;
+    }
+    
+    return false;
 }
 
 bool MissionController::start() {
-    if (_active) {
-        DEBUG_PRINTLN("[MissionController] Missao ja em andamento");
-        return false;
-    }
+    if (_active) return false;
     
-    DEBUG_PRINTLN("[MissionController] ==========================================");
-    DEBUG_PRINTLN("[MissionController] INICIANDO MISSAO HAB");
-    DEBUG_PRINTLN("[MissionController] ==========================================");
+    DEBUG_PRINTLN("[Mission] === INICIANDO MISSÃO ===");
     
-    // Capturar timestamp UTC
     if (_rtc.isInitialized()) {
         _startTimestampUTC = _rtc.getUnixTime();
-        DEBUG_PRINTF("[MissionController] Inicio UTC: %s (unix: %lu)\n", 
-                     _rtc.getUTCDateTime().c_str(), 
-                     _startTimestampUTC);
-        DEBUG_PRINTF("[MissionController] Local: %s\n", 
-                     _rtc.getLocalDateTime().c_str());
     } else {
-        _startTimestampUTC = millis() / 1000;
-        DEBUG_PRINTLN("[MissionController] RTC nao disponivel, usando millis");
+        _startTimestampUTC = 0; // Marca temporal inválida, mas missão segue
     }
     
-    // Marcar início
     _startTime = millis();
     _active = true;
     
-    DEBUG_PRINTLN("[MissionController] Missao iniciada, coleta ativa");
-    DEBUG_PRINTLN("[MissionController] ==========================================");
-    
+    _saveState(); // Persiste na Flash
     return true;
 }
 
 bool MissionController::stop() {
-    if (!_active) {
-        DEBUG_PRINTLN("[MissionController] Nenhuma missao ativa");
-        return false;
-    }
+    if (!_active) return false;
     
-    DEBUG_PRINTLN("[MissionController] ==========================================");
-    DEBUG_PRINTLN("[MissionController] ENCERRANDO MISSAO HAB");
-    DEBUG_PRINTLN("[MissionController] ==========================================");
-    
-    uint32_t duration = getDuration();
-    
-    // Timestamp final
-    if (_rtc.isInitialized()) {
-        DEBUG_PRINTF("[MissionController] Fim UTC: %s (unix: %lu)\n",
-                     _rtc.getUTCDateTime().c_str(),
-                     _rtc.getUnixTime());
-    }
-    
-    // Duração
-    DEBUG_PRINTF("[MissionController] Duracao: %lu min %lu s\n",
-                 duration / 60000,
-                 (duration % 60000) / 1000);
-    
-    // Estatísticas dos nós
+    DEBUG_PRINTLN("[Mission] === ENCERRANDO MISSÃO ===");
     _printStatistics();
     
-    // Desativar
     _active = false;
     _startTime = 0;
     _startTimestampUTC = 0;
     
-    DEBUG_PRINTLN("[MissionController] Missao encerrada");
-    DEBUG_PRINTLN("[MissionController] ==========================================");
-    
+    _clearState(); // Remove da Flash
     return true;
 }
 
+void MissionController::_saveState() {
+    _prefs.begin("mission", false); // Read/Write
+    _prefs.putBool("active", true);
+    _prefs.putUInt("start_utc", _startTimestampUTC);
+    _prefs.end();
+    DEBUG_PRINTLN("[Mission] Estado salvo na NVS.");
+}
+
+void MissionController::_clearState() {
+    _prefs.begin("mission", false);
+    _prefs.clear();
+    _prefs.end();
+    DEBUG_PRINTLN("[Mission] Estado limpo da NVS.");
+}
+
 uint32_t MissionController::getDuration() const {
-    if (!_active) {
-        return 0;
-    }
+    if (!_active) return 0;
     return millis() - _startTime;
 }
 
 void MissionController::_printStatistics() {
     const GroundNodeBuffer& buf = _nodes.buffer();
+    DEBUG_PRINTF("[Mission] Nós: %u | Pacotes: %u\n", buf.activeNodes, buf.totalPacketsCollected);
     
-    DEBUG_PRINTF("[MissionController] Nos coletados: %u\n", buf.activeNodes);
-    DEBUG_PRINTF("[MissionController] Pacotes recebidos: %u\n", buf.totalPacketsCollected);
-    
-    if (buf.activeNodes == 0) {
-        DEBUG_PRINTLN("[MissionController] Nenhum no terrestre detectado");
-        return;
+    if (buf.activeNodes > 0) {
+        int avgRSSI, best, worst;
+        float avgSNR, loss;
+        _calculateLinkStats(avgRSSI, best, worst, avgSNR, loss);
+        DEBUG_PRINTF("[Mission] Link: RSSI %d dBm (Melhor %d), Perda %.1f%%\n", avgRSSI, best, loss);
     }
-    
-    // Calcular estatísticas de link
-    int avgRSSI, bestRSSI, worstRSSI;
-    float avgSNR, packetLossRate;
-    
-    _calculateLinkStats(avgRSSI, bestRSSI, worstRSSI, avgSNR, packetLossRate);
-    
-    DEBUG_PRINTF("[MissionController] Link RSSI: medio=%d dBm, melhor=%d dBm, pior=%d dBm\n",
-                 avgRSSI, bestRSSI, worstRSSI);
-    DEBUG_PRINTF("[MissionController] Link SNR: medio=%.1f dB\n", avgSNR);
-    DEBUG_PRINTF("[MissionController] Perda de pacotes: %.2f%%\n", packetLossRate);
 }
 
-void MissionController::_calculateLinkStats(
-    int& avgRSSI, 
-    int& bestRSSI, 
-    int& worstRSSI,
-    float& avgSNR,
-    float& packetLossRate
-) {
+void MissionController::_calculateLinkStats(int& avgRSSI, int& bestRSSI, int& worstRSSI, float& avgSNR, float& packetLossRate) {
     const GroundNodeBuffer& buf = _nodes.buffer();
-    
-    avgRSSI = 0;
-    avgSNR = 0.0f;
-    bestRSSI = -200;
-    worstRSSI = 0;
-    
-    uint16_t totalLost = 0;
-    uint16_t totalReceived = 0;
-    
-    for (uint8_t i = 0; i < buf.activeNodes; i++) {
-        const MissionData& node = buf.nodes[i];
-        
-        avgRSSI += node.rssi;
-        avgSNR += node.snr;
-        
-        if (node.rssi > bestRSSI) bestRSSI = node.rssi;
-        if (node.rssi < worstRSSI) worstRSSI = node.rssi;
-        
-        totalLost += node.packetsLost;
-        totalReceived += node.packetsReceived;
+    long totalRSSI = 0;
+    float totalSNR = 0;
+    bestRSSI = -200; worstRSSI = 0;
+    uint32_t totalLost = 0, totalRx = 0;
+
+    for (int i = 0; i < buf.activeNodes; i++) {
+        const MissionData& n = buf.nodes[i];
+        totalRSSI += n.rssi;
+        totalSNR += n.snr;
+        if (n.rssi > bestRSSI) bestRSSI = n.rssi;
+        if (n.rssi < worstRSSI) worstRSSI = n.rssi;
+        totalLost += n.packetsLost;
+        totalRx += n.packetsReceived;
     }
-    
-    // Médias
-    if (buf.activeNodes > 0) {
-        avgRSSI /= buf.activeNodes;
-        avgSNR /= buf.activeNodes;
-    }
-    
-    // Taxa de perda
-    uint16_t totalPackets = totalReceived + totalLost;
-    packetLossRate = (totalPackets > 0) 
-        ? (totalLost * 100.0f) / totalPackets 
-        : 0.0f;
+
+    avgRSSI = totalRSSI / buf.activeNodes;
+    avgSNR = totalSNR / buf.activeNodes;
+    uint32_t totalPkts = totalRx + totalLost;
+    packetLossRate = (totalPkts > 0) ? ((float)totalLost / totalPkts * 100.0) : 0.0;
 }

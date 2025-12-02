@@ -1,6 +1,6 @@
 /**
  * @file TelemetryManager.cpp
- * @brief Gerenciador Central (Versão Limpa)
+ * @brief Gerenciador Central (Versão Limpa e Corrigida)
  */
 
 #include "TelemetryManager.h"
@@ -41,6 +41,14 @@ bool TelemetryManager::begin() {
 
     _initSubsystems(subsystemsOk, success);
     _syncNTPIfAvailable();
+
+    // === RECUPERAÇÃO DE MISSÃO ===
+    if (_mission.begin()) { // Verifica se estava voando antes do reset
+        DEBUG_PRINTLN("[TelemetryManager] Restaurando modo FLIGHT...");
+        _mode = MODE_FLIGHT;
+        _missionActive = true;
+        applyModeConfig(MODE_FLIGHT);
+    }
 
     _logInitSummary(success, subsystemsOk, initialHeap);
     return success;
@@ -107,7 +115,7 @@ void TelemetryManager::_logInitSummary(bool success, uint8_t subsystemsOk, uint3
 void TelemetryManager::loop() {
     uint32_t currentTime = millis();
 
-    // 1. Saúde do Sistema
+    // 1. Monitoramento de Saúde
     _systemHealth.update();
     SystemHealth::HeapStatus heapStatus = _systemHealth.getHeapStatus();
 
@@ -141,35 +149,11 @@ void TelemetryManager::loop() {
     _handleButtonEvents();
     _updateLEDIndicator(currentTime);
 
-    // 3. Processamento LoRa (Recebimento)
-    String loraPacket;
-    int rssi = 0;
-    float snr = 0.0f;
+    // 3. Gerenciamento de Rádio e Rede
+    _handleIncomingRadio();
+    _maintainGroundNetwork();
 
-    if (_comm.receiveLoRaPacket(loraPacket, rssi, snr)) {
-        MissionData rxData;
-        if (_comm.processLoRaPacket(loraPacket, rxData)) {
-            rxData.rssi = rssi;
-            rxData.snr = snr;
-            rxData.lastLoraRx = millis();
-            rxData.collectionTime = _rtc.isInitialized() ? _rtc.getUnixTime() : (millis()/1000);
-            
-            _groundNodes.updateNode(rxData, _comm);
-            if (_storage.isAvailable()) _storage.saveMissionData(rxData);
-            
-            DEBUG_PRINTF("[TelemetryManager] Node %u RX: RSSI=%d dBm\n", rxData.nodeId, rssi);
-        }
-    }
-
-    // 4. Manutenção de Nós (Limpeza e Retransmissão)
-    static unsigned long lastNodeMaint = 0;
-    if (currentTime - lastNodeMaint > 60000) { // 1 min
-        lastNodeMaint = currentTime;
-        _groundNodes.cleanup(currentTime, NODE_TTL_MS);
-        _groundNodes.resetForwardFlags();
-    }
-
-    // 5. Coleta e Envio de Telemetria (Local + Satélite)
+    // 4. Coleta e Envio de Telemetria (Local + Satélite)
     _telemetryCollector.collect(_telemetryData);
     _checkOperationalConditions();
 
@@ -178,14 +162,45 @@ void TelemetryManager::loop() {
         _sendTelemetry();
     }
 
-    // 6. Salvamento Local (SD)
+    // 5. Salvamento Local (SD)
     if (currentTime - _lastStorageSave >= activeModeConfig->storageSaveInterval) {
         _lastStorageSave = currentTime;
         _saveToStorage();
     }
 }
 
-// === Controle e Helpers ===
+// === Métodos Privados de Organização ===
+
+void TelemetryManager::_handleIncomingRadio() {
+    String loraPacket;
+    int rssi = 0;
+    float snr = 0.0f;
+
+    if (_comm.receiveLoRaPacket(loraPacket, rssi, snr)) {
+        MissionData rxData;
+        if (_comm.processLoRaPacket(loraPacket, rxData)) {
+            // Enriquece dados com metadados de recepção
+            rxData.rssi = rssi;
+            rxData.snr = snr;
+            rxData.lastLoraRx = millis();
+            rxData.collectionTime = _rtc.isInitialized() ? _rtc.getUnixTime() : (millis()/1000);
+            
+            _groundNodes.updateNode(rxData, _comm);
+            if (_storage.isAvailable()) _storage.saveMissionData(rxData);
+            
+            DEBUG_PRINTF("[TM] Node %u RX: RSSI=%d dBm\n", rxData.nodeId, rssi);
+        }
+    }
+}
+
+void TelemetryManager::_maintainGroundNetwork() {
+    static unsigned long lastMaint = 0;
+    if (millis() - lastMaint > 60000) { // A cada 1 minuto
+        lastMaint = millis();
+        _groundNodes.cleanup(millis(), NODE_TTL_MS);
+        _groundNodes.resetForwardFlags();
+    }
+}
 
 void TelemetryManager::applyModeConfig(uint8_t modeIndex) {
     OperationMode mode = static_cast<OperationMode>(modeIndex);

@@ -1,7 +1,7 @@
 /**
  * @file StorageManager.h
- * @brief Gerenciador de Armazenamento SD (Com Hot-Swap e Recuperação)
- * @version 2.0.0
+ * @brief Gerenciador de Armazenamento SD (Com Log de Sistema)
+ * @version 2.2.1 (Fix Macro Conflict)
  */
 
 #ifndef STORAGEMANAGER_H
@@ -12,19 +12,19 @@
 #include <SPI.h>
 #include "config.h"
 
-class RTCManager; // Forward declaration
+class RTCManager; 
 
 class StorageManager {
 public:
     StorageManager();
     
-    // Inicialização
     bool begin();
-    
-    // Injeção de dependência
     void setRTCManager(RTCManager* rtcManager);
     
-    // Armazenamento (Retorna true se salvou com sucesso)
+    // Salvar Log de Texto
+    bool saveLog(const String& message);
+    
+    // Métodos de Telemetria
     bool saveTelemetry(const TelemetryData& data);
     bool saveMissionData(const MissionData& data);
     bool logError(const String& errorMsg);
@@ -32,6 +32,8 @@ public:
     // Gerenciamento de arquivos
     bool createTelemetryFile();
     bool createMissionFile();
+    bool createLogFile();
+    
     void listFiles();
     
     // Status
@@ -43,10 +45,13 @@ private:
     bool _available;
     RTCManager* _rtcManager;
     
-    // Controle de Recuperação (Hot-Swap)
+    // Controle de Recuperação
     unsigned long _lastInitAttempt;
-    static constexpr unsigned long REINIT_INTERVAL = 5000; // Tentar recuperar SD a cada 5s
+    static constexpr unsigned long REINIT_INTERVAL = 5000;
     
+    // CORREÇÃO: Variável removida pois já existe #define SD_SYSTEM_LOG em config.h
+    // const char* SD_SYSTEM_LOG = "/system.log"; 
+
     // Métodos internos
     void _attemptRecovery();
     bool _checkFileSize(const char* path);

@@ -1,12 +1,6 @@
 /**
  * @file TelemetryManager.h
- * @brief Gerenciador central de telemetria - HAB + UTC
- * @version 2.0.0
- * @date 2025-12-01
- * 
- * CHANGELOG v2.0.0:
- * - [REMOVED] DisplayManager dependencies
- * - [UPDATED] Simplified initialization without display
+ * @brief Gerenciador Central (Com métodos auxiliares)
  */
 
 #ifndef TELEMETRYMANAGER_H
@@ -15,7 +9,7 @@
 #include <Arduino.h>
 #include "config.h"
 
-// Subsystems / services
+// Subsystems
 #include "sensors/SensorManager/SensorManager.h"
 #include "core/PowerManager/PowerManager.h"
 #include "core/SystemHealth/SystemHealth.h"
@@ -24,12 +18,11 @@
 #include "storage/StorageManager.h"
 #include "comm/CommunicationManager/CommunicationManager.h"
 
-// Higher-level controllers
+// Controllers
 #include "app/GroundNodeManager/GroundNodeManager.h"
 #include "app/MissionController/MissionController.h"
 #include "app/TelemetryCollector/TelemetryCollector.h"
 #include "core/CommandHandler/CommandHandler.h"
-#include "comm/LoRaService/LoRaService.h"
 
 class TelemetryManager {
 public:
@@ -37,29 +30,20 @@ public:
 
     bool begin();
     void loop();
-
-    // Comandos externos (via Serial/LoRa)
     bool handleCommand(const String& cmd);
 
-    // Acesso aos subsistemas (se precisar expor)
-    SensorManager& getSensorManager() { return _sensors; }
-
-    // Controle de missão
+    // Controle de Missão
     void startMission();
     void stopMission();
-
-    OperationMode getMode();
+    OperationMode getMode() { return _mode; }
     void applyModeConfig(uint8_t modeIndex);
 
-    // Métodos de teste/debug
+    // Compatibilidade
     void testLoRaTransmission();
     void sendCustomLoRa(const String& message);
     void printLoRaStats();
 
 private:
-    // ========================================
-    // SUBSISTEMAS / CONTROLADORES
-    // ========================================
     SensorManager        _sensors;
     PowerManager         _power;
     SystemHealth         _systemHealth;
@@ -73,38 +57,30 @@ private:
     TelemetryCollector   _telemetryCollector;
     CommandHandler       _commandHandler;
 
-    // ========================================
-    // ESTADO
-    // ========================================
     OperationMode  _mode;
     bool           _missionActive;
-
     TelemetryData  _telemetryData;
 
+    // Timers
     unsigned long  _lastTelemetrySend;
     unsigned long  _lastStorageSave;
     unsigned long  _missionStartTime;
     unsigned long  _lastSensorReset;
 
-    unsigned long  _lastFastSensorUpdate;
-    unsigned long  _lastSlowSensorUpdate;
-    unsigned long  _lastSensorHealthUpdate;
-
-    // ========================================
-    // MÉTODOS PRIVADOS (helpers)
-    // ========================================
-    // Helpers de inicialização
+    // Helpers de Inicialização
     void _initModeDefaults();
     void _initSubsystems(uint8_t& subsystemsOk, bool& success);
     void _syncNTPIfAvailable();
     void _logInitSummary(bool success, uint8_t subsystemsOk, uint32_t initialHeap);
 
-    // Operação
+    // Helpers de Loop (NOVO: Organização)
+    void _handleIncomingRadio();   // Processa pacotes LoRa
+    void _maintainGroundNetwork(); // Limpa nós velhos
     void _sendTelemetry();
     void _saveToStorage();
-    void _handleButtonEvents();
     void _checkOperationalConditions();
+    void _handleButtonEvents();
     void _updateLEDIndicator(unsigned long currentTime);
 };
 
-#endif // TELEMETRYMANAGER_H
+#endif
