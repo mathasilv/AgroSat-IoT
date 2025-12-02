@@ -37,9 +37,6 @@
 
 // ========== SD CARD ==========
 #define SD_CS 13
-#define SD_MOSI 15
-#define SD_MISO 2
-#define SD_SCLK 14
 
 // ========== I2C SENSORS ==========
 #define SENSOR_I2C_SDA 21
@@ -77,8 +74,8 @@ struct ModeConfig {
     bool displayEnabled;
     bool serialLogsEnabled;
     bool sdLogsVerbose;
-    bool loraEnabled;       
-    bool httpEnabled;       
+    bool loraEnabled;
+    bool httpEnabled;
     uint32_t telemetrySendInterval;
     uint32_t storageSaveInterval;
     uint8_t wifiDutyCycle;
@@ -91,12 +88,12 @@ const ModeConfig PREFLIGHT_CONFIG = {
     true,    // serialLogsEnabled
     true,    // sdLogsVerbose
     true,    // loraEnabled
-    true,   // httpEnabled
-    60000,   // telemetrySendInterval: 60 s (antes 15000 / 30000)
-    60000,   // storageSaveInterval: 60 s
-    0,       // wifiDutyCycle (não usado aqui)
-    0,       // loraRxWindowDuration (não usado)
-    60000    // loraRxTxInterval: 60 s
+    true,    // httpEnabled
+    60000,   // telemetrySendInterval
+    60000,   // storageSaveInterval
+    0,       // wifiDutyCycle
+    0,       // loraRxWindowDuration
+    60000    // loraRxTxInterval
 };
 
 const ModeConfig FLIGHT_CONFIG = {
@@ -105,24 +102,24 @@ const ModeConfig FLIGHT_CONFIG = {
     false,
     true,
     true,
-    60000,  // 60 s
-    10000,  // pode aumentar um pouco o intervalo de save também
+    60000,
+    10000,
     0,
     0,
-    60000   // 60 s
+    60000
 };
 
 const ModeConfig SAFE_CONFIG = {
-    false,    
-    true,     
-    true,     
-    true,     
-    false,    
-    60000,    
-    300000,   
-    0,        
-    0,        
-    60000     
+    false,
+    true,
+    true,
+    true,
+    false,
+    60000,
+    300000,
+    0,
+    0,
+    60000
 };
 
 // ========== SENSORES HABILITADOS ==========
@@ -139,14 +136,6 @@ const ModeConfig SAFE_CONFIG = {
 #define CCS811_ADDR_1 0x5A
 #define CCS811_ADDR_2 0x5B
 #define DS3231_ADDRESS 0x68
-
-// ========== SENSORES - PARÂMETROS ==========
-#define CUSTOM_FILTER_SIZE 5
-#define SENSOR_READ_INTERVAL 1000
-#define CCS811_READ_INTERVAL 5000
-#define SI7021_READ_INTERVAL 2000
-#define MPU9250_CALIBRATION_SAMPLES 100
-#define CCS811_WARMUP_TIME 20000
 
 // ========== LIMITES DE VALIDAÇÃO ==========
 #define TEMP_MIN_VALID -50.0
@@ -207,6 +196,7 @@ const ModeConfig SAFE_CONFIG = {
 #define STORAGE_SAVE_INTERVAL PREFLIGHT_CONFIG.storageSaveInterval
 
 // ========== SD CARD - ARQUIVOS ==========
+#define SD_CS 13
 #define SD_LOG_FILE "/telemetry.csv"
 #define SD_MISSION_FILE "/mission.csv"
 #define SD_ERROR_FILE "/errors.log"
@@ -236,6 +226,7 @@ const ModeConfig SAFE_CONFIG = {
 #endif
 #define RTC_TIMEZONE_OFFSET (-3 * 3600)  // UTC-3 Brasil
 #define DST_OFFSET 0                     // Sem horário de verão
+
 // ========== DEBUG SERIAL ==========
 #define DEBUG_SERIAL Serial
 #define DEBUG_BAUDRATE 115200
@@ -278,7 +269,6 @@ struct TelemetryData {
     char payload[PAYLOAD_MAX_SIZE];
 };
 
-
 struct MissionData {
     uint16_t nodeId;
     uint16_t sequenceNumber;
@@ -316,5 +306,11 @@ enum SystemStatus : uint8_t {
     STATUS_TEMP_ALARM = 0x40,
     STATUS_WATCHDOG = 0x80
 };
+
+#define SD_CS 13
+#define SD_MOSI 15
+#define SD_MISO 2
+#define SD_SCLK 14
+
 
 #endif // CONFIG_H

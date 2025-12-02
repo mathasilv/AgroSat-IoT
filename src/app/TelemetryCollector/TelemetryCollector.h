@@ -16,7 +16,7 @@
 
 #include <Arduino.h>
 #include "config.h"
-#include "SensorManager.h"
+#include "sensors/SensorManager/SensorManager.h"
 #include "PowerManager.h"
 #include "SystemHealth.h"
 #include "RTCManager.h"

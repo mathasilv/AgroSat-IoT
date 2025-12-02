@@ -12,14 +12,14 @@
 #include "config.h"
 
 // Subsystems / services
-#include "SensorManager.h"
+#include "sensors/SensorManager/SensorManager.h"
 #include "PowerManager.h"
 #include "SystemHealth.h"
 #include "DisplayManager.h"
 #include "RTCManager.h"
 #include "ButtonHandler.h"
 #include "StorageManager.h"
-#include "CommunicationManager.h"
+#include "comm/CommunicationManager/CommunicationManager.h"
 
 // Higher-level controllers
 #include "app/GroundNodeManager/GroundNodeManager.h"

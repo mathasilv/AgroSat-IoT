@@ -14,7 +14,7 @@
 #define COMMAND_HANDLER_H
 
 #include <Arduino.h>
-#include "SensorManager.h"
+#include "sensors/SensorManager/SensorManager.h"
 
 class CommandHandler {
 public:

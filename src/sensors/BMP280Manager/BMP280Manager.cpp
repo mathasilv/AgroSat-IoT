@@ -58,9 +58,9 @@ bool BMP280Manager::begin() {
     // PASSO 1: Soft reset
     DEBUG_PRINTLN("[BMP280Manager] PASSO 1: Soft reset...");
     if (!_softReset()) {
-        DEBUG_PRINTLN("[BMP280Manager] ⚠ Soft reset falhou (continuando)");
+        DEBUG_PRINTLN("[BMP280Manager] Soft reset falhou (continuando)");
     } else {
-        DEBUG_PRINTLN("[BMP280Manager] ✓ Soft reset OK");
+        DEBUG_PRINTLN("[BMP280Manager] Soft reset OK");
     }
     delay(200);  // Aguardar sensor reiniciar
     
@@ -82,7 +82,7 @@ bool BMP280Manager::begin() {
     }
     
     if (!found) {
-        DEBUG_PRINTLN("[BMP280Manager] ❌ FALHA: Sensor não detectado");
+        DEBUG_PRINTLN("[BMP280Manager] FALHA: Sensor não detectado");
         return false;
     }
     
@@ -101,18 +101,18 @@ bool BMP280Manager::begin() {
         BMP280::Filter::OFF,
         BMP280::StandbyTime::MS_125
     )) {
-        DEBUG_PRINTLN("[BMP280Manager] ❌ FALHA: Configuração falhou");
+        DEBUG_PRINTLN("[BMP280Manager] FALHA: Configuração falhou");
         return false;
     }
     
-    DEBUG_PRINTLN("[BMP280Manager] ✓ Configuração OK");
+    DEBUG_PRINTLN("[BMP280Manager] Configuração OK");
     
     // PASSO 4: Warm-up (2 segundos)
     DEBUG_PRINTLN("[BMP280Manager] PASSO 4: Warm-up (2 segundos)...");
     uint32_t start = millis();
     while (millis() - start < 2000) {
         if (_readRawFast()) {
-            DEBUG_PRINTLN("[BMP280Manager] ✓ Primeira leitura OK");
+            DEBUG_PRINTLN("[BMP280Manager] Primeira leitura OK");
             break;
         }
         delay(100);
@@ -135,7 +135,7 @@ bool BMP280Manager::begin() {
     }
     
     if (okCount < 2) {
-        DEBUG_PRINTLN("[BMP280Manager] ❌ FALHA: Poucas leituras válidas");
+        DEBUG_PRINTLN("[BMP280Manager] FALHA: Poucas leituras válidas");
         return false;
     }
     
@@ -290,21 +290,21 @@ bool BMP280Manager::_readRawFast() {
 bool BMP280Manager::_validateReading(float temp, float press, float alt) {
     // 1. Validar range de temperatura (datasheet: -40°C a +85°C)
     if (temp < TEMP_MIN || temp > TEMP_MAX) {
-        DEBUG_PRINTF("[BMP280Manager] ⚠ Temperatura fora do range: %.1f°C (válido: %.0f a %.0f)\n", 
+        DEBUG_PRINTF("[BMP280Manager] Temperatura fora do range: %.1f°C (válido: %.0f a %.0f)\n", 
                     temp, TEMP_MIN, TEMP_MAX);
         return false;
     }
     
     // 2. Validar range de pressão (datasheet: 300 hPa a 1100 hPa)
     if (press < PRESSURE_MIN || press > PRESSURE_MAX) {
-        DEBUG_PRINTF("[BMP280Manager] ⚠ Pressão fora do range: %.0f hPa (válido: %.0f a %.0f)\n", 
+        DEBUG_PRINTF("[BMP280Manager] Pressão fora do range: %.0f hPa (válido: %.0f a %.0f)\n", 
                     press, PRESSURE_MIN, PRESSURE_MAX);
         return false;
     }
     
     // 3. Detecção de travamento (leituras idênticas consecutivas)
     if (_isFrozen(press)) {
-        DEBUG_PRINTLN("[BMP280Manager] ⚠ Sensor travado detectado");
+        DEBUG_PRINTLN("[BMP280Manager] Sensor travado detectado");
         return false;
     }
     
@@ -321,7 +321,7 @@ bool BMP280Manager::_validateReading(float temp, float press, float alt) {
         // Validar apenas se deltaTime está em range razoável
         if (deltaTime > 0.1f && deltaTime < 10.0f) {
             if (!_checkRateOfChange(temp, press, alt, deltaTime)) {
-                DEBUG_PRINTLN("[BMP280Manager] ⚠ Taxa de mudança anormal");
+                DEBUG_PRINTLN("[BMP280Manager] Taxa de mudança anormal");
                 return false;
             }
         }
@@ -332,12 +332,12 @@ bool BMP280Manager::_validateReading(float temp, float press, float alt) {
         uint8_t count = _historyFull ? HISTORY_SIZE : _historyIndex;
         
         if (_isOutlier(press, _pressureHistory, count)) {
-            DEBUG_PRINTF("[BMP280Manager] ⚠ Pressão é outlier: %.0f hPa\n", press);
+            DEBUG_PRINTF("[BMP280Manager] Pressão é outlier: %.0f hPa\n", press);
             return false;
         }
         
         if (_isOutlier(temp, _tempHistory, count)) {
-            DEBUG_PRINTF("[BMP280Manager] ⚠ Temperatura é outlier: %.1f°C\n", temp);
+            DEBUG_PRINTF("[BMP280Manager] Temperatura é outlier: %.1f°C\n", temp);
             return false;
         }
     }
@@ -352,7 +352,7 @@ bool BMP280Manager::_checkRateOfChange(float temp, float press, float alt, float
     // 1. Validar taxa de mudança de pressão
     float pressRate = fabs(press - _pressureHistory[prevIdx]) / deltaTime;
     if (pressRate > MAX_PRESSURE_RATE) {
-        DEBUG_PRINTF("[BMP280Manager] ⚠ Taxa de pressão anormal: %.1f hPa/s (max: %.1f)\n", 
+        DEBUG_PRINTF("[BMP280Manager] Taxa de pressão anormal: %.1f hPa/s (max: %.1f)\n", 
                     pressRate, MAX_PRESSURE_RATE);
         return false;
     }
@@ -360,7 +360,7 @@ bool BMP280Manager::_checkRateOfChange(float temp, float press, float alt, float
     // 2. Validar taxa de mudança de altitude
     float altRate = fabs(alt - _altitudeHistory[prevIdx]) / deltaTime;
     if (altRate > MAX_ALTITUDE_RATE) {
-        DEBUG_PRINTF("[BMP280Manager] ⚠ Taxa de altitude anormal: %.1f m/s (max: %.1f)\n", 
+        DEBUG_PRINTF("[BMP280Manager] Taxa de altitude anormal: %.1f m/s (max: %.1f)\n", 
                     altRate, MAX_ALTITUDE_RATE);
         return false;
     }
@@ -368,7 +368,7 @@ bool BMP280Manager::_checkRateOfChange(float temp, float press, float alt, float
     // 3. Validar taxa de mudança de temperatura
     float tempRate = fabs(temp - _tempHistory[prevIdx]) / deltaTime;
     if (tempRate > MAX_TEMP_RATE) {
-        DEBUG_PRINTF("[BMP280Manager] ⚠ Taxa de temperatura anormal: %.2f°C/s (max: %.1f)\n", 
+        DEBUG_PRINTF("[BMP280Manager] Taxa de temperatura anormal: %.2f°C/s (max: %.1f)\n", 
                     tempRate, MAX_TEMP_RATE);
         return false;
     }
@@ -386,7 +386,6 @@ bool BMP280Manager::_isFrozen(float currentPressure) {
         return true;
     }
     
-    // ✅ Adicionar tolerância pequena para flutuação normal
     float tolerance = 0.05f;  // 0.01 hPa (~ruído normal)
     bool withinTolerance = fabs(currentPressure - _lastPressureRead) < 0.05f;  
     

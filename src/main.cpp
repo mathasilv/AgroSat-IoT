@@ -7,7 +7,7 @@
 #include <Arduino.h>
 #include <esp_task_wdt.h>
 #include "config.h"
-#include "core/TelemetryManager/TelemetryManager.h"
+#include "app/TelemetryManager/TelemetryManager.h"
 
 
 TelemetryManager telemetry;

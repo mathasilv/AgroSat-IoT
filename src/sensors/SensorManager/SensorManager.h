@@ -9,10 +9,10 @@
 #define SENSORMANAGER_H
 
 #include <Arduino.h>
-#include "MPU9250Manager.h"
-#include "BMP280Manager.h"
-#include "SI7021Manager.h"
-#include "CCS811Manager.h"
+#include "sensors/MPU9250Manager/MPU9250Manager.h"
+#include "sensors/BMP280Manager/BMP280Manager.h"
+#include "sensors/SI7021Manager/SI7021Manager.h"
+#include "sensors/CCS811Manager/CCS811Manager.h"
 #include "config.h"
 
 class SensorManager {

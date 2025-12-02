@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 #include "config.h"      // para MAX_GROUND_NODES, MissionData, GroundNodeBuffer
-#include "CommunicationManager.h"
+#include "comm/CommunicationManager/CommunicationManager.h"
 
 class GroundNodeManager {
 public:
