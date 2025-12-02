@@ -15,8 +15,8 @@
 
 #include <Arduino.h>
 #include "config.h"
-#include "RTCManager.h"
-#include "DisplayManager.h"
+#include "core/RTCManager/RTCManager.h"
+#include "core/DisplayManager/DisplayManager.h"
 #include "app/GroundNodeManager/GroundNodeManager.h"
 
 class MissionController {

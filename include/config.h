@@ -37,6 +37,9 @@
 
 // ========== SD CARD ==========
 #define SD_CS 13
+#define SD_MOSI 15
+#define SD_MISO 2
+#define SD_SCLK 14
 
 // ========== I2C SENSORS ==========
 #define SENSOR_I2C_SDA 21
@@ -196,7 +199,6 @@ const ModeConfig SAFE_CONFIG = {
 #define STORAGE_SAVE_INTERVAL PREFLIGHT_CONFIG.storageSaveInterval
 
 // ========== SD CARD - ARQUIVOS ==========
-#define SD_CS 13
 #define SD_LOG_FILE "/telemetry.csv"
 #define SD_MISSION_FILE "/mission.csv"
 #define SD_ERROR_FILE "/errors.log"
@@ -307,10 +309,6 @@ enum SystemStatus : uint8_t {
     STATUS_WATCHDOG = 0x80
 };
 
-#define SD_CS 13
-#define SD_MOSI 15
-#define SD_MISO 2
-#define SD_SCLK 14
 
 
 #endif // CONFIG_H

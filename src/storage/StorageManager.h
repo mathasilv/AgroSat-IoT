@@ -27,7 +27,7 @@ public:
     bool saveTelemetry(const TelemetryData& data);
     bool saveMissionData(const MissionData& data);
     bool logError(const String& errorMsg);
-    
+      
     // Gerenciamento de arquivos
     bool createTelemetryFile();
     bool createMissionFile();

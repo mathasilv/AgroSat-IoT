@@ -13,18 +13,18 @@
 
 // Subsystems / services
 #include "sensors/SensorManager/SensorManager.h"
-#include "PowerManager.h"
-#include "SystemHealth.h"
-#include "DisplayManager.h"
-#include "RTCManager.h"
-#include "ButtonHandler.h"
-#include "StorageManager.h"
+#include "core/PowerManager/PowerManager.h"
+#include "core/SystemHealth/SystemHealth.h"
+#include "core/DisplayManager/DisplayManager.h"
+#include "core/RTCManager/RTCManager.h"
+#include "core/ButtonHandler/ButtonHandler.h"
+#include "storage/StorageManager.h"
 #include "comm/CommunicationManager/CommunicationManager.h"
 
 // Higher-level controllers
 #include "app/GroundNodeManager/GroundNodeManager.h"
-#include "core/MissionController/MissionController.h"
-#include "core/TelemetryCollector/TelemetryCollector.h"
+#include "app/MissionController/MissionController.h"
+#include "app/TelemetryCollector/TelemetryCollector.h"
 #include "core/CommandHandler/CommandHandler.h"
 #include "comm/LoRaService/LoRaService.h"
 

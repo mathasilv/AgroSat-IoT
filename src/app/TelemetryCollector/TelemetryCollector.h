@@ -17,9 +17,9 @@
 #include <Arduino.h>
 #include "config.h"
 #include "sensors/SensorManager/SensorManager.h"
-#include "PowerManager.h"
-#include "SystemHealth.h"
-#include "RTCManager.h"
+#include "core/PowerManager/PowerManager.h"
+#include "core/SystemHealth/SystemHealth.h"
+#include "core/RTCManager/RTCManager.h"
 #include "app/GroundNodeManager/GroundNodeManager.h"
 
 class TelemetryCollector {
