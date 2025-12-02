@@ -1,48 +1,27 @@
-/**
- * @file LoRaService.h
- * @brief Serviço de rádio LoRa (orquestrador)
- * @version 2.0.0
- * @date 2025-12-01
- */
-
-#pragma once
+#ifndef LORA_SERVICE_H
+#define LORA_SERVICE_H
 
 #include <Arduino.h>
-#include <SPI.h>
-#include <LoRa.h>
-#include "config.h"
-#include "LoRaTransmitter.h"
 #include "LoRaReceiver.h"
+#include "LoRaTransmitter.h"
+#include "config.h"
 
 class LoRaService {
 public:
     LoRaService();
-
+    
     bool begin();
-    bool init();
-    bool retryInit(uint8_t maxAttempts = 3);
-
-    void enable(bool enable);
+    
     bool send(const String& data);
     bool receive(String& packet, int& rssi, float& snr);
-
-    bool isOnline() const;
-    int getLastRSSI() const;
-    float getLastSNR() const;
-    void getStatistics(uint16_t& sent, uint16_t& failed) const;
-
-    void reconfigure(OperationMode mode);
-    void adaptSpreadingFactor(float altitude);
+    
+    bool isOnline() const { return _online; }
+    void setSpreadingFactor(int sf);
 
 private:
-    void _configureParameters();
-
-    // Componentes
+    LoRaReceiver _receiver;
     LoRaTransmitter _transmitter;
-    LoRaReceiver    _receiver;
-
-    // Estado
-    bool    _initialized;
-    bool    _enabled;
-    uint8_t _currentSpreadingFactor;
+    bool _online;
 };
+
+#endif

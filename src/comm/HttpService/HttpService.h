@@ -7,13 +7,8 @@
 class HttpService {
 public:
     HttpService();
-
-    // Envia JSON para o endpoint configurado em config.h
-    // Retorna true se HTTP 200/201 e "sucesso" na resposta
+    // Retorna true se enviou com sucesso (HTTP 200/201)
     bool postJson(const String& jsonPayload);
-
-private:
-    bool _checkResponse(const String& response);
 };
 
-#endif // HTTP_SERVICE_H
+#endif
