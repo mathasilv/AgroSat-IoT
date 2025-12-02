@@ -1,131 +1,99 @@
 /**
  * @file SI7021.cpp
- * @brief Driver nativo SI7021 - CORREÇÃO DE POLL (PING ANTES DE LER)
+ * @brief Implementação do Driver SI7021 com proteção de Polling I2C
  */
 
 #include "SI7021.h"
 
-#ifndef DEBUG_PRINTLN
-#define DEBUG_PRINTLN(x) Serial.println(x)
-#define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
-#endif
+SI7021::SI7021(TwoWire& wire) : _wire(&wire) {}
 
-// Delay aumentado para garantir conversão
-static constexpr uint8_t SI7021_INIT_DELAY_MS = 50;
-
-SI7021::SI7021(TwoWire& wire) : _wire(&wire), _addr(SI7021_I2C_ADDR), _online(false), _deviceID(0) { }
-
-bool SI7021::begin(uint8_t addr) {
-    _addr = addr;
-    _online = false;
-    DEBUG_PRINTLN("[SI7021] Inicializando...");
-
-    if (!_verifyPresence()) return false;
-
+bool SI7021::begin() {
+    if (!isSensorPresent()) {
+        return false;
+    }
     reset();
-    delay(SI7021_INIT_DELAY_MS);
-
-    uint8_t userReg = 0;
-    if (!_readRegister(SI7021_CMD_READ_USER_REG, &userReg, 1)) return false;
-    _deviceID = userReg;
-
-    float testHum = 0.0f;
-    if (!readHumidity(testHum)) return false;
-
-    _online = true;
-    DEBUG_PRINTF("[SI7021] OK! RH=%.1f%%\n", testHum);
     return true;
 }
 
-bool SI7021::readHumidity(float& humidity) {
-    _wire->beginTransmission(_addr);
-    _wire->write(SI7021_CMD_MEASURE_RH_NOHOLD);
-    if (_wire->endTransmission() != 0) {
-        humidity = -999.0;
-        return false;
-    }
-    
-    // Aguarda tempo mínimo de conversão
-    delay(50); 
+void SI7021::reset() {
+    _writeCommand(CMD_RESET);
+    delay(50); // Datasheet: Powerup/Reset time ~15ms
+}
 
-    // Tenta ler com polling inteligente
-    uint8_t retries = 10;
-    while (retries-- > 0) {
-        // [FIX CRÍTICO] Verificar se o sensor está pronto (ACK) ANTES de pedir dados
-        // Isso evita que o requestFrom gere o Error 263 no log
-        _wire->beginTransmission(_addr);
-        if (_wire->endTransmission() == 0) {
-            // Sensor respondeu (ACK), está pronto!
-            if (_wire->requestFrom(_addr, (uint8_t)2) == 2) {
-                uint16_t rawHum = (_wire->read() << 8) | _wire->read();
-                humidity = ((125.0 * rawHum) / 65536.0) - 6.0;
-                if (humidity < 0.0) humidity = 0.0;
-                if (humidity > 100.0) humidity = 100.0;
-                return true;
-            }
-        }
-        // Se deu NACK, espera um pouco e tenta de novo
-        delay(10);
-    }
+bool SI7021::readHumidity(float& humidity) {
+    uint16_t raw = _readSensorData(CMD_MEASURE_RH_NOHOLD);
+    if (raw == 0xFFFF) return false;
+
+    // Fórmula Datasheet: %RH = ((125 * Code) / 65536) - 6
+    float val = (125.0f * raw) / 65536.0f - 6.0f;
     
-    humidity = -999.0;
-    return false;
+    // Clamp 0-100%
+    if (val < 0.0f) val = 0.0f;
+    if (val > 100.0f) val = 100.0f;
+    
+    humidity = val;
+    return true;
 }
 
 bool SI7021::readTemperature(float& temperature) {
-    _wire->beginTransmission(_addr);
-    _wire->write(SI7021_CMD_MEASURE_T_NOHOLD);
-    if (_wire->endTransmission() != 0) {
-        temperature = -999.0;
-        return false;
-    }
-    
-    delay(50); 
+    uint16_t raw = _readSensorData(CMD_MEASURE_TEMP_NOHOLD);
+    if (raw == 0xFFFF) return false;
 
-    uint8_t retries = 10;
-    while (retries-- > 0) {
-        // [FIX CRÍTICO] Ping antes de ler
-        _wire->beginTransmission(_addr);
-        if (_wire->endTransmission() == 0) {
-            if (_wire->requestFrom(_addr, (uint8_t)2) == 2) {
-                uint16_t rawTemp = (_wire->read() << 8) | _wire->read();
-                temperature = ((175.72 * rawTemp) / 65536.0) - 46.85;
-                return true;
-            }
-        }
-        delay(10);
-    }
-    
-    temperature = -999.0;
-    return false;
+    // Fórmula Datasheet: Temp = ((175.72 * Code) / 65536) - 46.85
+    temperature = (175.72f * raw) / 65536.0f - 46.85f;
+    return true;
 }
 
-void SI7021::reset() {
-    _writeCommand(SI7021_CMD_SOFT_RESET);
-    delay(20);
-}
-
-bool SI7021::_verifyPresence() {
-    _wire->beginTransmission(_addr);
+bool SI7021::isSensorPresent() {
+    _wire->beginTransmission(I2C_ADDR);
     return (_wire->endTransmission() == 0);
 }
 
+uint8_t SI7021::getDeviceID() {
+    // Leitura simplificada do User Register para confirmar comunicação
+    _wire->beginTransmission(I2C_ADDR);
+    _wire->write(CMD_READ_USER_REG);
+    if (_wire->endTransmission() != 0) return 0;
+
+    _wire->requestFrom(I2C_ADDR, (uint8_t)1);
+    if (_wire->available()) return _wire->read();
+    return 0;
+}
+
+// === Métodos Privados ===
+
 bool SI7021::_writeCommand(uint8_t cmd) {
-    _wire->beginTransmission(_addr);
+    _wire->beginTransmission(I2C_ADDR);
     _wire->write(cmd);
     return (_wire->endTransmission() == 0);
 }
 
-bool SI7021::_readBytes(uint8_t* buf, size_t len) {
-    if (_wire->requestFrom(_addr, (uint8_t)len) == len) {
-        for (size_t i = 0; i < len; i++) buf[i] = _wire->read();
-        return true;
-    }
-    return false;
-}
+uint16_t SI7021::_readSensorData(uint8_t cmd) {
+    // 1. Enviar comando de leitura (No Hold)
+    if (!_writeCommand(cmd)) return 0xFFFF;
 
-bool SI7021::_readRegister(uint8_t cmd, uint8_t* data, size_t len) {
-    if (!_writeCommand(cmd)) return false;
-    delay(10);
-    return _readBytes(data, len);
+    // 2. Aguardar conversão (Datasheet Max: 12ms para RH, 10.8ms para Temp)
+    delay(25); 
+
+    // 3. Polling seguro: "Ping" antes de ler para evitar travar o barramento
+    // Tenta até 10 vezes verificar se o sensor já terminou (ACK)
+    bool ready = false;
+    for (uint8_t i = 0; i < 10; i++) {
+        _wire->beginTransmission(I2C_ADDR);
+        if (_wire->endTransmission() == 0) {
+            ready = true;
+            break;
+        }
+        delay(5);
+    }
+
+    if (!ready) return 0xFFFF;
+
+    // 4. Ler dados (2 bytes: MSB, LSB) - ignorando Checksum por enquanto
+    if (_wire->requestFrom(I2C_ADDR, (uint8_t)2) != 2) return 0xFFFF;
+    
+    uint8_t msb = _wire->read();
+    uint8_t lsb = _wire->read();
+
+    return (msb << 8) | lsb;
 }
