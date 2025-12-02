@@ -1,227 +1,176 @@
 /**
  * @file StorageManager.cpp
- * @brief Implementação do gerenciador de armazenamento - COM RTC
- * @version 1.2.0
- * @date 2025-11-12
- * 
- * CHANGELOG v1.2.0:
- * - Corrigido header CSV com ISO8601 timestamp
- * - Removido uso de métodos inexistentes do RTCManager
- * - Padronizado uso de getDateTime() e getUnixTime()
- * - Corrigido buffer overflow em _telemetryToCSV
- * - Adicionada injeção de dependência do RTCManager
+ * @brief Implementação robusta do Storage com Hot-Swap
  */
 
 #include "StorageManager.h"
 #include "core/RTCManager/RTCManager.h"
 
+// Instância global SPI para o SD (HSPI no ESP32)
 SPIClass spiSD(HSPI);
 
 StorageManager::StorageManager() :
     _available(false),
-    _rtcManager(nullptr)
+    _rtcManager(nullptr),
+    _lastInitAttempt(0)
 {
 }
 
 bool StorageManager::begin() {
     DEBUG_PRINTLN("[StorageManager] Inicializando SD Card...");
     
-    // Configurar SPI para SD Card
+    // Configura SPI apenas uma vez
     spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
     
-    // Inicializar SD Card
     if (!SD.begin(SD_CS, spiSD)) {
-        DEBUG_PRINTLN("[StorageManager] ERRO: Falha ao inicializar SD Card!");
+        DEBUG_PRINTLN("[StorageManager] ERRO: Falha ao montar SD Card.");
         _available = false;
         return false;
     }
     
     uint8_t cardType = SD.cardType();
-    
     if (cardType == CARD_NONE) {
-        DEBUG_PRINTLN("[StorageManager] ERRO: Nenhum cartão SD detectado!");
+        DEBUG_PRINTLN("[StorageManager] ERRO: Nenhum cartão conectado.");
         _available = false;
         return false;
     }
     
-    // Exibir informações do SD Card
-    DEBUG_PRINT("[StorageManager] Tipo de cartão: ");
-    if (cardType == CARD_MMC) {
-        DEBUG_PRINTLN("MMC");
-    } else if (cardType == CARD_SD) {
-        DEBUG_PRINTLN("SDSC");
-    } else if (cardType == CARD_SDHC) {
-        DEBUG_PRINTLN("SDHC");
-    } else {
-        DEBUG_PRINTLN("UNKNOWN");
-    }
-    
     uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-    DEBUG_PRINTF("[StorageManager] Tamanho do cartão: %llu MB\n", cardSize);
+    DEBUG_PRINTF("[StorageManager] Cartão montado: %llu MB\n", cardSize);
     
     _available = true;
     
-    // Criar arquivos se não existirem
+    // Garante que arquivos existem e escreve headers se necessário
     createTelemetryFile();
     createMissionFile();
     
     return true;
 }
 
-// ✅ NOVO: Injeção de dependência do RTCManager
 void StorageManager::setRTCManager(RTCManager* rtcManager) {
     _rtcManager = rtcManager;
-    DEBUG_PRINTLN("[StorageManager] RTCManager vinculado");
 }
 
-bool StorageManager::saveTelemetry(const TelemetryData& data) {
-    if (!_available) return false;
+// === Lógica de Recuperação (Hot-Swap) ===
+void StorageManager::_attemptRecovery() {
+    if (_available) return; // Já está online
     
-    // Verificar tamanho do arquivo
+    unsigned long now = millis();
+    if (now - _lastInitAttempt < REINIT_INTERVAL) return; // Aguarda intervalo
+    
+    _lastInitAttempt = now;
+    DEBUG_PRINTLN("[StorageManager] Tentando reconectar SD Card...");
+    
+    SD.end(); // Finaliza instância anterior
+    if (begin()) {
+        DEBUG_PRINTLN("[StorageManager] RECUPERADO COM SUCESSO!");
+    }
+}
+
+// === Salvamento de Dados ===
+
+bool StorageManager::saveTelemetry(const TelemetryData& data) {
+    // Tenta recuperar se estiver offline
+    if (!_available) {
+        _attemptRecovery();
+        if (!_available) return false;
+    }
+    
+    // Verifica tamanho e rotaciona se necessário
     _checkFileSize(SD_LOG_FILE);
     
-    // Abrir arquivo
     File file = SD.open(SD_LOG_FILE, FILE_APPEND);
     if (!file) {
-        DEBUG_PRINTLN("[StorageManager] ERRO: Não foi possível abrir arquivo de telemetria");
+        DEBUG_PRINTLN("[StorageManager] ERRO: Falha de escrita (Telemetria). SD removido?");
+        _available = false; // Marca como falha para tentar recuperar na próxima
         return false;
     }
     
-    // Escrever linha CSV
-    String csvLine = _telemetryToCSV(data);
-    file.println(csvLine);
-    
+    file.println(_telemetryToCSV(data));
     file.close();
     
     return true;
 }
 
 bool StorageManager::saveMissionData(const MissionData& data) {
-    if (!_available) return false;
+    if (!_available) {
+        _attemptRecovery();
+        if (!_available) return false;
+    }
     
-    // Verificar tamanho do arquivo
     _checkFileSize(SD_MISSION_FILE);
     
-    // Abrir arquivo
     File file = SD.open(SD_MISSION_FILE, FILE_APPEND);
     if (!file) {
-        DEBUG_PRINTLN("[StorageManager] ERRO: Não foi possível abrir arquivo de missão");
+        DEBUG_PRINTLN("[StorageManager] ERRO: Falha de escrita (Missão).");
+        _available = false;
         return false;
     }
     
-    // Escrever linha CSV
-    String csvLine = _missionToCSV(data);
-    file.println(csvLine);
-    
+    file.println(_missionToCSV(data));
     file.close();
     
     return true;
 }
 
-// ✅ CORRIGIDO: Apenas usa getDateTime()
 bool StorageManager::logError(const String& errorMsg) {
-    if (!_available) return false;
+    if (!_available) return false; // Erros não forçam recuperação para evitar loops
     
     File file = SD.open(SD_ERROR_FILE, FILE_APPEND);
     if (!file) return false;
     
-    String timestamp;
-    
-    if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-        timestamp = _rtcManager->getDateTime();
-    } else {
-        timestamp = String(millis());
-    }
-    
-    String logLine = "[" + timestamp + "] " + errorMsg;
+    String logLine = "[" + _getTimestampStr() + "] " + errorMsg;
     file.println(logLine);
-    
     file.close();
-    
-    DEBUG_PRINTF("[StorageManager] Erro registrado: %s\n", errorMsg.c_str());
     
     return true;
 }
 
-// ✅ CORRIGIDO: Header CSV com ISO8601
+// === Gerenciamento de Arquivos ===
+
 bool StorageManager::createTelemetryFile() {
-    if (!_available) return false;
+    if (SD.exists(SD_LOG_FILE)) return true;
     
-    // Verificar se arquivo já existe
-    if (SD.exists(SD_LOG_FILE)) {
-        DEBUG_PRINTLN("[StorageManager] Arquivo de telemetria já existe");
-        return true;
-    }
-    
-    // Criar arquivo com header CSV
     File file = SD.open(SD_LOG_FILE, FILE_WRITE);
-    if (!file) {
-        DEBUG_PRINTLN("[StorageManager] ERRO: Não foi possível criar arquivo de telemetria");
-        return false;
-    }
+    if (!file) return false;
     
-    // ✅ HEADER CSV COMPLETO COM ISO8601
-    file.print("ISO8601,");              // ✅ ADICIONADO
-    file.print("UnixTimestamp,");
-    file.print("MissionTime,");
-    file.print("BatteryVoltage,");
-    file.print("BatteryPercentage,");
-    file.print("TempBMP280,");
-    file.print("TempSI7021,");
-    file.print("TempDelta,");
-    file.print("Pressure,");
-    file.print("Altitude,");
-    file.print("GyroX,");
-    file.print("GyroY,");
-    file.print("GyroZ,");
-    file.print("AccelX,");
-    file.print("AccelY,");
-    file.print("AccelZ,");
-    file.print("Humidity,");
-    file.print("CO2,");
-    file.print("TVOC,");
-    file.print("MagX,");
-    file.print("MagY,");
-    file.print("MagZ,");
-    file.print("Status,");
-    file.print("Errors,");
-    file.println("Payload");
+    // Header rigorosamente alinhado com _telemetryToCSV
+    file.print("ISO8601,UnixTimestamp,MissionTime,");
+    file.print("BatVoltage,BatPercent,");
+    file.print("TempFinal,TempBMP,TempSI,Pressure,Altitude,");
+    file.print("GyroX,GyroY,GyroZ,AccelX,AccelY,AccelZ,MagX,MagY,MagZ,");
+    file.print("Humidity,CO2,TVOC,");
+    file.println("Status,Errors,Payload");
     
     file.close();
-    
-    DEBUG_PRINTLN("[StorageManager] Arquivo de telemetria criado com sucesso");
-    
     return true;
 }
 
-// ✅ CORRIGIDO: Header CSV com ISO8601
 bool StorageManager::createMissionFile() {
-    if (!_available) return false;
+    if (SD.exists(SD_MISSION_FILE)) return true;
     
-    // Verificar se arquivo já existe
-    if (SD.exists(SD_MISSION_FILE)) {
-        DEBUG_PRINTLN("[StorageManager] Arquivo de missão já existe");
-        return true;
-    }
-    
-    // Criar arquivo com header CSV
     File file = SD.open(SD_MISSION_FILE, FILE_WRITE);
-    if (!file) {
-        DEBUG_PRINTLN("[StorageManager] ERRO: Não foi possível criar arquivo de missão");
-        return false;
-    }
+    if (!file) return false;
     
-    // ✅ HEADER COM ISO8601
-    file.println("ISO8601,UnixTimestamp,SoilMoisture,AmbientTemp,Humidity,IrrigationStatus,RSSI,SNR,PacketsReceived,PacketsLost,LastRx");
+    file.println("ISO8601,UnixTimestamp,NodeID,SoilMoisture,AmbTemp,Humidity,Irrigation,RSSI,SNR,PktsRx,PktsLost,LastRx");
     
     file.close();
-    
-    DEBUG_PRINTLN("[StorageManager] Arquivo de missão criado");
     return true;
 }
 
-bool StorageManager::isAvailable() {
-    return _available;
+void StorageManager::listFiles() {
+    if (!_available) return;
+    
+    DEBUG_PRINTLN("[StorageManager] --- Arquivos no SD ---");
+    File root = SD.open("/");
+    File file = root.openNextFile();
+    while (file) {
+        if (!file.isDirectory()) {
+            DEBUG_PRINTF("  %s (%u bytes)\n", file.name(), file.size());
+        }
+        file = root.openNextFile();
+    }
+    DEBUG_PRINTLN("---------------------------");
 }
 
 uint64_t StorageManager::getFreeSpace() {
@@ -234,202 +183,101 @@ uint64_t StorageManager::getUsedSpace() {
     return SD.usedBytes();
 }
 
-void StorageManager::listFiles() {
-    if (!_available) return;
-    
-    DEBUG_PRINTLN("[StorageManager] Arquivos no SD Card:");
-    
-    File root = SD.open("/");
-    File file = root.openNextFile();
-    
-    while (file) {
-        DEBUG_PRINTF("  %s - %d bytes\n", file.name(), file.size());
-        file = root.openNextFile();
+// === Helpers Privados ===
+
+String StorageManager::_getTimestampStr() {
+    if (_rtcManager && _rtcManager->isInitialized()) {
+        return _rtcManager->getDateTime();
     }
+    return String(millis());
 }
 
-// ============================================================================
-// MÉTODOS PRIVADOS
-// ============================================================================
-
-File StorageManager::_openFile(const char* path) {
-    return SD.open(path, FILE_APPEND);
-}
-
-// ✅ CORRIGIDO: Usa getDateTime() para backup
 bool StorageManager::_checkFileSize(const char* path) {
     if (!SD.exists(path)) return false;
     
     File file = SD.open(path, FILE_READ);
-    if (!file) return false;
-    
-    size_t fileSize = file.size();
+    size_t size = file.size();
     file.close();
     
-    if (fileSize > SD_MAX_FILE_SIZE) {
-        DEBUG_PRINTF("[StorageManager] Arquivo %s excedeu tamanho máximo. Rotacionando...\n", path);
+    if (size > SD_MAX_FILE_SIZE) {
+        String timestamp = _getTimestampStr();
+        timestamp.replace(" ", "_");
+        timestamp.replace(":", "-");
         
-        String backupPath;
+        String backup = String(path) + "." + timestamp + ".bak";
+        SD.rename(path, backup.c_str());
+        DEBUG_PRINTF("[StorageManager] Rotacionado: %s -> %s\n", path, backup.c_str());
         
-        if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-            // Extrair apenas a data (primeiros 10 caracteres de "YYYY-MM-DD HH:MM:SS")
-            String dateTime = _rtcManager->getDateTime();
-            String dateOnly = dateTime.substring(0, 10);  // "YYYY-MM-DD"
-            dateOnly.replace("-", "");                     // "YYYYMMDD"
-            
-            backupPath = String(path) + "." + dateOnly + ".bak";
-        } else {
-            backupPath = String(path) + "." + String(millis()) + ".bak";
-        }
-        
-        if (SD.exists(backupPath.c_str())) {
-            SD.remove(backupPath.c_str());
-        }
-        
-        SD.rename(path, backupPath.c_str());
-        
-        DEBUG_PRINTF("[StorageManager] Arquivo rotacionado para: %s\n", backupPath.c_str());
-        
-        // Recriar arquivo com header
-        if (strcmp(path, SD_LOG_FILE) == 0) {
-            createTelemetryFile();
-        } else if (strcmp(path, SD_MISSION_FILE) == 0) {
-            createMissionFile();
-        }
+        // Recria header
+        if (strcmp(path, SD_LOG_FILE) == 0) createTelemetryFile();
+        else createMissionFile();
     }
-    
     return true;
 }
 
-// ✅ CORRIGIDO: Buffer expandido e formatação correta
 String StorageManager::_telemetryToCSV(const TelemetryData& data) {
-    char csvBuffer[600];  // ✅ Aumentado de 512 para 600 bytes
+    char buffer[512];
     
-    // ========================================
-    // TIMESTAMP ISO8601
-    // ========================================
-    String iso8601 = "N/A";
-    if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-        iso8601 = _rtcManager->getDateTime();
-    }
+    // Formatação segura de floats para evitar NAN quebrando o CSV
+    auto safeF = [](float v) { return isnan(v) ? 0.0f : v; };
     
-    // ========================================
-    // TEMPERATURA DELTA
-    // ========================================
-    float tempDelta = 0.0;
-    if (!isnan(data.temperature) && !isnan(data.temperatureSI)) {
-        tempDelta = data.temperature - data.temperatureSI;
-    }
-    
-    // ========================================
-    // PREPARAR STRINGS TEMPORÁRIAS
-    // ========================================
+    // Helpers de string
+    String ts = _getTimestampStr();
     String tempSI = isnan(data.temperatureSI) ? "" : String(data.temperatureSI, 2);
-    String delta = (isnan(data.temperature) || isnan(data.temperatureSI)) ? "" : String(tempDelta, 2);
-    String hum = isnan(data.humidity) ? "" : String(data.humidity, 2);
-    String co2 = isnan(data.co2) ? "" : String(data.co2, 0);
-    String tvoc = isnan(data.tvoc) ? "" : String(data.tvoc, 0);
-    String magX = isnan(data.magX) ? "" : String(data.magX, 2);
-    String magY = isnan(data.magY) ? "" : String(data.magY, 2);
-    String magZ = isnan(data.magZ) ? "" : String(data.magZ, 2);
+    String hum = isnan(data.humidity) ? "" : String(data.humidity, 1);
     
-    // ========================================
-    // FORMATAR CSV COMPLETO
-    // ========================================
-    snprintf(csvBuffer, sizeof(csvBuffer),
-        "%s,"           // ISO8601 timestamp
-        "%lu,"          // Unix timestamp
-        "%lu,"          // Mission time
-        "%.2f,"         // Battery voltage
-        "%.1f,"         // Battery percentage
-        "%.2f,"         // Temperature BMP280
-        "%s,"           // Temperature SI7021
-        "%s,"           // Temperature delta
-        "%.2f,"         // Pressure
-        "%.1f,"         // Altitude
-        "%.4f,"         // GyroX
-        "%.4f,"         // GyroY
-        "%.4f,"         // GyroZ
-        "%.4f,"         // AccelX
-        "%.4f,"         // AccelY
-        "%.4f,"         // AccelZ
-        "%s,"           // Humidity
-        "%s,"           // CO2
-        "%s,"           // TVOC
-        "%s,"           // MagX
-        "%s,"           // MagY
-        "%s,"           // MagZ
-        "%d,"           // System status
-        "%d,"           // Error count
-        "%s",           // Payload
+    snprintf(buffer, sizeof(buffer),
+        "%s,%lu,%lu,"           // Time
+        "%.2f,%.1f,"            // Power
+        "%.2f,%.2f,%s,%.2f,%.1f," // Env (Final, BMP, SI, Press, Alt)
+        "%.2f,%.2f,%.2f,"       // Gyro
+        "%.2f,%.2f,%.2f,"       // Accel
+        "%.1f,%.1f,%.1f,"       // Mag
+        "%s,%.0f,%.0f,"         // Quality (Hum, CO2, TVOC)
+        "0x%02X,%d,%s",         // Sys
         
-        // ✅ VALORES
-        iso8601.c_str(),
-        (unsigned long)data.timestamp,
+        ts.c_str(), 
+        (unsigned long)data.timestamp, 
         (unsigned long)data.missionTime,
-        data.batteryVoltage,
+        
+        data.batteryVoltage, 
         data.batteryPercentage,
-        data.temperature,
-        tempSI.c_str(),
-        delta.c_str(),
-        data.pressure,
-        data.altitude,
-        data.gyroX,
-        data.gyroY,
-        data.gyroZ,
-        data.accelX,
-        data.accelY,
-        data.accelZ,
-        hum.c_str(),
-        co2.c_str(),
-        tvoc.c_str(),
-        magX.c_str(),
-        magY.c_str(),
-        magZ.c_str(),
-        data.systemStatus,
-        data.errorCount,
+        
+        safeF(data.temperature), 
+        safeF(data.temperatureBMP), 
+        tempSI.c_str(), 
+        safeF(data.pressure), 
+        safeF(data.altitude),
+        
+        safeF(data.gyroX), safeF(data.gyroY), safeF(data.gyroZ),
+        safeF(data.accelX), safeF(data.accelY), safeF(data.accelZ),
+        safeF(data.magX), safeF(data.magY), safeF(data.magZ),
+        
+        hum.c_str(), 
+        safeF(data.co2), 
+        safeF(data.tvoc),
+        
+        data.systemStatus, 
+        data.errorCount, 
         data.payload
     );
     
-    return String(csvBuffer);
+    return String(buffer);
 }
 
 String StorageManager::_missionToCSV(const MissionData& data) {
-    char csvBuffer[256];
+    char buffer[256];
+    String ts = _getTimestampStr();
     
-    String iso8601 = "N/A";
-    uint32_t unixTime = millis();
-    
-    if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
-        iso8601 = _rtcManager->getDateTime();
-        unixTime = _rtcManager->getUnixTime();
-    }
-    
-    snprintf(csvBuffer, sizeof(csvBuffer),
-        "%s,"       // ISO8601
-        "%lu,"      // UnixTimestamp
-        "%.2f,"     // SoilMoisture
-        "%.2f,"     // AmbientTemp
-        "%.2f,"     // Humidity
-        "%d,"       // IrrigationStatus
-        "%d,"       // RSSI
-        "%.2f,"     // SNR
-        "%d,"       // PacketsReceived
-        "%d,"       // PacketsLost
-        "%lu",      // LastRx
+    snprintf(buffer, sizeof(buffer),
+        "%s,%lu,"
+        "%u,%.1f,%.1f,%.1f,%d,"
+        "%d,%.2f,%u,%u,%lu",
         
-        iso8601.c_str(),
-        unixTime,
-        data.soilMoisture,
-        data.ambientTemp,
-        data.humidity,
-        data.irrigationStatus,
-        data.rssi,
-        data.snr,
-        data.packetsReceived,
-        data.packetsLost,
-        data.lastLoraRx
+        ts.c_str(), (unsigned long)(_rtcManager ? _rtcManager->getUnixTime() : millis()/1000),
+        data.nodeId, data.soilMoisture, data.ambientTemp, data.humidity, data.irrigationStatus,
+        data.rssi, data.snr, data.packetsReceived, data.packetsLost, data.lastLoraRx
     );
     
-    return String(csvBuffer);
+    return String(buffer);
 }

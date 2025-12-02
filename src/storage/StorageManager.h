@@ -1,7 +1,7 @@
 /**
  * @file StorageManager.h
- * @brief Gerenciador de armazenamento em SD Card
- * @version 1.2.0
+ * @brief Gerenciador de Armazenamento SD (Com Hot-Swap e Recuperação)
+ * @version 2.0.0
  */
 
 #ifndef STORAGEMANAGER_H
@@ -12,18 +12,19 @@
 #include <SPI.h>
 #include "config.h"
 
-class RTCManager;  // Forward declaration
+class RTCManager; // Forward declaration
 
 class StorageManager {
 public:
     StorageManager();
     
+    // Inicialização
     bool begin();
     
-    // ✅ NOVO: Injeção de dependência
+    // Injeção de dependência
     void setRTCManager(RTCManager* rtcManager);
     
-    // Armazenamento
+    // Armazenamento (Retorna true se salvou com sucesso)
     bool saveTelemetry(const TelemetryData& data);
     bool saveMissionData(const MissionData& data);
     bool logError(const String& errorMsg);
@@ -34,21 +35,24 @@ public:
     void listFiles();
     
     // Status
-    bool isAvailable();
+    bool isAvailable() const { return _available; }
     uint64_t getFreeSpace();
     uint64_t getUsedSpace();
     
-    void flush();
-
 private:
     bool _available;
-    RTCManager* _rtcManager;  // ✅ Ponteiro para RTCManager
+    RTCManager* _rtcManager;
     
-    // Métodos privados
-    File _openFile(const char* path);
+    // Controle de Recuperação (Hot-Swap)
+    unsigned long _lastInitAttempt;
+    static constexpr unsigned long REINIT_INTERVAL = 5000; // Tentar recuperar SD a cada 5s
+    
+    // Métodos internos
+    void _attemptRecovery();
     bool _checkFileSize(const char* path);
     String _telemetryToCSV(const TelemetryData& data);
     String _missionToCSV(const MissionData& data);
+    String _getTimestampStr();
 };
 
 #endif

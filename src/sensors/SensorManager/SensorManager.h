@@ -1,20 +1,16 @@
 /**
  * @file SensorManager.h
- * @brief Gerenciador centralizado de sensores com proteção Multitarefa (FreeRTOS)
- * @version 2.1.0
- * @date 2025-12-02
+ * @brief Gerenciador centralizado de sensores (Orquestrador)
+ * @details Coordena o acesso ao barramento I2C e delega funções para os Managers específicos.
  */
-
 
 #ifndef SENSORMANAGER_H
 #define SENSORMANAGER_H
-
 
 #include <Arduino.h>
 #include <Wire.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-
 
 // Includes dos Managers Específicos
 #include "sensors/MPU9250Manager/MPU9250Manager.h"
@@ -23,14 +19,11 @@
 #include "sensors/CCS811Manager/CCS811Manager.h"
 #include "config.h"
 
-
 class SensorManager {
 public:
     SensorManager();
 
-
     bool begin();
-
 
     // ========================================
     // Ciclos de Atualização
@@ -40,22 +33,21 @@ public:
     void updateHealth();  // Health check/reset
     void update();        // Wrapper geral
 
-
     // ========================================
     // Controle e Reset
     // ========================================
     void reset();
     void resetAll();
 
-
     // ========================================
-    // Comandos de calibração
+    // Comandos de calibração / Configuração
     // ========================================
     bool recalibrateMagnetometer();
     void clearMagnetometerCalibration();
     void printMagnetometerCalibration() const;
     void getMagnetometerOffsets(float& x, float& y, float& z) const;
     
+    // CCS811
     bool applyCCS811EnvironmentalCompensation(float temperature, float humidity);
     bool saveCCS811Baseline();
     bool restoreCCS811Baseline();
@@ -66,12 +58,13 @@ public:
     uint8_t getSensorCount() const { return _sensorCount; }
     uint8_t getOnlineSensors() const;
     
+    // Status Individuais
     bool isMPU9250Online() const { return _mpu9250.isOnline(); }
     bool isBMP280Online() const { return _bmp280.isOnline(); }
     bool isSI7021Online() const { return _si7021.isOnline(); }
     bool isCCS811Online() const { return _ccs811.isOnline(); }
 
-
+    // Status Avançados
     bool isMagnetometerCalibrated() const { return _mpu9250.isCalibrated(); }
     bool isCCS811WarmupComplete() const { return _ccs811.isWarmupComplete(); }
     bool isCCS811DataReliable() const { return _ccs811.isDataReliable(); }
@@ -109,7 +102,7 @@ public:
     
     // CCS811
     uint16_t geteCO2() const { return _ccs811.geteCO2(); }
-    uint16_t getCO2() const { return _ccs811.geteCO2(); }
+    uint16_t getCO2() const { return _ccs811.geteCO2(); } // Alias
     uint16_t getTVOC() const { return _ccs811.getTVOC(); }
     
     // RAW DATA (MPU9250)
@@ -117,7 +110,7 @@ public:
                     float& ax, float& ay, float& az,
                     float& mx, float& my, float& mz) const;
     
-    // Acesso direto aos managers
+    // Acesso direto aos managers (se necessário)
     MPU9250Manager& getMPU9250() { return _mpu9250; }
     BMP280Manager& getBMP280() { return _bmp280; }
     SI7021Manager& getSI7021() { return _si7021; }
@@ -129,23 +122,20 @@ private:
     SI7021Manager _si7021;
     CCS811Manager _ccs811;
     
-    // Controle de fluxo e erro
+    // Controle
     uint8_t _sensorCount;
     unsigned long _lastEnvCompensation;
     unsigned long _lastHealthCheck;
     uint8_t _consecutiveFailures;
     float _temperature; 
 
-
-    // Variáveis do Mutex (FreeRTOS)
+    // Mutex (FreeRTOS)
     SemaphoreHandle_t _i2cMutex;
-
 
     // Constantes
     static constexpr unsigned long ENV_COMPENSATION_INTERVAL = 60000;  // 60s
     static constexpr unsigned long HEALTH_CHECK_INTERVAL = 30000;      // 30s
     static constexpr uint8_t MAX_CONSECUTIVE_FAILURES = 10;
-
 
     // Métodos privados
     void _autoApplyEnvironmentalCompensation();
@@ -156,6 +146,5 @@ private:
     bool _lockI2C();
     void _unlockI2C();
 };
-
 
 #endif // SENSORMANAGER_H
