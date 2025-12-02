@@ -1,3 +1,8 @@
+/**
+ * @file RTCManager.h
+ * @brief Gerenciador de Tempo (RTC DS3231 + NTP)
+ */
+
 #ifndef RTC_MANAGER_H
 #define RTC_MANAGER_H
 
@@ -5,56 +10,45 @@
 #include <RTClib.h>
 #include <Wire.h>
 
-// ✅ DEFINES NO HEADER - visíveis em todos .cpp
-#define DATETIME_BUFFER_SIZE    24
-#define RTC_I2C_TIMEOUT_MS      100
-#define DS3231_ADDRESS          0x68
-
-#ifndef RTC_TIMEZONE_OFFSET
-#define RTC_TIMEZONE_OFFSET     (-3 * 3600)  // Brasil -3 UTC
-#endif
-
-#ifndef NTP_SERVER_PRIMARY
-#define NTP_SERVER_PRIMARY      "pool.ntp.org"
-#endif
-#ifndef NTP_SERVER_SECONDARY
-#define NTP_SERVER_SECONDARY    "time.nist.gov"
-#endif
-
 class RTCManager {
 public:
     RTCManager();
+    
+    // Inicialização
     bool begin(TwoWire* wire = &Wire);
+    void update();
+
+    // Sincronização
     bool syncWithNTP();
     
+    // Status
     bool isInitialized() const;
-    String getDateTime();           // ✅ Original API
-    uint32_t getUnixTime();         // ✅ Original API
     
-    // ✅ Helpers para TelemetryManager (compatibilidade)
-    String getUTCDateTime() { return getDateTime(); }  // Alias
-    String getLocalDateTime() { return getDateTime(); } // Alias
-    void update() {}  // No-op para compatibilidade
-    
+    // Getters de Tempo
+    String getDateTime();           // Local
+    String getUTCDateTime();        // UTC
+    uint32_t getUnixTime();         // Epoch UTC
+    DateTime getNow();
+
+    // Alias de compatibilidade para MissionController
+    String getLocalDateTime() { return getDateTime(); } 
+
 private:
     RTC_DS3231 _rtc;
     TwoWire* _wire;
     bool _initialized;
     bool _lost_power;
-    mutable char _datetime_buffer[DATETIME_BUFFER_SIZE];
     
+    // Configurações
+    static constexpr uint8_t DS3231_ADDR = 0x68;
+    static constexpr long GMT_OFFSET_SEC = -3 * 3600; // UTC-3
+    static constexpr int  DAYLIGHT_OFFSET_SEC = 0;
+    static constexpr const char* NTP_SERVER_1 = "pool.ntp.org";
+    static constexpr const char* NTP_SERVER_2 = "time.nist.gov";
+    
+    // Helpers
     bool _detectRTC();
-    time_t _applyOffset(time_t utcTime) const;
+    void _syncSystemToRTC();
 };
-
-// ✅ Inline com define disponível
-inline uint32_t RTCManager::getUnixTime() {
-    if (!_initialized) return 0;
-    return static_cast<uint32_t>(_rtc.now().unixtime() + RTC_TIMEZONE_OFFSET);
-}
-
-inline bool RTCManager::isInitialized() const {
-    return _initialized && !_lost_power;
-}
 
 #endif

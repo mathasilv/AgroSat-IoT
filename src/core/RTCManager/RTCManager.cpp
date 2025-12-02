@@ -1,169 +1,135 @@
+/**
+ * @file RTCManager.cpp
+ * @brief Implementação Robusta do RTCManager
+ */
+
 #include "RTCManager.h"
+#include "config.h" // ✅ Necessário para DEBUG_PRINTLN
 #include <WiFi.h>
-#include <time.h>
-#include "config.h"
+#include "time.h"
 
 RTCManager::RTCManager() : _wire(nullptr), _initialized(false), _lost_power(true) {}
 
 bool RTCManager::begin(TwoWire* wire) {
     _wire = wire;
-    _wire->setTimeOut(RTC_I2C_TIMEOUT_MS);
-    _wire->clearWriteError();
-    delay(100);
     
-    bool rtcDetected = false;
-    for (uint8_t attempt = 1; attempt <= 3; attempt++) {
-        DEBUG_PRINTF("[RTC] Tentativa %d/3...\n", attempt);
-        if (_detectRTC()) {
-            rtcDetected = true;
-            DEBUG_PRINTLN("[RTC] DS3231 detectado");
-            break;
-        }
-        if (attempt < 3) delay(500);
-    }
-    
-    if (!rtcDetected) {
-        DEBUG_PRINTLN("[RTC] DS3231 nao encontrado");
+    if (!_detectRTC()) {
+        DEBUG_PRINTLN("[RTC] ERRO: DS3231 não detectado.");
         return false;
     }
     
-    delay(500);
-    if (!_rtc.begin()) {
-        _initialized = true;
-        _rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-        DEBUG_PRINTLN("[RTC] Inicializado manualmente");
-        return true;
-    }
-    
-    _lost_power = _rtc.lostPower();
-    if (_lost_power) {
-        DEBUG_PRINTLN("[RTC] Bateria perdida - ajustando compile time");
-        _rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    if (!_rtc.begin(wire)) {
+        DEBUG_PRINTLN("[RTC] ERRO: Falha no driver RTC.");
+        return false;
     }
     
     _initialized = true;
-    
-    DateTime now = _rtc.now();
-    if (now.year() < 2020 || now.year() > 2100) {
-        DEBUG_PRINTF("[RTC] Data invalida: %d\n", now.year());
+    _lost_power = _rtc.lostPower();
+
+    if (_lost_power) {
+        DEBUG_PRINTLN("[RTC] Bateria perdida! Ajustando tempo...");
         _rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     }
     
-    DEBUG_PRINTF("[RTC] OK: %s (unix: %lu)\n", getDateTime().c_str(), getUnixTime());
+    _syncSystemToRTC();
+    
+    DEBUG_PRINTF("[RTC] Online. Local: %s\n", getDateTime().c_str());
     return true;
 }
 
-String RTCManager::getDateTime() {
-    if (!_initialized) {
-        strcpy(_datetime_buffer, "1970-01-01 00:00:00");
-        return String(_datetime_buffer);
-    }
-    
-    time_t utcTime = _rtc.now().unixtime();
-    time_t localTime = _applyOffset(utcTime);
-    
-    struct tm timeinfo;
-    localtime_r(&localTime, &timeinfo);
-    
-    snprintf(_datetime_buffer, sizeof(_datetime_buffer),
-             "%04d-%02d-%02d %02d:%02d:%02d",
-             timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-             timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-    
-    return String(_datetime_buffer);
-}
+void RTCManager::update() {}
 
 bool RTCManager::syncWithNTP() {
-    if (!_initialized) {
-        DEBUG_PRINTLN("[RTC] RTC nao inicializado - impossivel sincronizar");
-        return false;
-    }
-
     if (WiFi.status() != WL_CONNECTED) {
-        DEBUG_PRINTLN("[RTC] WiFi desconectado - impossivel sincronizar NTP");
+        DEBUG_PRINTLN("[RTC] NTP Falhou: Sem WiFi.");
         return false;
     }
 
-    DEBUG_PRINTLN("[RTC] ========================================");
-    DEBUG_PRINTLN("[RTC] SINCRONIZANDO COM NTP");
-    DEBUG_PRINTF("[RTC] Servidor primario: %s\n", NTP_SERVER_PRIMARY);
-    DEBUG_PRINTF("[RTC] Servidor secundario: %s\n", NTP_SERVER_SECONDARY);
-    DEBUG_PRINTLN("[RTC] ========================================");
+    DEBUG_PRINTLN("[RTC] Sincronizando NTP...");
+    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER_1, NTP_SERVER_2);
 
-    configTime(0, 0, NTP_SERVER_PRIMARY, NTP_SERVER_SECONDARY);
-
-    time_t   now = 0;
     struct tm timeinfo;
-    uint8_t  attempts = 0;
-
-    // Tempo máximo total de espera (ms)
-    const uint32_t MAX_WAIT_MS      = 20000;  // 20 s total
-    const uint32_t PER_CALL_TIMEOUT = 1000;   // 1 s por getLocalTime
-    const uint32_t RETRY_DELAY_MS   = 250;    // 0.25 s entre tentativas
-
-    uint32_t startMs = millis();
-
-    DEBUG_PRINTLN("[RTC] Aguardando resposta NTP...");
-    while (millis() - startMs < MAX_WAIT_MS) {
-        // getLocalTime com timeout curto para nao travar a task por muito tempo
-        if (getLocalTime(&timeinfo, PER_CALL_TIMEOUT)) {
-            time(&now);
-            if (now > 1704067200) { // ~2024-01-01, só pra filtrar datas zoadas
-                DEBUG_PRINTF("[RTC] NTP respondeu! UTC: %04d-%02d-%02d %02d:%02d:%02d\n",
-                             timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                             timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-                break;
-            }
+    uint32_t start = millis();
+    bool success = false;
+    
+    // Timeout de 5s para não travar o boot
+    while (millis() - start < 5000) {
+        if (getLocalTime(&timeinfo, 10)) {
+            success = true;
+            break;
         }
-
-        attempts++;
-        if (attempts % 5 == 0) {
-            DEBUG_PRINTF("[RTC] Tentativa %d (t=%lu ms)...\n",
-                         attempts, millis() - startMs);
-        }
-
-        delay(RETRY_DELAY_MS);  // cede CPU, alimenta WDT
+        delay(100);
     }
 
-    if (now <= 1704067200) {
-        DEBUG_PRINTLN("[RTC] TIMEOUT NTP (sem resposta valida em ~20s)");
-        return false;
-    }
-
-    // Salvar UTC no RTC
-    DateTime ntpTime(timeinfo.tm_year + 1900,
-                     timeinfo.tm_mon + 1,
-                     timeinfo.tm_mday,
-                     timeinfo.tm_hour,
-                     timeinfo.tm_min,
-                     timeinfo.tm_sec);
-
-    _rtc.adjust(ntpTime);
-    _lost_power = false;
-
-    DEBUG_PRINTLN("[RTC] ========================================");
-    DEBUG_PRINTLN("[RTC] SINCRONIZADO COM SUCESSO!");
-    DEBUG_PRINTF("[RTC] UTC armazenado: %04d-%02d-%02d %02d:%02d:%02d\n",
-                 timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                 timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-    DEBUG_PRINTF("[RTC] Hora local (BRT): %s\n", getDateTime().c_str());
-    DEBUG_PRINTF("[RTC] Unix timestamp: %lu\n", getUnixTime());
-    DEBUG_PRINTLN("[RTC] ========================================");
-
-    return true;
+    if (success) {
+        time_t now;
+        time(&now);
+        struct tm* tm_local = localtime(&now);
+        
+        // Ajusta o RTC com o tempo obtido do NTP
+        _rtc.adjust(DateTime(tm_local->tm_year + 1900, tm_local->tm_mon + 1, tm_local->tm_mday,
+                             tm_local->tm_hour, tm_local->tm_min, tm_local->tm_sec));
+                             
+        _lost_power = false;
+        DEBUG_PRINTF("[RTC] NTP OK: %s\n", getDateTime().c_str());
+        return true;
+    } 
+    
+    DEBUG_PRINTLN("[RTC] NTP Timeout.");
+    return false;
 }
 
+// === Getters ===
+
+String RTCManager::getDateTime() {
+    if (!_initialized) return "2000-01-01 00:00:00";
+    DateTime now = _rtc.now();
+    char buf[25];
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+             now.year(), now.month(), now.day(),
+             now.hour(), now.minute(), now.second());
+    return String(buf);
+}
+
+String RTCManager::getUTCDateTime() {
+    if (!_initialized) return "2000-01-01 00:00:00";
+    // RTC está em UTC-3. Para ter UTC, somamos o offset inverso (+3h)
+    // Opcionalmente, pode-se usar unix time.
+    uint32_t unix = _rtc.now().unixtime();
+    DateTime utc(unix - GMT_OFFSET_SEC); // Subtrai o offset negativo (soma)
+    
+    char buf[25];
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+             utc.year(), utc.month(), utc.day(),
+             utc.hour(), utc.minute(), utc.second());
+    return String(buf);
+}
+
+uint32_t RTCManager::getUnixTime() {
+    if (!_initialized) return 0;
+    // Retorna Unix Time UTC
+    return _rtc.now().unixtime() - GMT_OFFSET_SEC;
+}
+
+DateTime RTCManager::getNow() {
+    if (!_initialized) return DateTime((uint32_t)0); // ✅ Cast explícito para resolver ambiguidade
+    return _rtc.now();
+}
+
+bool RTCManager::isInitialized() const { return _initialized; }
+
+// === Privados ===
 
 bool RTCManager::_detectRTC() {
-    _wire->clearWriteError();
-    _wire->beginTransmission(DS3231_ADDRESS);
-    _wire->write(0x00);
-    if (_wire->endTransmission() != 0) return false;
-    
-    _wire->requestFrom(static_cast<uint8_t>(DS3231_ADDRESS), static_cast<uint8_t>(1));
-    return _wire->available() > 0;
+    _wire->beginTransmission(DS3231_ADDR);
+    return (_wire->endTransmission() == 0);
 }
 
-time_t RTCManager::_applyOffset(time_t utcTime) const {
-    return utcTime + RTC_TIMEZONE_OFFSET;
+void RTCManager::_syncSystemToRTC() {
+    if (!_initialized) return;
+    DateTime now = _rtc.now();
+    struct timeval tv;
+    tv.tv_sec = now.unixtime();
+    tv.tv_usec = 0;
+    settimeofday(&tv, NULL);
 }

@@ -1,3 +1,8 @@
+/**
+ * @file PowerManager.h
+ * @brief Gerenciador de Energia com Histerese e Filtro
+ */
+
 #ifndef POWER_MANAGER_H
 #define POWER_MANAGER_H
 
@@ -11,29 +16,39 @@ public:
     bool begin();
     void update();
 
-    float getVoltage();
-    float getPercentage();
+    float getVoltage() const { return _voltage; }
+    float getPercentage() const { return _percentage; }
 
-    bool isCritical();
-    bool isLow();
+    // Status com Histerese
+    bool isCritical() const { return _isCritical; }
+    bool isLow() const { return _isLow; }
 
+    // Controle de Energia
     void enablePowerSave();
     void disablePowerSave();
-
-    void getStatistics(float& avgVoltage, float& minVoltage, float& maxVoltage);
 
 private:
     float _voltage;
     float _percentage;
-    float _avgVoltage;
-    float _minVoltage;
-    float _maxVoltage;
-    uint32_t _lastReadTime;
-    uint16_t _sampleCount;
+    
+    // Flags de Estado (Histerese)
+    bool _isCritical;
+    bool _isLow;
     bool _powerSaveEnabled;
 
+    // Filtro
+    float _avgVoltage;
+    uint32_t _lastUpdate;
+    
+    // Configurações Internas
+    static constexpr uint32_t UPDATE_INTERVAL = 1000;
+    
+    // Histerese (Margem de recuperação)
+    static constexpr float HYSTERESIS = 0.1f; // 0.1V
+
     float _readVoltage();
-    float _voltageToPercentage(float voltage);
+    float _calculatePercentage(float voltage);
+    void _updateStatus(float voltage);
 };
 
-#endif // POWER_MANAGER_H
+#endif

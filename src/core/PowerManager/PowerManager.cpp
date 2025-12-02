@@ -1,104 +1,103 @@
+/**
+ * @file PowerManager.cpp
+ * @brief Implementação PowerManager
+ */
+
 #include "PowerManager.h"
-#include <float.h>          // Para FLT_MAX
-#include "esp_pm.h"         // Para setCpuFrequencyMhz
+#include "esp_pm.h"
 
 PowerManager::PowerManager() :
-    _voltage(0.0f),
-    _percentage(0.0f),
-    _avgVoltage(0.0f),
-    _minVoltage(FLT_MAX),
-    _maxVoltage(0.0f),
-    _lastReadTime(0),
-    _sampleCount(0),
-    _powerSaveEnabled(false)
+    _voltage(0.0f), _percentage(0.0f),
+    _isCritical(false), _isLow(false), _powerSaveEnabled(false),
+    _avgVoltage(0.0f), _lastUpdate(0)
 {}
 
 bool PowerManager::begin() {
     DEBUG_PRINTLN("[PowerManager] Inicializando...");
     pinMode(BATTERY_PIN, INPUT);
     analogReadResolution(12);
-    analogSetAttenuation(ADC_11db);
-
+    
+    // Leitura inicial rápida
     _voltage = _readVoltage();
-    _percentage = _voltageToPercentage(_voltage);
+    _avgVoltage = _voltage;
+    _percentage = _calculatePercentage(_voltage);
+    _updateStatus(_voltage);
 
-    DEBUG_PRINTF("[PowerManager] Tensão inicial: %.2fV (%.1f%%)\n", _voltage, _percentage);
+    DEBUG_PRINTF("[PowerManager] Bateria: %.2fV (%.1f%%)\n", _voltage, _percentage);
     return true;
 }
 
 void PowerManager::update() {
     uint32_t now = millis();
-    if (now - _lastReadTime >= 1000) {
-        _lastReadTime = now;
-        float newVoltage = _readVoltage();
+    if (now - _lastUpdate < UPDATE_INTERVAL) return;
+    _lastUpdate = now;
 
-        _sampleCount++;
-        _avgVoltage = ((_avgVoltage * (_sampleCount - 1)) + newVoltage) / _sampleCount;
-
-        if (newVoltage < _minVoltage) _minVoltage = newVoltage;
-        if (newVoltage > _maxVoltage) _maxVoltage = newVoltage;
-
-        _voltage = newVoltage;
-        _percentage = _voltageToPercentage(newVoltage);
-
-        if (isCritical()) {
-            DEBUG_PRINTLN("[PowerManager] ALERTA: Bateria em nível CRÍTICO!");
-        } else if (isLow()) {
-            DEBUG_PRINTLN("[PowerManager] AVISO: Bateria em nível BAIXO");
-        }
-    }
+    float rawV = _readVoltage();
+    
+    // Filtro Exponencial (Low Pass) para suavizar ruído
+    // Novo = 0.2 * Leitura + 0.8 * Antigo
+    _avgVoltage = (0.2f * rawV) + (0.8f * _avgVoltage);
+    
+    _voltage = _avgVoltage;
+    _percentage = _calculatePercentage(_voltage);
+    
+    _updateStatus(_voltage);
 }
 
 float PowerManager::_readVoltage() {
-    float sum = 0.0f;
-    for (int i = 0; i < BATTERY_SAMPLES; i++) {
+    uint32_t sum = 0;
+    const int samples = 10;
+    for (int i = 0; i < samples; i++) {
         sum += analogRead(BATTERY_PIN);
-        delayMicroseconds(100);
+        delay(2);
     }
-    float avgRaw = sum / BATTERY_SAMPLES;
-    return (avgRaw / 4095.0f) * BATTERY_VREF * BATTERY_DIVIDER;
+    
+    // Conversão ADC ESP32 (0-4095 -> 0-3.3V)
+    // Tensão Bateria = Leitura * (3.3 / 4095) * Divisor
+    // BATTERY_DIVIDER geralmente é 2.0 (Resistores iguais 100k)
+    // BATTERY_VREF ajusta a referência (padrão 3.3V ou 3.6V conforme sua calibração no config.h)
+    
+    float rawVoltage = (sum / (float)samples) / 4095.0f * BATTERY_VREF;
+    return rawVoltage * BATTERY_DIVIDER;
 }
 
-float PowerManager::_voltageToPercentage(float voltage) {
+float PowerManager::_calculatePercentage(float voltage) {
     if (voltage >= BATTERY_MAX_VOLTAGE) return 100.0f;
     if (voltage <= BATTERY_MIN_VOLTAGE) return 0.0f;
-
-    float range = BATTERY_MAX_VOLTAGE - BATTERY_MIN_VOLTAGE;
-    float percentage = ((voltage - BATTERY_MIN_VOLTAGE) / range) * 100.0f;
-
-    return constrain(percentage, 0.0f, 100.0f);
+    
+    return (voltage - BATTERY_MIN_VOLTAGE) / (BATTERY_MAX_VOLTAGE - BATTERY_MIN_VOLTAGE) * 100.0f;
 }
 
-float PowerManager::getVoltage() {
-    return _voltage;
-}
+void PowerManager::_updateStatus(float voltage) {
+    // Lógica de Histerese para Crítico
+    if (voltage < BATTERY_CRITICAL) {
+        if (!_isCritical) DEBUG_PRINTLN("[PowerManager] ⚠ Bateria CRÍTICA!");
+        _isCritical = true;
+    } else if (voltage > (BATTERY_CRITICAL + HYSTERESIS)) {
+        _isCritical = false;
+    }
 
-float PowerManager::getPercentage() {
-    return _percentage;
-}
-
-bool PowerManager::isCritical() {
-    return _voltage < BATTERY_CRITICAL;
-}
-
-bool PowerManager::isLow() {
-    return _voltage < BATTERY_LOW;
+    // Lógica de Histerese para Baixo
+    if (voltage < BATTERY_LOW) {
+        _isLow = true;
+    } else if (voltage > (BATTERY_LOW + HYSTERESIS)) {
+        _isLow = false;
+    }
 }
 
 void PowerManager::enablePowerSave() {
+    if (_powerSaveEnabled) return;
     _powerSaveEnabled = true;
+    
+    // Reduz clock da CPU para economizar (80MHz)
     setCpuFrequencyMhz(80);
-    DEBUG_PRINTLN("[PowerManager] Modo economia ativado (80 MHz)");
+    DEBUG_PRINTLN("[PowerManager] Modo Economia ATIVADO (80MHz)");
 }
 
 void PowerManager::disablePowerSave() {
+    if (!_powerSaveEnabled) return;
     _powerSaveEnabled = false;
+    
     setCpuFrequencyMhz(240);
-    DEBUG_PRINTLN("[PowerManager] Modo economia desativado (240 MHz)");
-}
-
-void PowerManager::getStatistics(float& avgVoltage, float& minVoltage, float& maxVoltage) {
-    avgVoltage = _avgVoltage;
-    minVoltage = _minVoltage;
-    maxVoltage = _maxVoltage;
+    DEBUG_PRINTLN("[PowerManager] Modo Performance ATIVADO (240MHz)");
 }
