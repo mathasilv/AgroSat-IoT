@@ -160,7 +160,7 @@ const ModeConfig SAFE_CONFIG = {
 // ========== BUFFERS & REDE (Correção de Erros) ==========
 #define JSON_MAX_SIZE 2048 
 #define PAYLOAD_MAX_SIZE 250
-#define MAX_GROUND_NODES 8              // Necessário para GroundNodeManager
+#define MAX_GROUND_NODES 5              // Necessário para GroundNodeManager
 #define NODE_TTL_MS 1800000             // 30 min (TTL de nós no buffer)
 #define NODE_INACTIVITY_TIMEOUT_MS 600000 
 
