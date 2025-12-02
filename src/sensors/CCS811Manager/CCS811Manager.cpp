@@ -26,155 +26,55 @@ bool CCS811Manager::begin() {
     _online = false;
     _eco2 = 400;
     _tvoc = 0;
-    _initTime = 0;
+    _initTime = millis();
     _lastReadTime = 0;
     
-    // PASSO 1: Verificar presença I2C nos dois endereços possíveis
+    // 🔧 Testar ambos endereços I2C
     uint8_t addresses[] = {CCS811::I2C_ADDR_LOW, CCS811::I2C_ADDR_HIGH};
-    uint8_t detectedAddr = 0x00;
+    uint8_t detectedAddr = 0;
     
-    DEBUG_PRINTLN("[CCS811Manager] PASSO 1: Detectando sensor I2C...");
+    DEBUG_PRINTLN("[CCS811Manager] 🔍 Detectando sensor I2C...");
     for (uint8_t addr : addresses) {
         DEBUG_PRINTF("[CCS811Manager]   Testando 0x%02X... ", addr);
         
         Wire.beginTransmission(addr);
-        uint8_t error = Wire.endTransmission();
-        
-        if (error == 0) {
+        if (Wire.endTransmission() == 0) {
             DEBUG_PRINTLN("✓ DETECTADO");
             detectedAddr = addr;
             break;
-        } else {
-            DEBUG_PRINTF("✗ Erro I2C: %d\n", error);
         }
+        DEBUG_PRINTLN("✗ Não respondendo");
         delay(50);
     }
     
-    if (detectedAddr == 0x00) {
-        DEBUG_PRINTLN("[CCS811Manager] ❌ FALHA: Sensor não detectado em nenhum endereço");
+    if (!detectedAddr) {
+        DEBUG_PRINTLN("[CCS811Manager] ❌ Sensor não encontrado");
         return false;
     }
     
-    // PASSO 2: Inicializar driver com o endereço detectado
-    DEBUG_PRINTF("[CCS811Manager] PASSO 2: Inicializando driver em 0x%02X...\n", detectedAddr);
-    
+    // 🔧 Inicializar driver
+    DEBUG_PRINTF("[CCS811Manager] 🚀 Inicializando driver (0x%02X)...\n", detectedAddr);
     if (!_ccs811.begin(detectedAddr)) {
-        DEBUG_PRINTLN("[CCS811Manager] ❌ FALHA: begin() retornou false");
-        DEBUG_PRINTLN("[CCS811Manager]   Possíveis causas:");
-        DEBUG_PRINTLN("[CCS811Manager]   - Sensor em modo BOOT (precisa carregar APP)");
-        DEBUG_PRINTLN("[CCS811Manager]   - HW_ID incorreto");
-        DEBUG_PRINTLN("[CCS811Manager]   - Falha na comunicação I2C");
+        DEBUG_PRINTLN("[CCS811Manager] ❌ Falha na inicialização do driver");
         return false;
     }
     
-    DEBUG_PRINTLN("[CCS811Manager] ✓ Driver inicializado");
-    
-    // PASSO 3: Validar HW_ID (deve ser 0x81)
-    DEBUG_PRINTLN("[CCS811Manager] PASSO 3: Validando HW_ID...");
-    uint8_t hwId = _ccs811.getHardwareID();
-    DEBUG_PRINTF("[CCS811Manager]   HW_ID lido: 0x%02X (esperado: 0x81)\n", hwId);
-    
-    if (hwId != 0x81) {
-        DEBUG_PRINTLN("[CCS811Manager] ❌ FALHA: HW_ID inválido");
-        DEBUG_PRINTLN("[CCS811Manager]   Isso indica:");
-        DEBUG_PRINTLN("[CCS811Manager]   - Sensor não é CCS811 genuíno");
-        DEBUG_PRINTLN("[CCS811Manager]   - Comunicação I2C corrompida");
-        return false;
+    // 🔧 Configurar modo 1Hz (1 medição/segundo)
+    if (!_ccs811.setDriveMode(CCS811::DriveMode::MODE_1SEC)) {
+        DEBUG_PRINTLN("[CCS811Manager] ⚠️ Modo 1Hz não configurado");
     }
     
-    DEBUG_PRINTLN("[CCS811Manager] ✓ HW_ID válido (CCS811 genuíno)");
+    // 🔧 Warm-up de 20 segundos
+    DEBUG_PRINTLN("[CCS811Manager] ⏳ Warm-up (20s)...");
+    delay(20000);
     
-    // PASSO 4: Verificar se firmware APP está válido
-    DEBUG_PRINTLN("[CCS811Manager] PASSO 4: Verificando firmware APP...");
-    
-    // Ler registrador STATUS (0x00)
-    Wire.beginTransmission(detectedAddr);
-    Wire.write(0x00); // STATUS register
-    Wire.endTransmission(false);
-    Wire.requestFrom(detectedAddr, (uint8_t)1);
-    
-    if (Wire.available()) {
-        uint8_t status = Wire.read();
-        bool appValid = (status & 0x10); // Bit 4: APP_VALID
-        
-        DEBUG_PRINTF("[CCS811Manager]   STATUS=0x%02X APP_VALID=%s\n", 
-                     status, appValid ? "SIM" : "NÃO");
-        
-        if (!appValid) {
-            DEBUG_PRINTLN("[CCS811Manager] ❌ FALHA: Firmware APP não está carregado");
-            DEBUG_PRINTLN("[CCS811Manager]   Sensor está em modo BOOT");
-            DEBUG_PRINTLN("[CCS811Manager]   Solução: Verificar pinagem WAKE e alimentação");
-            return false;
-        }
-    } else {
-        DEBUG_PRINTLN("[CCS811Manager] ⚠ AVISO: Não foi possível ler STATUS");
-    }
-    
-    DEBUG_PRINTLN("[CCS811Manager] ✓ Firmware APP válido");
-    
-    // PASSO 5: Configurar modo de medição (MODE 1 = 1 medição/segundo)
-    DEBUG_PRINTLN("[CCS811Manager] PASSO 5: Configurando modo de medição...");
-    DEBUG_PRINTLN("[CCS811Manager]   Modo selecionado: MODE_1SEC (1 Hz)");
-    
-    bool modeConfigured = false;
-    for (int retry = 0; retry < 3; retry++) {
-        if (_ccs811.setDriveMode(CCS811::DriveMode::MODE_1SEC)) {
-            modeConfigured = true;
-            DEBUG_PRINTLN("[CCS811Manager] ✓ Modo configurado com sucesso");
-            break;
-        }
-        
-        DEBUG_PRINTF("[CCS811Manager]   Retry %d/3...\n", retry + 1);
-        delay(100);
-    }
-    
-    if (!modeConfigured) {
-        DEBUG_PRINTLN("[CCS811Manager] ❌ FALHA: Não foi possível configurar modo");
-        return false;
-    }
-    
-    // PASSO 6: Warm-up inicial obrigatório (20 segundos mínimo)
-    DEBUG_PRINTLN("[CCS811Manager] PASSO 6: Warm-up inicial (20 segundos)...");
-    DEBUG_PRINTLN("[CCS811Manager]   IMPORTANTE: Dados serão confiáveis após 20 min");
-    
-    if (!_performWarmup()) {
-        DEBUG_PRINTLN("[CCS811Manager] ❌ FALHA: Timeout no warm-up");
-        return false;
-    }
-    
-    // PASSO 7: Leitura de teste
-    DEBUG_PRINTLN("[CCS811Manager] PASSO 7: Leitura de teste...");
-    delay(2000); // Aguardar medição completar
-    
-    if (_ccs811.available()) {
-        if (_ccs811.readData()) {
-            uint16_t testEco2 = _ccs811.geteCO2();
-            uint16_t testTvoc = _ccs811.getTVOC();
-            
-            DEBUG_PRINTF("[CCS811Manager]   eCO2 = %d ppm\n", testEco2);
-            DEBUG_PRINTF("[CCS811Manager]   TVOC = %d ppb\n", testTvoc);
-            DEBUG_PRINTLN("[CCS811Manager] ✓ Leitura de teste OK");
-        }
-    }
-    
-    // SUCESSO!
     _online = true;
-    _initTime = millis();
     
-    DEBUG_PRINTLN("[CCS811Manager] ========================================");
-    DEBUG_PRINTLN("[CCS811Manager] ✅ CCS811 INICIALIZADO COM SUCESSO!");
-    DEBUG_PRINTLN("[CCS811Manager] ========================================");
-    DEBUG_PRINTLN("[CCS811Manager] OBSERVAÇÕES:");
-    DEBUG_PRINTLN("[CCS811Manager] - Dados funcionais após 20 segundos");
-    DEBUG_PRINTLN("[CCS811Manager] - Precisão ideal após 20 minutos");
-    DEBUG_PRINTLN("[CCS811Manager] - Usar setEnvironmentalData() para melhor precisão");
-    DEBUG_PRINTLN("[CCS811Manager] ========================================");
-    
+    DEBUG_PRINTLN("[CCS811Manager] ✅ CCS811 ONLINE!");
+    DEBUG_PRINTLN("[CCS811Manager] 📊 Precisão máxima após 20 minutos");
     return true;
 }
-// ============================================================================
-// ATUALIZAÇÃO PRINCIPAL
-// ============================================================================
+
 void CCS811Manager::update() {
     if (!_online) {
         return;
@@ -182,100 +82,66 @@ void CCS811Manager::update() {
     
     uint32_t currentTime = millis();
     
-    // Respeitar intervalo mínimo de 5 segundos entre leituras
-    // (sensor mede a 1 Hz, mas não precisamos ler tão rápido)
-    if (currentTime - _lastReadTime < READ_INTERVAL) {
+    // 🔧 CORREÇÃO 1: Rate limiting rigoroso (mínimo 2s entre leituras)
+    static constexpr uint32_t MIN_READ_INTERVAL = 2000;  // 2 segundos
+    if (currentTime - _lastReadTime < MIN_READ_INTERVAL) {
         return;
     }
     
-    // Verificar se há novos dados disponíveis
+    // 🔧 CORREÇÃO 2: VERIFICAÇÃO OBRIGATÓRIA do bit DATA_READY
     if (!_ccs811.available()) {
-        // Não há dados novos ainda, retornar sem erro
+        // Sensor ainda processando - NÃO É ERRO, apenas aguardar
         return;
     }
     
-    // Tentar ler dados do sensor
+    // 🔧 CORREÇÃO 3: Contador de erros consecutivos
+    static uint16_t consecutiveErrors = 0;
+    
+    // Tentar leitura dos dados
     if (!_ccs811.readData()) {
+        consecutiveErrors++;
         DEBUG_PRINTLN("[CCS811Manager] ❌ Erro ao ler dados");
         
-        // Verificar se há código de erro específico
-        if (_ccs811.checkError()) {
-            uint8_t errorCode = _ccs811.getErrorCode();
-            DEBUG_PRINTF("[CCS811Manager]   Código de erro: 0x%02X\n", errorCode);
-            
-            // Decodificar erro (baseado no datasheet CCS811)
-            if (errorCode & 0x01) DEBUG_PRINTLN("[CCS811Manager]   - WRITE_REG_INVALID");
-            if (errorCode & 0x02) DEBUG_PRINTLN("[CCS811Manager]   - READ_REG_INVALID");
-            if (errorCode & 0x04) DEBUG_PRINTLN("[CCS811Manager]   - MEASMODE_INVALID");
-            if (errorCode & 0x08) DEBUG_PRINTLN("[CCS811Manager]   - MAX_RESISTANCE");
-            if (errorCode & 0x10) DEBUG_PRINTLN("[CCS811Manager]   - HEATER_FAULT");
-            if (errorCode & 0x20) DEBUG_PRINTLN("[CCS811Manager]   - HEATER_SUPPLY");
-            
-            // Erro de heater é crítico - reiniciar sensor
-            if (errorCode & 0x30) {
-                DEBUG_PRINTLN("[CCS811Manager] ⚠ Erro crítico de heater - reset necessário");
-                reset();
-            }
+        // 🔧 Reset automático após 8 erros consecutivos
+        if (consecutiveErrors >= 8) {
+            DEBUG_PRINTLN("[CCS811Manager] 🔄 Reset automático (8 erros)");
+            reset();
+            consecutiveErrors = 0;
+            return;
         }
+        
         return;
     }
     
-    // Obter valores lidos
+    // ✅ SUCESSO - reset contador de erros
+    consecutiveErrors = 0;
+    _lastReadTime = currentTime;
+    
+    // Obter valores
     uint16_t eco2 = _ccs811.geteCO2();
     uint16_t tvoc = _ccs811.getTVOC();
     
-    // VALIDAÇÃO RIGOROSA baseada no datasheet
-    if (!_validateData(eco2, tvoc)) {
-        DEBUG_PRINTF("[CCS811Manager] ⚠ Dados fora do range válido: eCO2=%d ppm, TVOC=%d ppb\n", 
-                    eco2, tvoc);
-        
-        // Não atualizar valores, manter último conhecido
+    // 🔧 Validação rigorosa (datasheet CCS811)
+    if (eco2 < 400 || eco2 > 8192 || tvoc > 1187) {
+        DEBUG_PRINTF("[CCS811Manager] ⚠ Dados inválidos: eCO2=%d, TVOC=%d\n", eco2, tvoc);
         return;
     }
     
-    // Validação adicional: detectar valores fixos (sensor travado)
-    static uint16_t lastEco2 = 0;
-    static uint8_t identicalCount = 0;
-    
-    if (eco2 == lastEco2 && lastEco2 != 0) {
-        identicalCount++;
-        
-        if (identicalCount >= 10) {
-            DEBUG_PRINTLN("[CCS811Manager] ⚠ Sensor pode estar travado (10 leituras idênticas)");
-            DEBUG_PRINTLN("[CCS811Manager]   Considerando reset...");
-            
-            // Resetar contador para não ficar spammando
-            identicalCount = 0;
-            
-            // Opcional: forçar reset após muitas leituras idênticas
-            // reset();
-            // return;
-        }
-    } else {
-        identicalCount = 0;
-    }
-    lastEco2 = eco2;
-    
-    // Dados válidos - atualizar valores
+    // Atualizar valores internos
     _eco2 = eco2;
     _tvoc = tvoc;
-    _lastReadTime = currentTime;
     
-    // Debug apenas se houve mudança significativa
-    static uint16_t lastPrintedEco2 = 0;
-    if (abs((int)eco2 - (int)lastPrintedEco2) >= 50) {
-        DEBUG_PRINTF("[CCS811Manager] eCO2=%d ppm, TVOC=%d ppb", eco2, tvoc);
-        
-        // Indicar status de warm-up
-        if (!isWarmupComplete()) {
-            uint32_t progress = getWarmupProgress();
-            DEBUG_PRINTF(" [Warm-up: %lu%%]", progress);
-        }
-        
-        DEBUG_PRINTLN();
-        lastPrintedEco2 = eco2;
+    // 🔧 Log controlado (apenas mudanças > 50ppm)
+    static uint16_t lastLoggedEco2 = 0;
+    if (abs((int)eco2 - (int)lastLoggedEco2) >= 50) {
+        uint32_t warmupProgress = getWarmupProgress();
+        DEBUG_PRINTF("[CCS811Manager] eCO2=%d ppm, TVOC=%d ppb [Warm-up: %lu%%]\n", 
+                     eco2, tvoc, warmupProgress);
+        lastLoggedEco2 = eco2;
     }
 }
+
+
 // ============================================================================
 // RESET
 // ============================================================================

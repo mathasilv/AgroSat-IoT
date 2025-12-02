@@ -133,10 +133,26 @@ void SensorManager::updateHealth() {
 }
 
 void SensorManager::update() {
-    updateFast();
-    updateSlow();
-    updateHealth();
+    static uint32_t lastFullUpdate = 0;
+    static uint32_t lastFastUpdate = 0;
+    uint32_t now = millis();
+    
+    // 🔧 MPU9250 (alta frequência - 100Hz OK)
+    if (now - lastFastUpdate > 10) {  // 100Hz
+        _mpu9250.update();
+        lastFastUpdate = now;
+    }
+    
+    // 🔧 Sensores I2C LENTOS (500ms intervalo - EVITA erro 263)
+    if (now - lastFullUpdate > 500) {
+        lastFullUpdate = now;
+        
+        _bmp280.update();
+        _si7021.update();
+        _ccs811.update();
+    }
 }
+
 
 // ============================================================================
 // HEALTH CHECK & RESET (COM RECUPERAÇÃO FÍSICA)

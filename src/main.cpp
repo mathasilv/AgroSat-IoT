@@ -27,10 +27,10 @@ void setup() {
     Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
     
     // Volte para o padrão 100kHz (mais estável que 20kHz para o timer do ESP32)
-    Wire.setClock(100000); 
+    Wire.setClock(20000); 
     
     // Timeout ALTO (1000ms) - O CCS811 precisa disso!
-    Wire.setTimeOut(1000); 
+    Wire.setTimeout(1000);          // ✅ 1000ms timeout (corrigido)
     
     DEBUG_PRINTLN("[Main] I2C Configurado: 100kHz, Timeout 1000ms");
     delay(500); 

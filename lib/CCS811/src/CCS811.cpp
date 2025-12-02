@@ -348,34 +348,35 @@ bool CCS811::_readRegister(uint8_t reg, uint8_t& value) {
 }
 
 bool CCS811::_readRegisters(uint8_t reg, uint8_t* buffer, size_t length) {
-    // Tenta até 3 vezes se der erro
-    for (uint8_t attempt = 0; attempt < 3; attempt++) {
+    // 🔧 CORREÇÃO CRÍTICA: 5 tentativas com delay 75ms (baseado em ESP32 forums)
+    for (uint8_t attempt = 0; attempt < 5; attempt++) {
         
         _wire->beginTransmission(_i2cAddress);
         _wire->write(reg);
         
-        // Se a escrita do endereço falhar, tenta de novo
+        // Se falhar na transmissão do endereço, retry com delay maior
         if (_wire->endTransmission(false) != 0) {
-            delay(10); // Pequena pausa para o sensor respirar
+            delay(75);  // ✅ Aumentado de 10ms → 75ms (solução comprovada)
             continue;
         }
         
-        // Se a leitura falhar (timeout/erro 263), tenta de novo
+        // Tentar leitura - se falhar (timeout 263), retry
         if (_wire->requestFrom(_i2cAddress, length) == length) {
-            // Sucesso! Lê os dados e retorna true
+            // ✅ Sucesso! Ler dados
             for (size_t i = 0; i < length; i++) {
                 buffer[i] = _wire->read();
             }
             return true;
         }
         
-        // Se chegou aqui, falhou. Pausa antes do retry.
-        delay(10);
+        // Falha na leitura - aguardar mais antes do próximo retry
+        delay(75);  // ✅ Aumentado de 10ms → 75ms
     }
     
-    // Se falhou 3 vezes seguidas, aí sim desistimos
+    // Falhou após 5 tentativas (375ms total)
     return false;
 }
+
 
 bool CCS811::_writeRegister(uint8_t reg, uint8_t value) {
     return _writeRegisters(reg, &value, 1);
