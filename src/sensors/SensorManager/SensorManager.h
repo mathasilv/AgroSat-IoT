@@ -1,14 +1,19 @@
 /**
  * @file SensorManager.h
- * @brief Gerenciador centralizado de sensores
- * @version 2.0.0
- * @date 2025-12-01
+ * @brief Gerenciador centralizado de sensores com proteção Multitarefa (FreeRTOS)
+ * @version 2.1.0
+ * @date 2025-12-02
  */
 
 #ifndef SENSORMANAGER_H
 #define SENSORMANAGER_H
 
 #include <Arduino.h>
+#include <Wire.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
+// Includes dos Managers Específicos
 #include "sensors/MPU9250Manager/MPU9250Manager.h"
 #include "sensors/BMP280Manager/BMP280Manager.h"
 #include "sensors/SI7021Manager/SI7021Manager.h"
@@ -17,20 +22,24 @@
 
 class SensorManager {
 public:
-    SensorManager();      // <-- ADICIONAR / CONFIRMAR ESTA LINHA
+    SensorManager();
 
     bool begin();
 
-    // Novo: atualizações separadas
-    void updateFast();    // MPU9250 + BMP280
-    void updateSlow();    // SI7021 + CCS811
-    void updateHealth();  // health check/reset
+    // ========================================
+    // Ciclos de Atualização
+    // ========================================
+    void updateFast();    // MPU9250 + BMP280 (Protegido com Mutex)
+    void updateSlow();    // SI7021 + CCS811 (Protegido com Mutex)
+    void updateHealth();  // Health check/reset
+    void update();        // Wrapper geral
 
-    // Mantém o update() antigo se ainda quiser usar em testes
-    void update();
+    // ========================================
+    // Controle e Reset
+    // ========================================
     void reset();
-    void resetAll();  // ← ADICIONAR
-    
+    void resetAll();
+
     // ========================================
     // Comandos de calibração
     // ========================================
@@ -54,15 +63,14 @@ public:
     bool isSI7021Online() const { return _si7021.isOnline(); }
     bool isCCS811Online() const { return _ccs811.isOnline(); }
 
-
     bool isMagnetometerCalibrated() const { return _mpu9250.isCalibrated(); }
     bool isCCS811WarmupComplete() const { return _ccs811.isWarmupComplete(); }
     bool isCCS811DataReliable() const { return _ccs811.isDataReliable(); }
     
     void printStatus() const;
     void printDetailedStatus() const;
-    void printSensorStatus() const;  // ← ADICIONAR
-    void scanI2C();  // ← ADICIONAR
+    void printSensorStatus() const;
+    void scanI2C();
     
     // ========================================
     // Getters de dados
@@ -81,26 +89,26 @@ public:
     
     // BMP280
     float getTemperature() const { return _bmp280.getTemperature(); }
-    float getTemperatureBMP280() const { return _bmp280.getTemperature(); }  // ← ADICIONAR (compatibilidade)
+    float getTemperatureBMP280() const { return _bmp280.getTemperature(); }
     float getPressure() const { return _bmp280.getPressure(); }
     float getAltitude() const { return _bmp280.getAltitude(); }
     
     // SI7021
     float getHumidity() const { return _si7021.getHumidity(); }
     float getTempSI7021() const { return _si7021.getTemperature(); }
-    float getTemperatureSI7021() const { return _si7021.getTemperature(); }  // ← ADICIONAR (compatibilidade)
+    float getTemperatureSI7021() const { return _si7021.getTemperature(); }
     
     // CCS811
     uint16_t geteCO2() const { return _ccs811.geteCO2(); }
-    uint16_t getCO2() const { return _ccs811.geteCO2(); }  // ← ADICIONAR (compatibilidade)
+    uint16_t getCO2() const { return _ccs811.geteCO2(); }
     uint16_t getTVOC() const { return _ccs811.getTVOC(); }
     
     // RAW DATA (MPU9250)
     void getRawData(float& gx, float& gy, float& gz, 
                     float& ax, float& ay, float& az,
-                    float& mx, float& my, float& mz) const;  // ← ADICIONAR
+                    float& mx, float& my, float& mz) const;
     
-    // Acesso direto aos managers (se necessário)
+    // Acesso direto aos managers
     MPU9250Manager& getMPU9250() { return _mpu9250; }
     BMP280Manager& getBMP280() { return _bmp280; }
     SI7021Manager& getSI7021() { return _si7021; }
@@ -112,21 +120,29 @@ private:
     SI7021Manager _si7021;
     CCS811Manager _ccs811;
     
+    // Controle de fluxo e erro
     uint8_t _sensorCount;
     unsigned long _lastEnvCompensation;
-    unsigned long _lastHealthCheck;  // ← ADICIONAR
-    uint8_t _consecutiveFailures;    // ← ADICIONAR
-
+    unsigned long _lastHealthCheck;
+    uint8_t _consecutiveFailures;
     float _temperature; 
 
+    // Variáveis do Mutex (FreeRTOS)
+    SemaphoreHandle_t _i2cMutex;
+
+    // Constantes
     static constexpr unsigned long ENV_COMPENSATION_INTERVAL = 60000;  // 60s
-    static constexpr unsigned long HEALTH_CHECK_INTERVAL = 30000;      // 30s ← ADICIONAR
-    static constexpr uint8_t MAX_CONSECUTIVE_FAILURES = 10;  // ← ADICIONAR ESTA LINHA
+    static constexpr unsigned long HEALTH_CHECK_INTERVAL = 30000;      // 30s
+    static constexpr uint8_t MAX_CONSECUTIVE_FAILURES = 10;
 
     // Métodos privados
     void _autoApplyEnvironmentalCompensation();
-    void _updateTemperatureRedundancy();  // ← ADICIONAR
-    void _performHealthCheck();           // ← ADICIONAR
+    void _updateTemperatureRedundancy();
+    void _performHealthCheck();
+    
+    // Helpers de Mutex
+    bool _lockI2C();
+    void _unlockI2C();
 };
 
 #endif // SENSORMANAGER_H

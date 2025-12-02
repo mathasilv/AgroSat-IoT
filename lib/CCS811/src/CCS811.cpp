@@ -1,6 +1,8 @@
 /**
  * @file CCS811.cpp
- * @brief Implementação do driver CCS811 nativo
+ * @brief Implementação do driver CCS811 nativo (Corrigido para I2C Shared Bus)
+ * @version 1.1.0
+ * @date 2025-12-02
  */
 
 #include "CCS811.h"
@@ -26,30 +28,30 @@ bool CCS811::begin(uint8_t i2cAddress) {
 
     Serial.println("[CCS811] Iniciando...");
     
-    // I2C STABILIZATION PRIMEIRO
-    Wire.end();
-    delay(100);
-    Wire.begin();
-    delay(100);
+    // NOTA IMPORTANTE:
+    // Removemos Wire.begin() e Wire.end() daqui.
+    // O barramento I2C deve ser configurado na main.cpp com:
+    // Wire.setClock(20000); e Wire.setTimeOut(200); para estabilidade.
+    
+    delay(100); // Pausa para estabilização elétrica apenas
     
     // PASSO 0: SOFTWARE RESET
+    // Reset necessário para tirar o sensor de estados travados
     Serial.println("[CCS811] PASSO 0: Software Reset...");
     uint8_t resetSeq[4] = {0x11, 0xE5, 0x72, 0x8A};
     if (_writeRegisters(REG_SW_RESET, resetSeq, 4)) {
-        delay(300);  // ← AUMENTADO
+        delay(100);  // Tempo para o sensor reiniciar após reset
     } else {
         Serial.println("[CCS811] PASSO 0 FALHOU: Reset não enviado");
-        return false;
+        // Não retornamos false aqui pois às vezes o reset falha se o sensor já resetou,
+        // mas tentamos continuar para ver se o ID responde.
     }
     
-    // I2C STABILIZATION PÓS-RESET
-    Wire.end();
-    delay(100);
-    Wire.begin();
     delay(100);
     
-    // PASSO 1: Verificar presença
-    if (Wire.endTransmission(_i2cAddress) != 0) {
+    // PASSO 1: Verificar presença (Ping)
+    _wire->beginTransmission(_i2cAddress);
+    if (_wire->endTransmission() != 0) {
         Serial.printf("[CCS811] PASSO 1 FALHOU: Não detectado 0x%02X\n", _i2cAddress);
         return false;
     }
@@ -57,16 +59,30 @@ bool CCS811::begin(uint8_t i2cAddress) {
 
     // PASSO 2: HW_ID com retry
     if (!_checkHardwareID()) {
-        Serial.println("[CCS811] PASSO 2 FALHOU");
+        Serial.println("[CCS811] PASSO 2 FALHOU (HW_ID incorreto)");
         return false;
     }
     Serial.println("[CCS811] PASSO 2 OK");
 
-    // PASSO 3-6 iguais (app valid, start app, etc.)
-    if (!_verifyAppValid()) return false;
-    if (!_startApp()) return false;
-    delay(3000);
-    if (!_waitForAppMode(500)) return false;
+    // PASSO 3: Verificar se o App é válido
+    if (!_verifyAppValid()) {
+        Serial.println("[CCS811] Erro: Firmware APP inválido");
+        return false;
+    }
+
+    // PASSO 4: Iniciar Aplicação (sair do modo Bootloader)
+    if (!_startApp()) {
+        Serial.println("[CCS811] Erro: Falha ao iniciar APP_START");
+        return false;
+    }
+    
+    // Aguarda sensor entrar no modo de aplicação
+    delay(1000);
+    
+    if (!_waitForAppMode(2000)) {
+        Serial.println("[CCS811] Erro: Timeout aguardando APP_MODE");
+        return false;
+    }
     
     Serial.println("[CCS811] CCS811 ONLINE!");
     _initialized = true;
@@ -95,6 +111,7 @@ void CCS811::reset() {
 bool CCS811::setDriveMode(DriveMode mode) {
     if (!_initialized) return false;
     
+    // Bits 6:4 = Drive Mode
     uint8_t measMode = (static_cast<uint8_t>(mode) << 4);
     bool result = _writeRegister(REG_MEAS_MODE, measMode);
     
@@ -140,6 +157,8 @@ bool CCS811::readData() {
     if (!_initialized) return false;
     
     uint8_t buffer[8];
+    // Tenta ler 8 bytes (ALG_RESULT_DATA)
+    // Se falhar (timeout ou erro), retorna false sem travar
     if (!_readRegisters(REG_ALG_RESULT_DATA, buffer, 8)) {
         return false;
     }
@@ -150,26 +169,24 @@ bool CCS811::readData() {
     uint8_t status = buffer[4];
     uint8_t errorId = buffer[5];
     
-    // Verificar se há erro
+    // Verificar se há erro reportado pelo sensor
     if (status & STATUS_ERROR) {
         #ifdef DEBUG_CCS811
-        Serial.printf("[CCS811] Erro reportado: 0x%02X\n", errorId);
+        Serial.printf("[CCS811] Erro interno do sensor: 0x%02X\n", errorId);
         #endif
+        // Não invalidamos a leitura imediatamente se houver dados antigos,
+        // mas idealmente retornamos false para indicar problema.
         return false;
     }
     
-    // Validar valores (range físico do sensor)
+    // Validar valores (filtros simples para evitar ruído extremo)
     if (eco2 < 400 || eco2 > 8192) {
-        #ifdef DEBUG_CCS811
-        Serial.printf("[CCS811] eCO2 fora do range: %d ppm\n", eco2);
-        #endif
+        // eCO2 fora do range físico
         return false;
     }
     
     if (tvoc > 1187) {
-        #ifdef DEBUG_CCS811
-        Serial.printf("[CCS811] TVOC fora do range: %d ppb\n", tvoc);
-        #endif
+        // TVOC fora do range físico
         return false;
     }
     
@@ -274,7 +291,8 @@ bool CCS811::checkError() {
 bool CCS811::_checkHardwareID() {
     uint8_t hwId = 0;
     
-    // MÉTODO ROBUSTO: 3 tentativas com I2C recovery
+    // MÉTODO ROBUSTO: 3 tentativas
+    // Removemos os Wire.begin()/end() daqui para não resetar o barramento
     for (int retry = 0; retry < 3; retry++) {
         if (_readRegister(REG_HW_ID, hwId)) {
             if (hwId == HW_ID_CODE) {
@@ -283,11 +301,7 @@ bool CCS811::_checkHardwareID() {
             }
         }
         
-        // I2C RECOVERY entre tentativas
         Serial.printf("[CCS811] HW_ID retry %d/3 (lido: 0x%02X)\n", retry+1, hwId);
-        Wire.end();
-        delay(50);
-        Wire.begin();
         delay(50);
     }
     
@@ -334,24 +348,33 @@ bool CCS811::_readRegister(uint8_t reg, uint8_t& value) {
 }
 
 bool CCS811::_readRegisters(uint8_t reg, uint8_t* buffer, size_t length) {
-    // Escrever endereço do registrador
-    _wire->beginTransmission(_i2cAddress);
-    _wire->write(reg);
-    
-    if (_wire->endTransmission(false) != 0) { // Repeated START
-        return false;
+    // Tenta até 3 vezes se der erro
+    for (uint8_t attempt = 0; attempt < 3; attempt++) {
+        
+        _wire->beginTransmission(_i2cAddress);
+        _wire->write(reg);
+        
+        // Se a escrita do endereço falhar, tenta de novo
+        if (_wire->endTransmission(false) != 0) {
+            delay(10); // Pequena pausa para o sensor respirar
+            continue;
+        }
+        
+        // Se a leitura falhar (timeout/erro 263), tenta de novo
+        if (_wire->requestFrom(_i2cAddress, length) == length) {
+            // Sucesso! Lê os dados e retorna true
+            for (size_t i = 0; i < length; i++) {
+                buffer[i] = _wire->read();
+            }
+            return true;
+        }
+        
+        // Se chegou aqui, falhou. Pausa antes do retry.
+        delay(10);
     }
     
-    // Ler dados
-    if (_wire->requestFrom(_i2cAddress, length) != length) {
-        return false;
-    }
-    
-    for (size_t i = 0; i < length; i++) {
-        buffer[i] = _wire->read();
-    }
-    
-    return true;
+    // Se falhou 3 vezes seguidas, aí sim desistimos
+    return false;
 }
 
 bool CCS811::_writeRegister(uint8_t reg, uint8_t value) {

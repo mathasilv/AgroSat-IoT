@@ -1,10 +1,9 @@
 /**
  * @file MissionController.h
- * @brief Controlador de ciclo de vida de missão HAB
- * @version 1.0.0
- * @date 2025-12-01
- * 
- * Responsabilidades:
+ * @brief Controlador de ciclo de vida de missão HAB (Versão sem Display)
+ * @version 1.1.0
+ * @date 2025-12-02
+ * * Responsabilidades:
  * - Gerenciar início/fim de missão
  * - Calcular duração e estatísticas
  * - Gerar relatórios de missão
@@ -16,7 +15,7 @@
 #include <Arduino.h>
 #include "config.h"
 #include "core/RTCManager/RTCManager.h"
-#include "core/DisplayManager/DisplayManager.h"
+// REMOVIDO: #include "core/DisplayManager/DisplayManager.h"
 #include "app/GroundNodeManager/GroundNodeManager.h"
 
 class MissionController {
@@ -24,12 +23,11 @@ public:
     /**
      * @brief Construtor
      * @param rtc Referência ao gerenciador RTC
-     * @param display Referência ao display
      * @param nodes Referência ao gerenciador de nós terrestres
      */
     MissionController(
         RTCManager& rtc, 
-        DisplayManager& display, 
+        // REMOVIDO: DisplayManager& display, 
         GroundNodeManager& nodes
     );
     
@@ -65,7 +63,7 @@ public:
     
 private:
     RTCManager& _rtc;
-    DisplayManager& _display;
+    // REMOVIDO: DisplayManager& _display;
     GroundNodeManager& _nodes;
     
     bool _active;

@@ -3,6 +3,10 @@
  * @brief Gerenciador central de telemetria - HAB + UTC
  * @version 2.0.0
  * @date 2025-12-01
+ * 
+ * CHANGELOG v2.0.0:
+ * - [REMOVED] DisplayManager dependencies
+ * - [UPDATED] Simplified initialization without display
  */
 
 #ifndef TELEMETRYMANAGER_H
@@ -15,7 +19,6 @@
 #include "sensors/SensorManager/SensorManager.h"
 #include "core/PowerManager/PowerManager.h"
 #include "core/SystemHealth/SystemHealth.h"
-#include "core/DisplayManager/DisplayManager.h"
 #include "core/RTCManager/RTCManager.h"
 #include "core/ButtonHandler/ButtonHandler.h"
 #include "storage/StorageManager.h"
@@ -64,7 +67,6 @@ private:
     ButtonHandler        _button;
     StorageManager       _storage;
     CommunicationManager _comm;
-    DisplayManager       _displayMgr;
     GroundNodeManager    _groundNodes;
 
     MissionController    _mission;
@@ -84,18 +86,17 @@ private:
     unsigned long  _missionStartTime;
     unsigned long  _lastSensorReset;
 
-    bool           _useNewDisplay;
+    unsigned long  _lastFastSensorUpdate;
+    unsigned long  _lastSlowSensorUpdate;
+    unsigned long  _lastSensorHealthUpdate;
 
     // ========================================
     // MÉTODOS PRIVADOS (helpers)
     // ========================================
-    bool _initI2CBus();
-
     // Helpers de inicialização
     void _initModeDefaults();
-    void _initDisplay(bool& displayOk);
-    void _initSubsystems(bool displayOk, uint8_t& subsystemsOk, bool& success);
-    void _syncNTPIfAvailable(bool displayOk);
+    void _initSubsystems(uint8_t& subsystemsOk, bool& success);
+    void _syncNTPIfAvailable();
     void _logInitSummary(bool success, uint8_t subsystemsOk, uint32_t initialHeap);
 
     // Operação
@@ -104,9 +105,6 @@ private:
     void _handleButtonEvents();
     void _checkOperationalConditions();
     void _updateLEDIndicator(unsigned long currentTime);
-    unsigned long _lastFastSensorUpdate = 0;
-    unsigned long _lastSlowSensorUpdate = 0;
-    unsigned long _lastSensorHealthUpdate = 0;
 };
 
 #endif // TELEMETRYMANAGER_H

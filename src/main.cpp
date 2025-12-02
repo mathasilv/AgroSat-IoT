@@ -1,26 +1,41 @@
 /**
  * @file main.cpp
- * @brief Programa principal - Sistema Simplificado
- * @version 6.1.0
- * @date 2025-12-01
+ * @brief Programa principal - Sistema Simplificado com CORREÇÃO I2C
+ * @version 6.1.1
+ * @date 2025-12-02
  */
 #include <Arduino.h>
+#include <Wire.h> // <--- GARANTA QUE ISTO ESTÁ AQUI
 #include <esp_task_wdt.h>
 #include "config.h"
 #include "app/TelemetryManager/TelemetryManager.h"
 
-
 TelemetryManager telemetry;
 
 // Forward declarations
-void processSerialCommands();  // ← SEM UNDERSCORE
-void printAvailableCommands(); // ← SEM UNDERSCORE
-
+void processSerialCommands();
+void printAvailableCommands();
 
 void setup() {
     Serial.begin(DEBUG_BAUDRATE);
-    delay(1000);
     
+    // ============================================================
+    // 🚑 CONFIGURAÇÃO DE SEGURANÇA I2C (ATUALIZADO)
+    // ============================================================
+    DEBUG_PRINTLN("[Main] Configurando I2C Mestre...");
+    
+    Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
+    
+    // Volte para o padrão 100kHz (mais estável que 20kHz para o timer do ESP32)
+    Wire.setClock(100000); 
+    
+    // Timeout ALTO (1000ms) - O CCS811 precisa disso!
+    Wire.setTimeOut(1000); 
+    
+    DEBUG_PRINTLN("[Main] I2C Configurado: 100kHz, Timeout 1000ms");
+    delay(500); 
+    // ============================================================
+
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, LOW);
     
@@ -39,6 +54,7 @@ void setup() {
     esp_task_wdt_init(120, true);
     esp_task_wdt_add(NULL);
     
+    // Agora o telemetry.begin() vai usar o barramento que JÁ configuramos acima
     if (!telemetry.begin()) {
         DEBUG_PRINTLN("[Main] ERRO CRÍTICO: Falha na inicialização!");
     }
@@ -51,27 +67,26 @@ void setup() {
     DEBUG_PRINTLN("");
     
     // Exibir comandos disponíveis
-    printAvailableCommands();  // ← SEM UNDERSCORE
+    printAvailableCommands();
 }
-
 
 void loop() {
     esp_task_wdt_reset();
     
     // Processar comandos via Serial (se disponível)
-    processSerialCommands();  // ← SEM UNDERSCORE
+    processSerialCommands();
     
     // Loop principal
     telemetry.loop();
     
-    delay(10);
+    // Pequeno delay para aliviar o I2C e permitir WiFi/LoRa background tasks
+    delay(10); 
 }
-
 
 /**
  * @brief Processa comandos via Serial Monitor
  */
-void processSerialCommands() {  // ← SEM UNDERSCORE
+void processSerialCommands() {
     if (!Serial.available()) {
         return;
     }
@@ -99,11 +114,10 @@ void processSerialCommands() {  // ← SEM UNDERSCORE
     DEBUG_PRINTLN("");
 }
 
-
 /**
  * @brief Exibe comandos disponíveis no boot
  */
-void printAvailableCommands() {  // ← SEM UNDERSCORE
+void printAvailableCommands() {
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("========================================");
     DEBUG_PRINTLN("COMANDOS DISPONÍVEIS VIA SERIAL:");

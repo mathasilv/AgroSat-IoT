@@ -45,6 +45,8 @@
 #define SENSOR_I2C_SDA 21
 #define SENSOR_I2C_SCL 22
 #define I2C_FREQUENCY 100000
+#define I2C_TIMEOUT_MS 2000   // ✅ ADICIONAR: 2 segundos (era 1000ms)
+
 
 // ========== POWER MANAGEMENT ==========
 #define BATTERY_PIN 35
@@ -188,7 +190,7 @@ const ModeConfig SAFE_CONFIG = {
 #define HTTP_SERVER "obsat.org.br"
 #define HTTP_PORT 443
 #define HTTP_ENDPOINT "/teste_post/envio.php"
-#define HTTP_TIMEOUT_MS 10000
+#define HTTP_TIMEOUT_MS 3000
 
 // ========== BUFFERS ==========
 #define JSON_MAX_SIZE 768

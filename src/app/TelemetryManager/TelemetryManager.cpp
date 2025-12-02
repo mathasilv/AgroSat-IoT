@@ -2,13 +2,14 @@
  * @file TelemetryManager.cpp
  * @brief VERSÃO OTIMIZADA PARA BALÃO METEOROLÓGICO (HAB) + UTC
  * @version 7.4.0 - HAB Edition + UTC Standard
- * @date 2025-11-30
+ * @date 2025-12-01
  * 
  * CHANGELOG v7.4.0:
  * - [NEW] RTC 100% UTC (CubeSat padrão internacional)
  * - [FIX] Reset de flag forwarded ao atualizar nó
  * - [FIX] Reset periódico de flags para retransmissão contínua
  * - [NEW] Timestamp UTC em toda telemetria
+ * - [REMOVED] Display manager dependencies
  */
 
 #include "TelemetryManager.h"
@@ -16,7 +17,6 @@
 
 bool currentSerialLogsEnabled = PREFLIGHT_CONFIG.serialLogsEnabled;
 const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
-DisplayManager* g_displayManagerPtr = nullptr;
 
 TelemetryManager::TelemetryManager() :
     // Subsystems / controllers
@@ -27,9 +27,8 @@ TelemetryManager::TelemetryManager() :
     _button(),
     _storage(),
     _comm(),
-    _displayMgr(),
     _groundNodes(),
-    _mission(_rtc, _displayMgr, _groundNodes),
+    _mission(_rtc, _groundNodes),
     _telemetryCollector(_sensors, _power, _systemHealth, _rtc, _groundNodes),
     _commandHandler(_sensors),
 
@@ -39,8 +38,7 @@ TelemetryManager::TelemetryManager() :
     _lastTelemetrySend(0),
     _lastStorageSave(0),
     _missionStartTime(0),
-    _lastSensorReset(0),
-    _useNewDisplay(true)
+    _lastSensorReset(0)
 {
     memset(&_telemetryData, 0, sizeof(TelemetryData));
 
@@ -52,35 +50,6 @@ TelemetryManager::TelemetryManager() :
     _telemetryData.magZ     = NAN;
 }
 
-bool TelemetryManager::_initI2CBus() {
-    static bool i2cInitialized = false;
-    
-    if (!i2cInitialized) {
-        Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
-        Wire.setClock(50000);
-        Wire.setTimeOut(1000);
-        delay(1000);
-        i2cInitialized = true;
-        
-        DEBUG_PRINTLN("[TelemetryManager] I2C init (100 kHz, timeout 1000ms)");
-        
-        #ifdef DEBUG_I2C_SCAN
-        // Scan completo apenas se flag DEBUG_I2C_SCAN estiver definida
-        uint8_t devicesFound = 0;
-        for (uint8_t addr = 1; addr < 127; addr++) {
-            Wire.beginTransmission(addr);
-            if (Wire.endTransmission() == 0) {
-                DEBUG_PRINTF("[TelemetryManager] I2C device: 0x%02X\n", addr);
-                devicesFound++;
-            }
-        }
-        DEBUG_PRINTF("[TelemetryManager] Total I2C devices: %d\n", devicesFound);
-        #endif
-    }
-    
-    return true;
-}
-
 // =============================
 // Helpers de inicialização
 // =============================
@@ -90,27 +59,7 @@ void TelemetryManager::_initModeDefaults() {
     applyModeConfig(MODE_PREFLIGHT);
 }
 
-void TelemetryManager::_initDisplay(bool& displayOk) {
-    displayOk = false;
-
-    if (!activeModeConfig->displayEnabled) {
-        return;
-    }
-
-    DEBUG_PRINTLN("[TelemetryManager] Init DisplayManager");
-    if (_displayMgr.begin()) {
-        _useNewDisplay = true;
-        displayOk = true;
-        DEBUG_PRINTLN("[TelemetryManager] DisplayManager OK");
-        _displayMgr.showBoot();
-        delay(1000);
-    } else {
-        DEBUG_PRINTLN("[TelemetryManager] DisplayManager FAIL");
-        _useNewDisplay = false;
-    }
-}
-
-void TelemetryManager::_initSubsystems(bool displayOk, uint8_t& subsystemsOk, bool& success) {
+void TelemetryManager::_initSubsystems(uint8_t& subsystemsOk, bool& success) {
     // RTC
     DEBUG_PRINTLN("[TelemetryManager] Init RTC (UTC)");
     if (_rtc.begin(&Wire)) {
@@ -118,9 +67,6 @@ void TelemetryManager::_initSubsystems(bool displayOk, uint8_t& subsystemsOk, bo
         DEBUG_PRINTF("[TelemetryManager] RTC OK: %s (unix=%lu)\n",
                      _rtc.getUTCDateTime().c_str(),
                      _rtc.getUnixTime());
-        if (_useNewDisplay && displayOk) {
-            _displayMgr.showSensorInit("RTC", true);
-        }
     } else {
         success = false;
     }
@@ -152,15 +98,10 @@ void TelemetryManager::_initSubsystems(bool displayOk, uint8_t& subsystemsOk, bo
     if (_sensors.begin()) {
         subsystemsOk++;
         DEBUG_PRINTLN("[TelemetryManager] SensorManager OK");
-
-        if (_useNewDisplay && displayOk) {
-            _displayMgr.clear();
-            delay(100);
-            _displayMgr.showSensorInit("MPU9250", _sensors.isMPU9250Online());
-            _displayMgr.showSensorInit("BMP280",  _sensors.isBMP280Online());
-            _displayMgr.showSensorInit("SI7021",  _sensors.isSI7021Online());
-            _displayMgr.showSensorInit("CCS811",  _sensors.isCCS811Online());
-        }
+        DEBUG_PRINTF("[TelemetryManager] MPU9250: %s\n", _sensors.isMPU9250Online() ? "OK" : "FAIL");
+        DEBUG_PRINTF("[TelemetryManager] BMP280: %s\n", _sensors.isBMP280Online() ? "OK" : "FAIL");
+        DEBUG_PRINTF("[TelemetryManager] SI7021: %s\n", _sensors.isSI7021Online() ? "OK" : "FAIL");
+        DEBUG_PRINTF("[TelemetryManager] CCS811: %s\n", _sensors.isCCS811Online() ? "OK" : "FAIL");
     } else {
         success = false;
     }
@@ -184,23 +125,15 @@ void TelemetryManager::_initSubsystems(bool displayOk, uint8_t& subsystemsOk, bo
     }
 }
 
-void TelemetryManager::_syncNTPIfAvailable(bool displayOk) {
+void TelemetryManager::_syncNTPIfAvailable() {
     if (_rtc.isInitialized() && WiFi.status() == WL_CONNECTED) {
         DEBUG_PRINTLN("[TelemetryManager] Sincronizando NTP");
         if (_rtc.syncWithNTP()) {
             DEBUG_PRINTF("[TelemetryManager] NTP OK, local: %s, unix=%lu\n",
                          _rtc.getDateTime().c_str(),
                          _rtc.getUnixTime());
-            if (_useNewDisplay && displayOk) {
-                _displayMgr.showSensorInit("NTP Sync", true);
-                delay(500);
-            }
         } else {
             DEBUG_PRINTLN("[TelemetryManager] NTP FAIL (mantendo RTC atual)");
-            if (_useNewDisplay && displayOk) {
-                _displayMgr.showSensorInit("NTP Sync", false);
-                delay(500);
-            }
         }
     } else {
         DEBUG_PRINTLN("[TelemetryManager] NTP indisponivel (WiFi/RTC)");
@@ -240,20 +173,11 @@ void TelemetryManager::applyModeConfig(uint8_t modeIndex) {
     
     currentSerialLogsEnabled = activeModeConfig->serialLogsEnabled;
     
-    if (_useNewDisplay) {
-        if (activeModeConfig->displayEnabled) {
-            _displayMgr.turnOn();
-        } else {
-            _displayMgr.turnOff();
-        }
-    }
-    
     _comm.enableLoRa(activeModeConfig->loraEnabled);
     _comm.enableHTTP(activeModeConfig->httpEnabled);
     
-    DEBUG_PRINTF("[TelemetryManager] Modo aplicado: %d | Display: %s | Logs: %s | LoRa: %s\n",
+    DEBUG_PRINTF("[TelemetryManager] Modo aplicado: %d | Logs: %s | LoRa: %s\n",
                  mode,
-                 activeModeConfig->displayEnabled ? "ON" : "OFF",
                  activeModeConfig->serialLogsEnabled ? "ON" : "OFF",
                  activeModeConfig->loraEnabled ? "ON" : "OFF");
 }
@@ -262,20 +186,13 @@ bool TelemetryManager::begin() {
     uint32_t initialHeap = ESP.getFreeHeap();
     DEBUG_PRINTF("[TelemetryManager] Heap inicial: %lu bytes\n", initialHeap);
 
-    _initI2CBus();
     _initModeDefaults();
 
     bool success        = true;
     uint8_t subsystemsOk = 0;
-    bool displayOk      = false;
 
-    _initDisplay(displayOk);
-    _initSubsystems(displayOk, subsystemsOk, success);
-    _syncNTPIfAvailable(displayOk);
-
-    if (_useNewDisplay && displayOk) {
-        _displayMgr.showReady();
-    }
+    _initSubsystems(subsystemsOk, success);
+    _syncNTPIfAvailable();
 
     _logInitSummary(success, subsystemsOk, initialHeap);
     return success;
@@ -310,7 +227,7 @@ void TelemetryManager::loop() {
 
     _power.update();
 
-    // --- NOVO: agendamento das leituras de sensores ---
+    // Agendamento das leituras de sensores
     const unsigned long FAST_PERIOD_MS   = 500;   
     const unsigned long SLOW_PERIOD_MS   = 2000;   
     const unsigned long HEALTH_PERIOD_MS = 60000;  
@@ -329,11 +246,9 @@ void TelemetryManager::loop() {
         _lastSensorHealthUpdate = currentTime;
         _sensors.updateHealth();
     }
-    // --- FIM NOVO ---
 
     _comm.update();
     _rtc.update();
-
 
     _handleButtonEvents();
     _updateLEDIndicator(currentTime);
@@ -370,13 +285,11 @@ void TelemetryManager::loop() {
                 _storage.saveMissionData(receivedData);
             }
             
-            if (_useNewDisplay && activeModeConfig->displayEnabled) {
-                char nodeInfo[64];
-                snprintf(nodeInfo, sizeof(nodeInfo), "N%u:%.0f%% %ddBm",
-                         receivedData.nodeId,
-                         receivedData.soilMoisture,
-                         rssi);
-                _displayMgr.displayMessage("LORA RX", nodeInfo);
+            if (activeModeConfig->serialLogsEnabled) {
+                DEBUG_PRINTF("[TelemetryManager] Nó %u recebido: Solo=%.0f%% RSSI=%d dBm\n",
+                             receivedData.nodeId,
+                             receivedData.soilMoisture,
+                             rssi);
             }
         }
     }
@@ -390,7 +303,7 @@ void TelemetryManager::loop() {
 
     // Reset periódico de flags de retransmissão
     static unsigned long lastFlagReset = 0;
-    const unsigned long FLAG_RESET_INTERVAL = 60000UL;  // 60 s
+    const unsigned long FLAG_RESET_INTERVAL = 60000UL;
 
     if (currentTime - lastFlagReset >= FLAG_RESET_INTERVAL) {
         lastFlagReset = currentTime;
@@ -416,11 +329,6 @@ void TelemetryManager::loop() {
     if (currentTime - _lastStorageSave >= activeModeConfig->storageSaveInterval) {
         _lastStorageSave = currentTime;
         _saveToStorage();
-    }
-
-    // Atualizar display (se habilitado)
-    if (activeModeConfig->displayEnabled && _useNewDisplay) {
-        _displayMgr.updateTelemetry(_telemetryData);
     }
 
     delay(5);

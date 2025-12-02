@@ -9,11 +9,9 @@
 
 MissionController::MissionController(
     RTCManager& rtc, 
-    DisplayManager& display, 
     GroundNodeManager& nodes
 ) : 
     _rtc(rtc),
-    _display(display),
     _nodes(nodes),
     _active(false),
     _startTime(0),
@@ -42,12 +40,6 @@ bool MissionController::start() {
     } else {
         _startTimestampUTC = millis() / 1000;
         DEBUG_PRINTLN("[MissionController] RTC nao disponivel, usando millis");
-    }
-    
-    // Feedback visual
-    if (_display.isOn()) {
-        _display.displayMessage("MISSAO HAB", "INICIADA");
-        delay(2000);
     }
     
     // Marcar início
@@ -86,16 +78,6 @@ bool MissionController::stop() {
     
     // Estatísticas dos nós
     _printStatistics();
-    
-    // Feedback visual
-    if (_display.isOn()) {
-        char durationStr[32];
-        snprintf(durationStr, sizeof(durationStr), "%lum%lus",
-                 duration / 60000,
-                 (duration % 60000) / 1000);
-        _display.displayMessage("MISSAO COMPLETA", durationStr);
-        delay(2000);
-    }
     
     // Desativar
     _active = false;

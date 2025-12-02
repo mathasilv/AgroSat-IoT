@@ -552,24 +552,21 @@ void PayloadManager::_addSatelliteDataToJson(JsonDocument& doc, const TelemetryD
     doc["equipe"] = TEAM_ID;
     doc["bateria"] = (int)data.batteryPercentage;
 
-    char tempStr[8];
-    sprintf(tempStr, "%.2f", isnan(data.temperature) ? 0.0f : data.temperature);
-    if (atof(tempStr) < TEMP_MIN_VALID || atof(tempStr) > TEMP_MAX_VALID)
-        strcpy(tempStr, "0.00");
+    char tempStr[16]; // Aumentado para 16
+    snprintf(tempStr, sizeof(tempStr), "%.2f", isnan(data.temperature) ? 0.0f : data.temperature);
+    if (atof(tempStr) < TEMP_MIN_VALID || atof(tempStr) > TEMP_MAX_VALID) strlcpy(tempStr, "0.00", sizeof(tempStr));
     doc["temperatura"] = tempStr;
 
-    char pressStr[8];
-    sprintf(pressStr, "%.2f", isnan(data.pressure) ? 1013.25f : data.pressure);
-    if (atof(pressStr) < PRESSURE_MIN_VALID || atof(pressStr) > PRESSURE_MAX_VALID)
-        strcpy(pressStr, "0.00");
+    char pressStr[16];
+    snprintf(pressStr, sizeof(pressStr), "%.2f", isnan(data.pressure) ? 1013.25f : data.pressure);
+    if (atof(pressStr) < PRESSURE_MIN_VALID || atof(pressStr) > PRESSURE_MAX_VALID) strlcpy(pressStr, "0.00", sizeof(pressStr));
     doc["pressao"] = pressStr;
 
     // Giroscópio
-    char gyroX[8], gyroY[8], gyroZ[8];
-    sprintf(gyroX, "%.2f", isnan(data.gyroX) ? 0.0f : data.gyroX);
-    sprintf(gyroY, "%.2f", isnan(data.gyroY) ? 0.0f : data.gyroY);
-    sprintf(gyroZ, "%.2f", isnan(data.gyroZ) ? 0.0f : data.gyroZ);
-
+    char gyroX[16], gyroY[16], gyroZ[16]; // Aumentado para 16
+    snprintf(gyroX, sizeof(gyroX), "%.2f", isnan(data.gyroX) ? 0.0f : data.gyroX);
+    snprintf(gyroY, sizeof(gyroY), "%.2f", isnan(data.gyroY) ? 0.0f : data.gyroY);
+    snprintf(gyroZ, sizeof(gyroZ), "%.2f", isnan(data.gyroZ) ? 0.0f : data.gyroZ);
     JsonArray giroscopio = doc.createNestedArray("giroscopio");
     giroscopio.add(gyroX); giroscopio.add(gyroY); giroscopio.add(gyroZ);
 
