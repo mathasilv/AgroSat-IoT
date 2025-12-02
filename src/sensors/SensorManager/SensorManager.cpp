@@ -1,6 +1,8 @@
 /**
  * @file SensorManager.cpp
  * @brief SensorManager V6.1.0 - Com Recuperação Física de I2C
+ * @version 6.1.0
+ * @date 2025-12-02
  */
 
 #include "SensorManager.h"
@@ -8,10 +10,12 @@
 #include <Preferences.h>
 
 // ============================================================================
-// CONSTRUTOR
-// ============================================================================
+// CONSTRUTOR (CORRIGIDO - SEM as variáveis de timing)
 SensorManager::SensorManager()
     : _mpu9250(MPU9250_ADDRESS),
+      _bmp280(),
+      _si7021(),
+      _ccs811(),
       _sensorCount(0),
       _lastEnvCompensation(0),
       _lastHealthCheck(0),
@@ -91,7 +95,6 @@ bool SensorManager::begin() {
 // ============================================================================
 // ATUALIZAÇÕES (LOOPS)
 // ============================================================================
-
 void SensorManager::updateFast() {
     if (_lockI2C()) {
         _mpu9250.update();
@@ -102,15 +105,16 @@ void SensorManager::updateFast() {
 }
 
 void SensorManager::updateSlow() {
+    static uint32_t lastSlowUpdate = 0;
+    if (millis() - lastSlowUpdate < 2000) return; // 2s entre leituras
+    
+    lastSlowUpdate = millis();
+
     if (_lockI2C()) {
-        // --- ATUALIZAÇÃO PADRÃO (Sem troca de clock dinâmica) ---
-        // Mantemos a estabilidade em 100kHz (configurado na Main)
-        
         _si7021.update();
+        delay(200);                  // Aguarde 100 ms antes da próxima leitura
         _ccs811.update();
-        
         _autoApplyEnvironmentalCompensation();
-        
         _unlockI2C();
     }
 }
@@ -123,7 +127,6 @@ void SensorManager::updateHealth() {
         _performHealthCheck();
     }
 
-    // Monitoramento de Falha Global
     bool anyOnline = _mpu9250.isOnline() || _bmp280.isOnline() || _si7021.isOnline() || _ccs811.isOnline();
     if (!anyOnline) {
         _consecutiveFailures++;
@@ -132,59 +135,74 @@ void SensorManager::updateHealth() {
     }
 }
 
+/**
+ * @brief Loop principal de atualização dos sensores
+ * @note VARIÁVEIS LOCAIS ESTÁTICAS - NÃO MEMBROS DA CLASSE!
+ */
 void SensorManager::update() {
-    static uint32_t lastFullUpdate = 0;
+    // ✅ VARIÁVEIS LOCAIS ESTÁTICAS (NÃO membros da classe!)
     static uint32_t lastFastUpdate = 0;
+    static uint32_t lastFullUpdate = 0;
+    static uint32_t lastCCS811Update = 0;
     uint32_t now = millis();
     
-    // 🔧 MPU9250 (alta frequência - 100Hz OK)
-    if (now - lastFastUpdate > 10) {  // 100Hz
-        _mpu9250.update();
+    // MPU9250 - alta frequência (100Hz)
+    if (now - lastFastUpdate >= 10) {
+        if (_lockI2C()) {
+            _mpu9250.update();
+            _unlockI2C();
+        }
         lastFastUpdate = now;
     }
     
-    // 🔧 Sensores I2C LENTOS (500ms intervalo - EVITA erro 263)
-    if (now - lastFullUpdate > 500) {
+    // Sensores I2C LENTOS - 500ms
+    if (now - lastFullUpdate >= 500) {
         lastFullUpdate = now;
         
-        _bmp280.update();
-        _si7021.update();
-        _ccs811.update();
+        if (_lockI2C()) {
+            _bmp280.update();
+            _si7021.update();
+            _updateTemperatureRedundancy();
+            _unlockI2C();
+        }
+    }
+    
+    // CCS811 separado com intervalo maior (2000ms)
+    if (now - lastCCS811Update >= 2000) {
+        lastCCS811Update = now;
+        
+        if (_lockI2C()) {
+            _ccs811.update();
+            _autoApplyEnvironmentalCompensation();
+            _unlockI2C();
+        }
     }
 }
 
-
 // ============================================================================
-// HEALTH CHECK & RESET (COM RECUPERAÇÃO FÍSICA)
+// HEALTH CHECK & RESET
 // ============================================================================
-
 void SensorManager::_performHealthCheck() {
-    // 1. Verifica se o CCS811 morreu (Erro 263 constante)
-    // Se ele estiver marcado como offline mas deveria estar online, ou falhando muito
     static uint8_t ccsDeadCount = 0;
     
     if (_ccs811.isOnline()) {
-        // Se estiver online, zera contador
         ccsDeadCount = 0;
     } else {
-        // Se estiver offline, conta falhas
         ccsDeadCount++;
         if (ccsDeadCount >= 3) {
             DEBUG_PRINTLN("[SensorManager] ⚠ CCS811 TRAVADO! Iniciando Reset Físico do Barramento...");
-            resetAll(); // Aciona a "Bomba Atômica" de reset
+            resetAll();
             ccsDeadCount = 0;
-            return; // Sai após resetar tudo
+            return;
         }
     }
 
-    // 2. Reset Global por falha total
     if (_consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         DEBUG_PRINTLN("[SensorManager] Falha crítica global: Resetando todos os sensores...");
         resetAll(); 
         return;
     }
     
-    // 3. Recuperação Individual (Leve)
     if (_lockI2C()) {
         if (!_mpu9250.isOnline() && _mpu9250.getFailCount() >= 5) {
             _mpu9250.reset();
@@ -204,25 +222,23 @@ void SensorManager::resetAll() {
     if (_lockI2C()) {
         DEBUG_PRINTLN("[SensorManager] >>> RECUPERANDO BARRAMENTO I2C <<<");
         
-        // 1. Desliga o periférico I2C do ESP32
         Wire.end();
         delay(50);
         
-        // 2. Bit-Banging para destravar SDA (Técnica de 9 Clocks)
-        // Isso solta sensores que ficaram travados no meio de um byte
+        // Bit-Banging para destravar SDA (9 Clocks)
         pinMode(SENSOR_I2C_SDA, OUTPUT);
         pinMode(SENSOR_I2C_SCL, OUTPUT);
-        digitalWrite(SENSOR_I2C_SDA, HIGH); // Solta dados
+        digitalWrite(SENSOR_I2C_SDA, HIGH);
         digitalWrite(SENSOR_I2C_SCL, HIGH);
         
-        for(int i=0; i<9; i++) {
+        for(int i = 0; i < 9; i++) {
             digitalWrite(SENSOR_I2C_SCL, LOW);
             delayMicroseconds(10);
             digitalWrite(SENSOR_I2C_SCL, HIGH);
             delayMicroseconds(10);
         }
         
-        // Gera um sinal de STOP manual
+        // Sinal de STOP manual
         digitalWrite(SENSOR_I2C_SDA, LOW);
         delayMicroseconds(10);
         digitalWrite(SENSOR_I2C_SCL, HIGH);
@@ -230,14 +246,13 @@ void SensorManager::resetAll() {
         digitalWrite(SENSOR_I2C_SDA, HIGH);
         delay(50);
         
-        // 3. Reinicia o Wire com Configuração Segura
+        // Reinicia Wire
         Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
-        Wire.setClock(100000); // 100kHz
-        Wire.setTimeOut(1000); // 1000ms Timeout
+        Wire.setClock(100000);
+        Wire.setTimeout(1000);
         
         DEBUG_PRINTLN("[SensorManager] Barramento reiniciado. Reconfigurando sensores...");
         
-        // 4. Reinicia Drivers
         _mpu9250.reset();
         _bmp280.forceReinit();
         _si7021.reset();
@@ -251,7 +266,7 @@ void SensorManager::resetAll() {
 }
 
 // ============================================================================
-// CALIBRAÇÃO E UTILS (Mantidos iguais)
+// CALIBRAÇÃO E UTILS
 // ============================================================================
 bool SensorManager::recalibrateMagnetometer() {
     if (!_mpu9250.isOnline() || !_mpu9250.isMagOnline()) return false;
@@ -295,17 +310,27 @@ bool SensorManager::applyCCS811EnvironmentalCompensation(float temperature, floa
 }
 
 void SensorManager::_autoApplyEnvironmentalCompensation() {
-    unsigned long now = millis();
-    if (now - _lastEnvCompensation < ENV_COMPENSATION_INTERVAL) return;
+    uint32_t now = millis();
+    
+    if (now - _lastEnvCompensation < 90000) {
+        return;
+    }
+    
     _lastEnvCompensation = now;
-
-    if (!_ccs811.isOnline()) return;
-
-    float temp = (!isnan(_temperature)) ? _temperature : 25.0f;
-    float hum = (_si7021.isOnline()) ? _si7021.getHumidity() : 50.0f;
-
-    _ccs811.setEnvironmentalData(hum, temp);
-    DEBUG_PRINTF("[SensorManager] Comp. Amb. Automática: T=%.1f H=%.1f\n", temp, hum);
+    
+    if (!_ccs811.isOnline()) {
+        return;
+    }
+    
+    float temp = !isnan(_temperature) ? _temperature : 25.0f;
+    float hum = _si7021.isOnline() ? _si7021.getHumidity() : 50.0f;
+    
+    if (_lockI2C()) {
+        _ccs811.setEnvironmentalData(hum, temp);
+        _unlockI2C();
+        delay(150);
+        DEBUG_PRINTF("[SensorManager] Comp. Amb. Automática: T=%.1f H=%.1f\n", temp, hum);
+    }
 }
 
 bool SensorManager::saveCCS811Baseline() {

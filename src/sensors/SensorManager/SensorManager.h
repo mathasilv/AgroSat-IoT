@@ -5,13 +5,16 @@
  * @date 2025-12-02
  */
 
+
 #ifndef SENSORMANAGER_H
 #define SENSORMANAGER_H
+
 
 #include <Arduino.h>
 #include <Wire.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+
 
 // Includes dos Managers Específicos
 #include "sensors/MPU9250Manager/MPU9250Manager.h"
@@ -20,11 +23,14 @@
 #include "sensors/CCS811Manager/CCS811Manager.h"
 #include "config.h"
 
+
 class SensorManager {
 public:
     SensorManager();
 
+
     bool begin();
+
 
     // ========================================
     // Ciclos de Atualização
@@ -34,11 +40,13 @@ public:
     void updateHealth();  // Health check/reset
     void update();        // Wrapper geral
 
+
     // ========================================
     // Controle e Reset
     // ========================================
     void reset();
     void resetAll();
+
 
     // ========================================
     // Comandos de calibração
@@ -62,6 +70,7 @@ public:
     bool isBMP280Online() const { return _bmp280.isOnline(); }
     bool isSI7021Online() const { return _si7021.isOnline(); }
     bool isCCS811Online() const { return _ccs811.isOnline(); }
+
 
     bool isMagnetometerCalibrated() const { return _mpu9250.isCalibrated(); }
     bool isCCS811WarmupComplete() const { return _ccs811.isWarmupComplete(); }
@@ -127,13 +136,16 @@ private:
     uint8_t _consecutiveFailures;
     float _temperature; 
 
+
     // Variáveis do Mutex (FreeRTOS)
     SemaphoreHandle_t _i2cMutex;
+
 
     // Constantes
     static constexpr unsigned long ENV_COMPENSATION_INTERVAL = 60000;  // 60s
     static constexpr unsigned long HEALTH_CHECK_INTERVAL = 30000;      // 30s
     static constexpr uint8_t MAX_CONSECUTIVE_FAILURES = 10;
+
 
     // Métodos privados
     void _autoApplyEnvironmentalCompensation();
@@ -144,5 +156,6 @@ private:
     bool _lockI2C();
     void _unlockI2C();
 };
+
 
 #endif // SENSORMANAGER_H

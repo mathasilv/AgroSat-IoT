@@ -19,6 +19,36 @@ bool CommandHandler::handle(const String& cmd) {
     if (_handleCCS811Commands(cmd)) return true;
     if (_handleSystemCommands(cmd)) return true;
     
+    if (cmd == "TEST_CCS811") {  // Novo comando para teste CCS811
+        DEBUG_PRINTLN("[CommandHandler] === TESTE ISOLADO CCS811 ===");
+        
+        // 1. Testar presença I2C no endereço padrão
+        Wire.beginTransmission(0x5A);
+        uint8_t ping = Wire.endTransmission();
+        DEBUG_PRINTF("Ping 0x5A: %d (0=OK)\n", ping);
+        
+        Wire.beginTransmission(0x5B);
+        ping = Wire.endTransmission();
+        DEBUG_PRINTF("Ping 0x5B: %d (0=OK)\n", ping);
+        
+        // 2. Ler HW_ID
+        Wire.beginTransmission(0x5A);
+        Wire.write(0x20); // REG_HW_ID
+        if (Wire.endTransmission(false) == 0) {
+            if (Wire.requestFrom(0x5A, 1) == 1) {
+                uint8_t hwId = Wire.read();
+                DEBUG_PRINTF("HW_ID 0x5A: 0x%02X (esperado 0x81)\n", hwId);
+            }
+        }
+        
+        // 3. Resetar barramento I2C fisicamente via SensorManager
+        _sensors.resetAll();
+        delay(1000);
+        
+        DEBUG_PRINTLN("[CommandHandler] Teste CCS811 concluído");
+        return true;
+    }
+    
     // Comando não reconhecido
     DEBUG_PRINTF("[CommandHandler] Comando desconhecido: %s\n", cmd.c_str());
     return false;

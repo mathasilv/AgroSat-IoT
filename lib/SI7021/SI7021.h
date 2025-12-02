@@ -20,17 +20,16 @@
 static constexpr uint8_t SI7021_I2C_ADDR = 0x40;
 
 // Comandos principais (datasheet Si7021)
-static constexpr uint8_t SI7021_CMD_MEASURE_RH_NOHOLD = 0xF5;  // Measure RH, no hold master
-static constexpr uint8_t SI7021_CMD_MEASURE_T_NOHOLD  = 0xF3;  // Measure T, no hold master
-static constexpr uint8_t SI7021_CMD_SOFT_RESET        = 0xFE;  // Soft reset
-static constexpr uint8_t SI7021_CMD_READ_USER_REG     = 0xE7;  // Read user register
+static constexpr uint8_t SI7021_CMD_MEASURE_RH_NOHOLD = 0xF5; // Measure RH, no hold master
+static constexpr uint8_t SI7021_CMD_MEASURE_T_NOHOLD  = 0xF3; // Measure T, no hold master
+static constexpr uint8_t SI7021_CMD_SOFT_RESET         = 0xFE; // Soft reset
+static constexpr uint8_t SI7021_CMD_READ_USER_REG      = 0xE7; // Read user register
 
 // Comandos para leitura de ID eletrônico (não usados diretamente, mas mantidos para futura expansão)
-// Sequência correta (2 bytes): 0xFA 0x0F e 0xFC 0xC9 (ver datasheet)
-static constexpr uint8_t SI7021_CMD_READ_ID1_MSB      = 0xFA;
-static constexpr uint8_t SI7021_CMD_READ_ID1_LSB      = 0x0F;
-static constexpr uint8_t SI7021_CMD_READ_ID2_MSB      = 0xFC;
-static constexpr uint8_t SI7021_CMD_READ_ID2_LSB      = 0xC9;
+static constexpr uint8_t SI7021_CMD_READ_ID1_MSB = 0xFA;
+static constexpr uint8_t SI7021_CMD_READ_ID1_LSB = 0x0F;
+static constexpr uint8_t SI7021_CMD_READ_ID2_MSB = 0xFC;
+static constexpr uint8_t SI7021_CMD_READ_ID2_LSB = 0xC9;
 
 class SI7021 {
 public:
@@ -68,9 +67,7 @@ public:
 
     /**
      * @brief Retorna o "device ID" interno armazenado
-     *
-     * No momento, este campo é usado como snapshot de um registrador
-     * interno simples (user register), ou 0 caso não tenha sido lido.
+     * No momento, este campo é usado como snapshot de um registrador interno simples (user register), ou 0 caso não tenha sido lido.
      */
     uint8_t getDeviceID() const { return _deviceID; }
 
@@ -81,9 +78,9 @@ public:
 
 private:
     TwoWire* _wire;
-    uint8_t  _addr;
-    bool     _online;
-    uint8_t  _deviceID;
+    uint8_t _addr;
+    bool _online;
+    uint8_t _deviceID;
 
     bool _writeCommand(uint8_t cmd);
     bool _readBytes(uint8_t* buf, size_t len);

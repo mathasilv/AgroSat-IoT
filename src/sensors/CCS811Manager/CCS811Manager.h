@@ -1,8 +1,8 @@
 /**
  * @file CCS811Manager.h
  * @brief Gerenciador dedicado do sensor CCS811 - Módulo isolado
- * @version 1.0.0
- * @date 2025-11-30
+ * @version 1.1.0
+ * @date 2025-12-02
  * 
  * CARACTERÍSTICAS:
  * - Usa biblioteca CCS811 nativa (sem Adafruit)
@@ -11,6 +11,7 @@
  * - Compensação ambiental automática (temperatura + umidade)
  * - Baseline management (save/restore)
  * - Interface limpa para integração com SensorManager
+ * - Controle de timing para evitar erro I2C 263
  */
 
 #ifndef CCS811MANAGER_H
@@ -44,7 +45,7 @@ public:
     // Status
     bool isOnline() const { return _online; }
     bool isWarmupComplete() const;
-    bool isDataReliable() const;  // ← NOVO: verifica se passou 20 min
+    bool isDataReliable() const;  // Verifica se passou 20 min
     uint32_t getWarmupProgress() const; // 0-100%
     
     // Diagnóstico
@@ -65,14 +66,18 @@ private:
     unsigned long _initTime;
     unsigned long _lastReadTime;
     
+    // [NOVO] Controle de compensação ambiental
+    bool _envCompensationApplied;
+    unsigned long _lastEnvCompensation;
+    
     // Warm-up (20 minutos para melhor precisão, mas funcional após 20s)
-    static constexpr unsigned long WARMUP_MINIMUM = 20000;  // 20s (funcional)
-    static constexpr unsigned long WARMUP_OPTIMAL = 1200000; // 20 min (ideal)
+    static constexpr unsigned long WARMUP_MINIMUM = 20000;    // 20s (funcional)
+    static constexpr unsigned long WARMUP_OPTIMAL = 1200000;  // 20 min (ideal)
     
     // Intervalo de leitura (não ler mais rápido que a taxa de medição)
-    static constexpr unsigned long READ_INTERVAL = 5000; // 5s
+    static constexpr unsigned long READ_INTERVAL = 2000;  // 2s (CORRIGIDO de 5s)
     
-    // Limites de validação
+    // Limites de validação (conforme datasheet CCS811)
     static constexpr uint16_t ECO2_MIN = 400;
     static constexpr uint16_t ECO2_MAX = 8192;
     static constexpr uint16_t TVOC_MAX = 1187;

@@ -31,7 +31,7 @@ bool CCS811::begin(uint8_t i2cAddress) {
     // NOTA IMPORTANTE:
     // Removemos Wire.begin() e Wire.end() daqui.
     // O barramento I2C deve ser configurado na main.cpp com:
-    // Wire.setClock(20000); e Wire.setTimeOut(200); para estabilidade.
+    // Wire.setClock(20000); e Wire.setTimeout(200); para estabilidade.
     
     delay(100); // Pausa para estabilização elétrica apenas
     
@@ -93,9 +93,9 @@ bool CCS811::begin(uint8_t i2cAddress) {
 // RESET
 // ============================================================================
 void CCS811::reset() {
-    #ifdef DEBUG_CCS811
+#ifdef DEBUG_CCS811
     Serial.println("[CCS811] Software reset...");
-    #endif
+#endif
     
     // Sequência de reset: escrever 0x11, 0xE5, 0x72, 0x8A no registro 0xFF
     uint8_t resetSeq[4] = {0x11, 0xE5, 0x72, 0x8A};
@@ -156,42 +156,41 @@ bool CCS811::available() {
 bool CCS811::readData() {
     if (!_initialized) return false;
     
+    uint8_t status;
+    if (!_readRegister(REG_STATUS, status)) {
+        return false;
+    }
+    
+    if (!(status & STATUS_DATA_READY)) {
+        return false;
+    }
+    
     uint8_t buffer[8];
-    // Tenta ler 8 bytes (ALG_RESULT_DATA)
-    // Se falhar (timeout ou erro), retorna false sem travar
     if (!_readRegisters(REG_ALG_RESULT_DATA, buffer, 8)) {
         return false;
     }
     
-    // Formato: eCO2(2) TVOC(2) STATUS(1) ERROR_ID(1) RAW_DATA(2)
-    uint16_t eco2 = (uint16_t(buffer[0]) << 8) | buffer[1];
-    uint16_t tvoc = (uint16_t(buffer[2]) << 8) | buffer[3];
-    uint8_t status = buffer[4];
+    uint16_t eco2_raw = (uint16_t(buffer[0]) << 8) | buffer[1];
+    uint16_t tvoc_raw = (uint16_t(buffer[2]) << 8) | buffer[3];
+    uint8_t status_byte = buffer[4];
     uint8_t errorId = buffer[5];
     
-    // Verificar se há erro reportado pelo sensor
-    if (status & STATUS_ERROR) {
-        #ifdef DEBUG_CCS811
+    if (status_byte & STATUS_ERROR) {
+#ifdef DEBUG_CCS811
         Serial.printf("[CCS811] Erro interno do sensor: 0x%02X\n", errorId);
-        #endif
-        // Não invalidamos a leitura imediatamente se houver dados antigos,
-        // mas idealmente retornamos false para indicar problema.
+#endif
         return false;
     }
     
-    // Validar valores (filtros simples para evitar ruído extremo)
-    if (eco2 < 400 || eco2 > 8192) {
-        // eCO2 fora do range físico
+    if (eco2_raw < 400 || eco2_raw > 8192) {
+        return false;
+    }
+    if (tvoc_raw > 1187) {
         return false;
     }
     
-    if (tvoc > 1187) {
-        // TVOC fora do range físico
-        return false;
-    }
-    
-    _eco2 = eco2;
-    _tvoc = tvoc;
+    _eco2 = eco2_raw;
+    _tvoc = tvoc_raw;
     
     return true;
 }
@@ -232,7 +231,6 @@ bool CCS811::readRawData(uint16_t& current, uint16_t& voltage) {
         return false;
     }
     
-    // Current: bits [15:10], Voltage: bits [9:0]
     uint16_t rawData = (uint16_t(buffer[0]) << 8) | buffer[1];
     current = (rawData >> 10) & 0x3F;
     voltage = rawData & 0x3FF;
@@ -252,7 +250,7 @@ uint8_t CCS811::getHardwareID() {
 uint8_t CCS811::getHardwareVersion() {
     uint8_t version = 0;
     _readRegister(REG_HW_VERSION, version);
-    return (version >> 4) & 0x0F; // Upper nibble
+    return (version >> 4) & 0x0F;
 }
 
 uint16_t CCS811::getBootloaderVersion() {
@@ -280,7 +278,7 @@ uint8_t CCS811::getErrorCode() {
 bool CCS811::checkError() {
     uint8_t status;
     if (!_readRegister(REG_STATUS, status)) {
-        return true; // Assume erro se não conseguir ler
+        return true;
     }
     return (status & STATUS_ERROR) != 0;
 }
@@ -291,8 +289,6 @@ bool CCS811::checkError() {
 bool CCS811::_checkHardwareID() {
     uint8_t hwId = 0;
     
-    // MÉTODO ROBUSTO: 3 tentativas
-    // Removemos os Wire.begin()/end() daqui para não resetar o barramento
     for (int retry = 0; retry < 3; retry++) {
         if (_readRegister(REG_HW_ID, hwId)) {
             if (hwId == HW_ID_CODE) {
@@ -300,7 +296,6 @@ bool CCS811::_checkHardwareID() {
                 return true;
             }
         }
-        
         Serial.printf("[CCS811] HW_ID retry %d/3 (lido: 0x%02X)\n", retry+1, hwId);
         delay(50);
     }
@@ -309,34 +304,29 @@ bool CCS811::_checkHardwareID() {
     return false;
 }
 
-
 bool CCS811::_verifyAppValid() {
     uint8_t status;
     if (!_readRegister(REG_STATUS, status)) {
         return false;
     }
-    
     return (status & STATUS_APP_VALID) != 0;
 }
 
 bool CCS811::_startApp() {
-    // Enviar comando APP_START (0xF4) sem dados
     return _writeCommand(REG_APP_START);
 }
 
 bool CCS811::_waitForAppMode(uint32_t timeoutMs) {
     uint32_t startTime = millis();
-    
     while (millis() - startTime < timeoutMs) {
         uint8_t status;
         if (_readRegister(REG_STATUS, status)) {
             if (status & STATUS_FW_MODE) {
-                return true; // APP mode ativo
+                return true;
             }
         }
         delay(10);
     }
-    
     return false;
 }
 
@@ -348,35 +338,25 @@ bool CCS811::_readRegister(uint8_t reg, uint8_t& value) {
 }
 
 bool CCS811::_readRegisters(uint8_t reg, uint8_t* buffer, size_t length) {
-    // 🔧 CORREÇÃO CRÍTICA: 5 tentativas com delay 75ms (baseado em ESP32 forums)
-    for (uint8_t attempt = 0; attempt < 5; attempt++) {
-        
+    for (uint8_t attempt = 0; attempt < 5; attempt++) {        
         _wire->beginTransmission(_i2cAddress);
         _wire->write(reg);
         
-        // Se falhar na transmissão do endereço, retry com delay maior
         if (_wire->endTransmission(false) != 0) {
-            delay(75);  // ✅ Aumentado de 10ms → 75ms (solução comprovada)
+            delay(100);
             continue;
         }
         
-        // Tentar leitura - se falhar (timeout 263), retry
         if (_wire->requestFrom(_i2cAddress, length) == length) {
-            // ✅ Sucesso! Ler dados
             for (size_t i = 0; i < length; i++) {
                 buffer[i] = _wire->read();
             }
             return true;
         }
-        
-        // Falha na leitura - aguardar mais antes do próximo retry
-        delay(75);  // ✅ Aumentado de 10ms → 75ms
+        delay(100);
     }
-    
-    // Falhou após 5 tentativas (375ms total)
     return false;
 }
-
 
 bool CCS811::_writeRegister(uint8_t reg, uint8_t value) {
     return _writeRegisters(reg, &value, 1);
@@ -403,10 +383,6 @@ bool CCS811::_writeCommand(uint8_t command) {
 // MÉTODOS INTERNOS - CONVERSÃO
 // ============================================================================
 void CCS811::_encodeEnvironmentalData(float humidity, float temperature, uint8_t* buffer) {
-    // Formato Q9.7 (datasheet seção 4.11):
-    // Humidity: valor * 512 (1 bit sign, 9 bits integer, 7 bits fractional)
-    // Temperature: (valor + 25) * 512
-    
     uint16_t humReg = static_cast<uint16_t>(humidity * 512.0f + 0.5f);
     uint16_t tempReg = static_cast<uint16_t>((temperature + 25.0f) * 512.0f + 0.5f);
     
