@@ -1,140 +1,119 @@
-# AgroSat-IoT
+# 🛰️ AgroSat-IoT - Sistema de Monitoramento Agrícola por Satélite
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+## Visão Geral do Projeto
 
-AgroSat-IoT is an advanced IoT platform designed for precision agriculture applications using ESP32-based hardware with LoRa communication capabilities. The project implements a modular firmware architecture optimized for low-power operation, sensor data acquisition, and satellite IoT integration for remote agricultural monitoring.
+O **AgroSat-IoT** é um sistema embarcado de aquisição de dados, com capacidade de retransmissão de dados via satélite de órbita baixa (LEO) no modelo **Store-and-Forward**. Seu principal objetivo é fornecer uma solução de **Agricultura de Precisão** para monitoramento de nós terrestres (sensores de solo) em áreas rurais sem conectividade convencional.
 
-## Features
+Desenvolvido em torno do microcontrolador **ESP32**, o projeto foca na robustez, baixo consumo de energia e comunicação de longo alcance via **LoRa** para coletar dados dos nós terrestres e retransmiti-los para uma estação em terra durante as passagens do CubeSat.
 
-- **Dual Communication**: LoRaWAN and satellite IoT connectivity
-- **Low-Power Design**: Optimized for long-term field deployment
-- **Modular Architecture**: ESP32 with Arduino framework and ESP-IDF integration
-- **Sensor Integration**: Soil moisture, temperature, humidity, and environmental sensors
-- **Flight-Ready**: Designed for agricultural satellite missions
-- **Mesh Networking**: LoRa mesh capabilities for extended coverage
+## Missão e Funcionalidades Chave
 
-## Hardware Requirements
+A missão principal do AgroSat-IoT é atuar como um **nó de coleta e retransmissão orbital**, garantindo que os dados críticos de campo cheguem à base de controle.
 
-- **Primary Board**: ESP32-S3 or ESP32-C3 variant
-- **LoRa Module**: SX1262/SX1276 compatible
-- **Sensors**: 
-  - Soil moisture sensor (capacitive)
-  - Temperature/humidity (DHT22/SHT3x)
-  - Light intensity (TSL2561/BH1750)
-  - Optional: GPS module (NEO-6M/7M)
-- **Power**: Solar panel + LiPo battery with charging circuit
+* **🛰️ Telemetria Científica**: Coleta contínua de dados ambientais do próprio CubeSat (temperatura, pressão, IMU 9-DOF, altitude, gases e saúde do sistema).
+* **📡 Função Store-and-Forward (LoRa Relay)**: Recebe e armazena pacotes de dados de diversos **Nós Terrestres** (Ground Nodes) via LoRa e os retransmite à estação em terra via uplink HTTP ou formato binário de satélite.
+* **⚙️ Gerenciamento de Missão**: Implementação de modos de operação (`PREFLIGHT`, `FLIGHT`, `SAFE`) com persistência de estado (NVS) e recuperação de falhas.
+* **🛡️ Saúde e Robustez do Sistema**: Monitoramento contínuo de recursos (Heap, Watchdog) com estratégias automáticas de reinicialização e modos de baixo consumo de energia.
+* **💾 Armazenamento de Dados**: Gerenciamento robusto de cartão SD (SD Card) para log de telemetria, erros e dados da missão, com função de rotação de arquivos por tamanho.
 
-## Software Architecture
+## Arquitetura de Software
 
-```
-AgroSat-IoT/
-├── src/
-│   ├── core/           # Core system modules
-│   │   ├── sensors/
-│   │   ├── comm/
-│   │   ├── power/
-│   │   └── state_machine/
-│   ├── lora/           # LoRaWAN implementation
-│   ├── satellite/      # Satellite comm protocol
-│   └── main.cpp
-├── lib/
-│   └── deps/           # External dependencies
-├── test/
-└── platformio.ini
-```
+A arquitetura modular e orientada a objetos é implementada em C++ no framework Arduino/ESP-IDF, seguindo o padrão de **Gerenciadores de Serviço** para abstrair o hardware e o comportamento da missão.
 
-## Quick Start
+| Diretório | Responsabilidade | Componentes Chave |
+| :--- | :--- | :--- |
+| `src/core` | Funções de baixo nível, tempo e sistema. | `RTCManager`, `PowerManager`, `SystemHealth`, `ButtonHandler` |
+| `src/sensors` | Interface centralizada para todos os sensores. | `SensorManager`, `MPU9250Manager`, `BMP280Manager`, `SI7021Manager`, `CCS811Manager` |
+| `src/comm` | Todos os links de comunicação e formatação de dados. | `CommunicationManager`, `LoRaService`, `WiFiService`, `HttpService`, `PayloadManager` |
+| `src/app` | Lógica de negócio, estado da missão e coleta de telemetria. | `TelemetryManager`, `MissionController`, `GroundNodeManager`, `TelemetryCollector` |
+| `src/storage` | Leitura/Escrita de dados no SD Card e log de sistema. | `StorageManager` |
 
-### Prerequisites
-- [PlatformIO](https://platformio.org/) extension for VSCode
-- ESP32 board support
-- Serial monitor (PlatformIO Serial or Arduino IDE)
 
-### Development Setup
-```bash
-# Clone repository
-git clone https://github.com/mathasilv/AgroSat-IoT.git
-cd AgroSat-IoT
+## Configuração e Especificações Técnicas
 
-# Install dependencies
-pio lib install "LoRa","ArduinoJson","LittleFS"
+### 1. Hardware e Pinos
 
-# Build and upload
-pio run -e esp32-s3-devkitc-1 -t upload
-```
+O projeto é otimizado para placas com ESP32 e módulo LoRa (ex: **TTGO LoRa32-V2.1**). As configurações de pinos estão definidas em `include/config.h`.
 
-### Configuration
-1. Update `src/config.h` with your LoRaWAN credentials
-2. Configure sensor pins in `src/sensors/sensor_config.h`
-3. Set satellite communication parameters in `src/satellite/config.h`
+| Periférico | Função | Pinos (Padrão) |
+| :--- | :--- | :--- |
+| **LoRa** | SPI | SCK(5), MISO(19), MOSI(27), CS(18), RST(23), DIO0(26) |
+| **SD Card** | SPI | CS(13), MOSI(15), MISO(2), SCLK(14) |
+| **I2C Sensores** | SDA, SCL | SDA(21), SCL(22) |
+| **Bateria** | Leitura Analógica | PIN(35) |
+| **Botão de Controle** | Entrada | PIN(4) |
 
-## Build Targets
+### 2. Barramento I2C Robusto
 
-| Environment | Board | Description |
-|-------------|-------|-------------|
-| `esp32-s3-devkitc-1` | ESP32-S3 | Development board |
-| `lilygo-lora32` | TTGO LoRa32 | LoRa field deployment |
-| `esp32-c3-devkit` | ESP32-C3 | Low-power variant |
+A configuração do I2C é crítica para o funcionamento do sensor de qualidade do ar **CCS811**, que utiliza **Clock Stretching**. O sistema aplica uma correção de inicialização para evitar falhas I2C (`ERRO 263`):
+* **Frequência**: $50 \text{kHz}$ (Para robustez)
+* **Timeout**: $3000 \text{ms}$
 
-## Power Optimization
+### 3. Modos de Operação
 
-The firmware implements aggressive power saving:
-- Deep sleep cycles with 8s wake intervals
-- Sensor sampling optimization
-- Dynamic transmission scheduling
-- Brown-out detection and recovery
+O sistema possui modos operacionais distintos, gerenciados pelo `TelemetryManager`, com configurações específicas de consumo e comunicação:
 
-**Expected Battery Life**: 6-12 months with solar charging
+| Modo | Descrição | Log Serial | LoRa TX | HTTP TX | Intervalo SD |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `MODE_PREFLIGHT` | Debug total / Standby na base. | **Sim** | **Sim** | **Sim** | $10 \text{s}$ |
+| `MODE_FLIGHT` | Missão ativa (Otimizado). | Não | **Sim** | **Sim** | $10 \text{s}$ |
+| `MODE_SAFE` | Bateria crítica / Erro. | **Sim** | **Sim** (Beacon Lento) | Não | $300 \text{s}$ |
 
-## API Documentation
+## Configuração do Ambiente de Desenvolvimento
 
-### Sensor Data Structure
-```cpp
-struct SensorData {
-    float soil_moisture;
-    float temperature;
-    float humidity;
-    uint16_t light;
-    float battery_voltage;
-    uint32_t timestamp;
-};
-```
+### Pré-requisitos
+* **PlatformIO IDE**: Recomendado o uso do Visual Studio Code com a extensão PlatformIO.
 
-## Testing
+### Build e Upload
+1.  **Clone o Repositório**:
+    ```bash
+    git clone [https://github.com/mathasilv/AgroSat-IoT.git](https://github.com/mathasilv/AgroSat-IoT.git)
+    cd AgroSat-IoT
+    ```
 
-```bash
-# Unit tests
-pio test
+2.  **Instale Dependências (PlatformIO)**: As dependências principais (LoRa, RTClib, ArduinoJson) são listadas em `platformio.ini`.
+    ```bash
+    pio lib install
+    ```
 
-# Hardware-in-loop testing
-pio run -e test-suite
-```
+3.  **Compile e Faça Upload**:
+    ```bash
+    pio run -e ttgo-lora32-v21 -t upload
+    ```
+    *(O ambiente `ttgo-lora32-v21` é o board de destino padrão, definido em `platformio.ini`)*.
 
-## Deployment
+## Formato de Telemetria
 
-1. Flash firmware to target board
-2. Configure via serial terminal
-3. Deploy with solar panel connected
-4. Monitor via LoRaWAN gateway or satellite ground station
+Os dados são transmitidos em dois formatos:
 
-## Contributing
+### 1. HTTP/JSON (Formato OBSAT)
+Utilizado para envio de dados quando a conexão WiFi está disponível (após a missão ou durante testes). É um JSON rigoroso, compatível com a plataforma OBSAT, que inclui todos os dados do CubeSat mais um array detalhado dos **Nós Terrestres** coletados.
 
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/sensor-calibration`)
-3. Commit changes (`git commit -am 'Add sensor calibration'`)
-4. Push to branch (`git push origin feature/sensor-calibration`)
-5. Create Pull Request
+### 2. LoRa (Payload Binário Compacto)
+Utilizado para comunicação de satélite (Store-and-Forward) e retransmissão de Ground Nodes. O formato binário garante o uso eficiente da largura de banda LoRa. Os pacotes são codificados em hexadecimal para transmissão.
 
-## License
+## Comandos de Console (Serial Monitor)
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Durante o desenvolvimento ou no modo `PREFLIGHT`/`SAFE`, comandos podem ser enviados via Serial Monitor:
 
-## Acknowledgments
-
-- LilyGO for ESP32 LoRa boards
-- PlatformIO for embedded development workflow
-- OBSAT/MCTI for agricultural satellite initiative support
+| Comando | Descrição | Módulo Principal |
+| :--- | :--- | :--- |
+| `STATUS` | Exibe o status detalhado de todos os sensores (online/offline, leituras). | `SensorManager` |
+| `CALIB_MAG` | Inicia a rotina de calibração do Magnetômetro (MPU9250). | `MPU9250Manager` |
+| `CLEAR_MAG` | Apaga os offsets de calibração do Magnetômetro salvos na NVS. | `MPU9250Manager` |
+| `SAVE_BASELINE` | Salva o valor de Baseline do CCS811 na NVS (usar em ar puro). | `CCS811Manager` |
+| `HELP` | Lista os comandos disponíveis. | `CommandHandler` |
 
 ---
 
-*Optimized for agricultural IoT satellite missions*
+## 👨‍💻 Contribuindo
+
+Se você deseja contribuir, siga as diretrizes padrão do GitHub (Fork, Feature Branch, Pull Request).
+
+* **Boas Práticas**: Priorize o uso das classes Gerenciadoras existentes e mantenha a lógica de "negócio" em `src/app`.
+
+## Licença
+
+Este projeto está licenciado sob a Licença MIT.
+
+*Agradecimentos especiais a OBSAT e ao workflow PlatformIO por apoiar o desenvolvimento de sistemas espaciais embarcados.*
