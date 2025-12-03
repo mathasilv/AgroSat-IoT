@@ -1,6 +1,6 @@
 /**
  * @file StorageManager.cpp
- * @brief Implementação robusta do Storage com Hot-Swap, Logs e Headers Corrigidos
+ * @brief Implementação com Log de GPS Integrado
  */
 
 #include "StorageManager.h"
@@ -17,7 +17,6 @@ StorageManager::StorageManager() :
 }
 
 bool StorageManager::begin() {
-    // Usamos Serial direto para evitar loop com macros de debug
     Serial.println("[StorageManager] Inicializando SD Card...");
     
     spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
@@ -55,15 +54,15 @@ void StorageManager::setRTCManager(RTCManager* rtcManager) {
 // === Lógica de Recuperação (Hot-Swap) ===
 
 void StorageManager::_attemptRecovery() {
-    if (_available) return; // Já está online
+    if (_available) return; 
     
     unsigned long now = millis();
-    if (now - _lastInitAttempt < REINIT_INTERVAL) return; // Aguarda intervalo
+    if (now - _lastInitAttempt < REINIT_INTERVAL) return; 
     
     _lastInitAttempt = now;
     Serial.println("[StorageManager] Tentando reconectar SD Card...");
     
-    SD.end(); // Finaliza instância anterior
+    SD.end(); 
     if (begin()) {
         Serial.println("[StorageManager] RECUPERADO COM SUCESSO!");
     }
@@ -72,18 +71,16 @@ void StorageManager::_attemptRecovery() {
 // === Salvamento de Dados ===
 
 bool StorageManager::saveTelemetry(const TelemetryData& data) {
-    // Tenta recuperar se estiver offline
     if (!_available) {
         _attemptRecovery();
         if (!_available) return false;
     }
     
-    // Verifica tamanho e rotaciona se necessário
     _checkFileSize(SD_LOG_FILE);
     
     File file = SD.open(SD_LOG_FILE, FILE_APPEND);
     if (!file) {
-        _available = false; // Marca como falha para tentar recuperar na próxima
+        _available = false; 
         return false;
     }
     
@@ -143,15 +140,16 @@ bool StorageManager::logError(const String& errorMsg) {
 // === Gerenciamento de Arquivos e Headers ===
 
 bool StorageManager::createTelemetryFile() {
-    // Se existe, não recria para não perder dados
+    // Se existe, não recria. (APAGUE O ARQUIVO ANTIGO SE QUISER O NOVO HEADER)
     if (SD.exists(SD_LOG_FILE)) return true;
     
     File file = SD.open(SD_LOG_FILE, FILE_WRITE);
     if (!file) return false;
     
-    // Header alinhado com _telemetryToCSV
+    // [MODIFICADO] Header com colunas de GPS
     file.print("ISO8601,UnixTimestamp,MissionTime,BatVoltage,BatPercent,");
     file.print("TempFinal,TempBMP,TempSI,Pressure,Altitude,");
+    file.print("Lat,Lng,GpsAlt,Sats,Fix,"); // <--- Colunas GPS
     file.print("GyroX,GyroY,GyroZ,AccelX,AccelY,AccelZ,MagX,MagY,MagZ,");
     file.print("Humidity,CO2,TVOC,Status,Errors,Payload"); 
     file.println();
@@ -166,7 +164,6 @@ bool StorageManager::createMissionFile() {
     File file = SD.open(SD_MISSION_FILE, FILE_WRITE);
     if (!file) return false;
     
-    // Header alinhado com _missionToCSV (com NodeID corrigido)
     file.println("ISO8601,UnixTimestamp,NodeID,SoilMoisture,AmbTemp,Humidity,Irrigation,RSSI,SNR,PktsRx,PktsLost,LastRx");
     
     file.close();
@@ -196,8 +193,7 @@ bool StorageManager::_checkFileSize(const char* path) {
     size_t size = file.size();
     file.close();
     
-    // Rotaciona se maior que 5MB
-    if (size > 5242880) {
+    if (size > SD_MAX_FILE_SIZE) { // 5MB
         String timestamp = _getTimestampStr();
         timestamp.replace(" ", "_");
         timestamp.replace(":", "-");
@@ -207,7 +203,6 @@ bool StorageManager::_checkFileSize(const char* path) {
         SD.rename(path, backupPath.c_str());
         Serial.printf("[StorageManager] Arquivo rotacionado: %s -> %s\n", path, backupPath.c_str());
         
-        // Recria o arquivo original com o header
         if (strcmp(path, SD_LOG_FILE) == 0) createTelemetryFile();
         else if (strcmp(path, SD_MISSION_FILE) == 0) createMissionFile();
         else if (strcmp(path, SD_SYSTEM_LOG) == 0) createLogFile();
@@ -254,17 +249,19 @@ String StorageManager::_getTimestampStr() {
 String StorageManager::_telemetryToCSV(const TelemetryData& data) {
     char buffer[600];
     
-    // Helper para formatar floats e evitar NAN
     auto safeF = [](float v) { return isnan(v) ? 0.0f : v; };
     
     String ts = _getTimestampStr();
     String tempSI = isnan(data.temperatureSI) ? "" : String(data.temperatureSI, 2);
     String hum = isnan(data.humidity) ? "" : String(data.humidity, 1);
     
+    // [MODIFICADO] Inserção dos dados de GPS
+    // Lat/Lng com 6 casas decimais de precisão
     snprintf(buffer, sizeof(buffer),
         "%s,%lu,%lu,"             // Time
         "%.2f,%.1f,"              // Power
         "%.2f,%.2f,%s,%.2f,%.1f," // Env
+        "%.6f,%.6f,%.1f,%d,%d,"   // GPS (Lat, Lng, Alt, Sats, Fix)
         "%.2f,%.2f,%.2f,"         // Gyro
         "%.2f,%.2f,%.2f,"         // Accel
         "%.1f,%.1f,%.1f,"         // Mag
@@ -273,10 +270,16 @@ String StorageManager::_telemetryToCSV(const TelemetryData& data) {
         
         ts.c_str(), (unsigned long)data.timestamp, (unsigned long)data.missionTime,
         data.batteryVoltage, data.batteryPercentage,
+        
         safeF(data.temperature), safeF(data.temperatureBMP), tempSI.c_str(), safeF(data.pressure), safeF(data.altitude),
+        
+        // Dados GPS
+        data.latitude, data.longitude, safeF(data.gpsAltitude), data.satellites, data.gpsFix,
+        
         safeF(data.gyroX), safeF(data.gyroY), safeF(data.gyroZ),
         safeF(data.accelX), safeF(data.accelY), safeF(data.accelZ),
         safeF(data.magX), safeF(data.magY), safeF(data.magZ),
+        
         hum.c_str(), safeF(data.co2), safeF(data.tvoc),
         data.systemStatus, data.errorCount, data.payload
     );
@@ -289,11 +292,11 @@ String StorageManager::_missionToCSV(const MissionData& data) {
     String ts = _getTimestampStr();
     
     snprintf(buffer, sizeof(buffer), 
-        "%s,%lu,"      // ISO8601, UnixTimestamp
-        "%u,"          // NodeID
-        "%.1f,%.1f,%.1f,%d," // Soil, AmbTemp, Hum, Irrigation
-        "%d,%.2f,"     // RSSI, SNR
-        "%u,%u,%lu",   // Rx, Lost, LastRx
+        "%s,%lu,"      
+        "%u,"          
+        "%.1f,%.1f,%.1f,%d," 
+        "%d,%.2f,"     
+        "%u,%u,%lu",   
         
         ts.c_str(), (unsigned long)(_rtcManager ? _rtcManager->getUnixTime() : millis()/1000),
         data.nodeId, 

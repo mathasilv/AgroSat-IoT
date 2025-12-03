@@ -1,6 +1,6 @@
 /**
  * @file main.cpp
- * @brief Programa principal - CORREÇÃO DE TIMEOUT I2C
+ * @brief Programa principal - Integração Completa (LoRa, Sensores, GPS)
  */
 #include <Arduino.h>
 #include <Wire.h>
@@ -18,22 +18,18 @@ void setup() {
     Serial.begin(DEBUG_BAUDRATE);
     
     // ============================================================
-    // 🚑 CONFIGURAÇÃO DE SEGURANÇA I2C (CORRIGIDA)
+    // 🚑 CONFIGURAÇÃO DE SEGURANÇA I2C
     // ============================================================
     DEBUG_PRINTLN("[Main] Configurando I2C Mestre...");
     
-    // Inicia o barramento
+    // Inicia o barramento I2C
     Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
     
-    // CONFIGURAÇÃO CRÍTICA PARA ERRO 263:
-    // 1. Clock lento (50kHz) para tolerar cabos longos/ruído
-    Wire.setClock(50000); 
+    // Configurações para estabilidade com cabos longos e sensores lentos (CCS811)
+    Wire.setClock(50000);   // 50kHz
+    Wire.setTimeout(3000);  // 3000ms
     
-    // 2. Timeout MUITO ALTO (3000ms). O CCS811 pode segurar o clock (stretching)
-    // por tempo indeterminado se estiver ocupado. O padrão do ESP32 é curto.
-    Wire.setTimeout(3000);  
-    
-    DEBUG_PRINTLN("[Main] I2C Configurado: 50kHz, Timeout 3000ms (FIX 263)");
+    DEBUG_PRINTLN("[Main] I2C Configurado: 50kHz, Timeout 3000ms");
     delay(500); 
     // ============================================================
 
@@ -44,15 +40,18 @@ void setup() {
     
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("[Main] ========================================");
-    DEBUG_PRINTLN("[Main] INICIALIZANDO SISTEMA DE TELEMETRIA");
+    DEBUG_PRINTLN("[Main] INICIALIZANDO AGROSAT-IOT v7.2 (GPS)");
     DEBUG_PRINTLN("[Main] ========================================");
     
     // Watchdog
     esp_task_wdt_init(120, true);
     esp_task_wdt_add(NULL);
     
+    // Inicialização de todos os gerenciadores (incluindo GPS)
     if (!telemetry.begin()) {
-        DEBUG_PRINTLN("[Main] ERRO CRÍTICO: Falha na inicialização!");
+        DEBUG_PRINTLN("[Main] ERRO CRÍTICO: Falha na inicialização de subsistemas!");
+    } else {
+        DEBUG_PRINTLN("[Main] Inicialização completa com sucesso.");
     }
     
     printAvailableCommands();
@@ -61,7 +60,11 @@ void setup() {
 void loop() {
     esp_task_wdt_reset();
     processSerialCommands();
+    
+    // Loop principal (processa GPS, LoRa, Sensores)
     telemetry.loop();
+    
+    // Pequeno delay para estabilidade do loop sem travar o RTOS
     delay(10); 
 }
 

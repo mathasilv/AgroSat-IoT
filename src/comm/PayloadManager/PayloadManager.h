@@ -1,7 +1,6 @@
 /**
  * @file PayloadManager.h
- * @brief Gerenciador de Payload (Legacy Compatible + OBSAT JSON)
- * @details Suporta LoRa Binário Completo (com IMU), LoRa ASCII (AGRO,...) e JSON OBSAT.
+ * @brief Gerenciador de Payload (Com Suporte a GPS)
  */
 
 #ifndef PAYLOAD_MANAGER_H
@@ -18,7 +17,7 @@ public:
 
     // === Transmissão (TX) ===
     
-    // Cria pacote LoRa Binário (Header + Dados + IMU) - Formato Original
+    // Cria pacote LoRa Binário (Header + Dados + IMU + GPS)
     String createSatellitePayload(const TelemetryData& data);
     
     // Cria pacote Relay (Header + Dados + Nós)
@@ -26,29 +25,27 @@ public:
                               const GroundNodeBuffer& buffer, 
                               std::vector<uint16_t>& includedNodes);
     
-    // Cria JSON para HTTP (Formato OBSAT Rigoroso)
+    // Cria JSON para HTTP (Formato OBSAT Rigoroso + GPS)
     String createTelemetryJSON(const TelemetryData& data, 
                                const GroundNodeBuffer& groundBuffer);
 
     // === Recepção (RX) ===
     
-    // Processa pacotes recebidos (Suporta Binário Hex e ASCII "AGRO,...")
+    // Processa pacotes recebidos
     bool processLoRaPacket(const String& packet, MissionData& data);
     
     // === Gestão ===
     
-    void update(); // Timeout de pacotes
+    void update(); 
     void markNodesAsForwarded(GroundNodeBuffer& buffer, const std::vector<uint16_t>& nodeIds);
     uint8_t calculateNodePriority(const MissionData& node);
     MissionData getLastMissionData() const { return _lastMissionData; }
 
-    // Helpers Públicos (usados internamente ou por debug)
     int findNodeIndex(uint16_t nodeId);
 
 private:
     MissionData _lastMissionData;
     
-    // Controle de sequência para detecção de perdas
     uint16_t _expectedSeqNum[MAX_GROUND_NODES];
     uint16_t _seqNodeId[MAX_GROUND_NODES];
     uint16_t _packetsReceived;

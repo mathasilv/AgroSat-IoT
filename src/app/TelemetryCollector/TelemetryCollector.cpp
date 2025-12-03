@@ -1,20 +1,20 @@
 /**
  * @file TelemetryCollector.cpp
- * @brief Implementação do coletor de telemetria
- * @version 1.0.0
- * @date 2025-12-01
+ * @brief Implementação do coletor de telemetria com GPS
  */
 
 #include "TelemetryCollector.h"
 
 TelemetryCollector::TelemetryCollector(
     SensorManager& sensors,
+    GPSManager& gps, // [NOVO]
     PowerManager& power,
     SystemHealth& health,
     RTCManager& rtc,
     GroundNodeManager& nodes
 ) :
     _sensors(sensors),
+    _gps(gps), // [NOVO] Inicialização
     _power(power),
     _health(health),
     _rtc(rtc),
@@ -26,6 +26,7 @@ void TelemetryCollector::collect(TelemetryData& data) {
     _collectTimestamp(data);
     _collectPowerAndSystem(data);
     _collectCoreSensors(data);
+    _collectGPS(data); // [NOVO] Chamada
     _collectAndValidateSI7021(data);
     _collectAndValidateCCS811(data);
     _collectAndValidateMagnetometer(data);
@@ -72,6 +73,15 @@ void TelemetryCollector::_collectCoreSensors(TelemetryData& data) {
     data.magX = NAN;
     data.magY = NAN;
     data.magZ = NAN;
+}
+
+// [NOVO] Implementação da coleta de GPS
+void TelemetryCollector::_collectGPS(TelemetryData& data) {
+    data.latitude = _gps.getLatitude();
+    data.longitude = _gps.getLongitude();
+    data.gpsAltitude = _gps.getAltitude();
+    data.satellites = _gps.getSatellites();
+    data.gpsFix = _gps.hasFix();
 }
 
 void TelemetryCollector::_collectAndValidateSI7021(TelemetryData& data) {

@@ -1,6 +1,6 @@
 /**
  * @file TelemetryManager.h
- * @brief Gerenciador Central (Com métodos auxiliares)
+ * @brief Gerenciador Central (Com GPS Integrado)
  */
 
 #ifndef TELEMETRYMANAGER_H
@@ -11,6 +11,7 @@
 
 // Subsystems
 #include "sensors/SensorManager/SensorManager.h"
+#include "sensors/GPSManager/GPSManager.h" // [NOVO] Include do GPS
 #include "core/PowerManager/PowerManager.h"
 #include "core/SystemHealth/SystemHealth.h"
 #include "core/RTCManager/RTCManager.h"
@@ -45,6 +46,7 @@ public:
 
 private:
     SensorManager        _sensors;
+    GPSManager           _gps; // [NOVO] Instância do GPSManager
     PowerManager         _power;
     SystemHealth         _systemHealth;
     RTCManager           _rtc;
@@ -73,9 +75,9 @@ private:
     void _syncNTPIfAvailable();
     void _logInitSummary(bool success, uint8_t subsystemsOk, uint32_t initialHeap);
 
-    // Helpers de Loop (NOVO: Organização)
-    void _handleIncomingRadio();   // Processa pacotes LoRa
-    void _maintainGroundNetwork(); // Limpa nós velhos
+    // Helpers de Loop
+    void _handleIncomingRadio();   
+    void _maintainGroundNetwork(); 
     void _sendTelemetry();
     void _saveToStorage();
     void _checkOperationalConditions();

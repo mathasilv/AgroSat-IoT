@@ -1,8 +1,8 @@
 /**
  * @file config.h
  * @brief Configurações globais do CubeSat AgroSat-IoT - Store-and-Forward LEO
- * @version 7.1.1 (Correção de Compilação)
- * @date 2025-12-02
+ * @version 7.2.0 (Integração GPS NEO-M8N)
+ * @date 2025-12-03
  */
 
 #ifndef CONFIG_H
@@ -12,6 +12,14 @@
 
 // Identificação
 #define TEAM_ID 666
+
+// ========== CONFIGURAÇÃO GPS (NOVO) ==========
+// Conexão UART1 Remapeada no ESP32:
+// GPS TX -> ESP32 GPIO 34 (RX)
+// GPS RX -> ESP32 GPIO 12 (TX)
+#define GPS_RX_PIN 34 
+#define GPS_TX_PIN 12 
+#define GPS_BAUD_RATE 9600
 
 // ========== LORA SX1276 (TTGO LoRa32) ==========
 #define LORA_SCK 5
@@ -79,8 +87,8 @@ const ModeConfig PREFLIGHT_CONFIG = {
     true,    // sdLogs
     true,    // lora
     true,    // http
-    20000,   // envio a cada 60s
-    1000    // salva no SD a cada 10s
+    20000,   // envio a cada 20s
+    1000     // salva no SD a cada 1s
 };
 
 // Configuração de Voo (Otimizado)
@@ -215,10 +223,18 @@ struct TelemetryData {
     float temperatureSI;  
     float pressure;
     
+    // --- NOVOS CAMPOS GPS ---
+    double latitude;      // Double para precisão
+    double longitude;     // Double para precisão
+    float gpsAltitude;
+    uint8_t satellites;
+    bool gpsFix;
+    // ------------------------
+
     float gyroX, gyroY, gyroZ;
     float accelX, accelY, accelZ;
     
-    float altitude;
+    float altitude; // Barométrica
     float humidity;
     float co2;
     float tvoc;

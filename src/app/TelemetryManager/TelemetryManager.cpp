@@ -1,6 +1,6 @@
 /**
  * @file TelemetryManager.cpp
- * @brief Gerenciador Central (Versão Limpa e Corrigida)
+ * @brief Gerenciador Central (Versão com GPS)
  */
 
 #include "TelemetryManager.h"
@@ -11,10 +11,13 @@ bool currentSerialLogsEnabled = PREFLIGHT_CONFIG.serialLogsEnabled;
 const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
 
 TelemetryManager::TelemetryManager() :
-    _sensors(), _power(), _systemHealth(), _rtc(), _button(),
+    _sensors(), 
+    _gps(), // [NOVO] Inicializa GPS
+    _power(), _systemHealth(), _rtc(), _button(),
     _storage(), _comm(), _groundNodes(),
     _mission(_rtc, _groundNodes),
-    _telemetryCollector(_sensors, _power, _systemHealth, _rtc, _groundNodes),
+    // [NOVO] Passando _gps para o coletor (atualizaremos o Collector a seguir)
+    _telemetryCollector(_sensors, _gps, _power, _systemHealth, _rtc, _groundNodes),
     _commandHandler(_sensors),
     _mode(MODE_INIT), _missionActive(false),
     _lastTelemetrySend(0), _lastStorageSave(0),
@@ -26,6 +29,13 @@ TelemetryManager::TelemetryManager() :
     _telemetryData.co2 = NAN;
     _telemetryData.tvoc = NAN;
     _telemetryData.magX = NAN; _telemetryData.magY = NAN; _telemetryData.magZ = NAN;
+    
+    // [NOVO] Inicializa campos do GPS
+    _telemetryData.latitude = 0.0;
+    _telemetryData.longitude = 0.0;
+    _telemetryData.gpsAltitude = 0.0;
+    _telemetryData.satellites = 0;
+    _telemetryData.gpsFix = false;
 }
 
 // === Inicialização ===
@@ -43,7 +53,7 @@ bool TelemetryManager::begin() {
     _syncNTPIfAvailable();
 
     // === RECUPERAÇÃO DE MISSÃO ===
-    if (_mission.begin()) { // Verifica se estava voando antes do reset
+    if (_mission.begin()) { 
         DEBUG_PRINTLN("[TelemetryManager] Restaurando modo FLIGHT...");
         _mode = MODE_FLIGHT;
         _missionActive = true;
@@ -83,15 +93,20 @@ void TelemetryManager::_initSubsystems(uint8_t& subsystemsOk, bool& success) {
     DEBUG_PRINTLN("[TelemetryManager] Init SensorManager");
     if (_sensors.begin()) subsystemsOk++;
     else success = false;
+    
+    // 6. GPS (NOVO)
+    DEBUG_PRINTLN("[TelemetryManager] Init GPSManager");
+    if (_gps.begin()) subsystemsOk++;
+    // Nota: Falha no GPS não é fatal para o boot (não seta success = false)
 
-    // 6. Storage
+    // 7. Storage
     DEBUG_PRINTLN("[TelemetryManager] Init Storage");
     if (_storage.begin()) {
-        _storage.setRTCManager(&_rtc); // Injeção de dependência
+        _storage.setRTCManager(&_rtc); 
         subsystemsOk++;
     } else success = false;
 
-    // 7. Comunicação
+    // 8. Comunicação
     DEBUG_PRINTLN("[TelemetryManager] Init Communication");
     if (_comm.begin()) subsystemsOk++;
     else success = false;
@@ -106,7 +121,8 @@ void TelemetryManager::_syncNTPIfAvailable() {
 
 void TelemetryManager::_logInitSummary(bool success, uint8_t subsystemsOk, uint32_t initialHeap) {
     uint32_t used = initialHeap - ESP.getFreeHeap();
-    DEBUG_PRINTF("[TelemetryManager] Init: %s, subsistemas=%d/7, heap usado=%lu bytes\n",
+    // Atualizado para 8 subsistemas
+    DEBUG_PRINTF("[TelemetryManager] Init: %s, subsistemas=%d/8, heap usado=%lu bytes\n",
                  success ? "OK" : "ERRO", subsystemsOk, used);
 }
 
@@ -119,7 +135,6 @@ void TelemetryManager::loop() {
     _systemHealth.update();
     SystemHealth::HeapStatus heapStatus = _systemHealth.getHeapStatus();
 
-    // Tratamento de Memória Crítica (CORRIGIDO PARA NOVOS ENUMS)
     switch (heapStatus) {
         case SystemHealth::HeapStatus::HEAP_CRITICAL:
             if (_mode != MODE_SAFE) {
@@ -142,7 +157,8 @@ void TelemetryManager::loop() {
 
     // 2. Atualização de Subsistemas
     _power.update();
-    _sensors.update(); // Gerencia tempos internamente
+    _sensors.update(); 
+    _gps.update(); // [NOVO] Processamento Serial do GPS
     _comm.update();
     _rtc.update();
 
@@ -179,7 +195,6 @@ void TelemetryManager::_handleIncomingRadio() {
     if (_comm.receiveLoRaPacket(loraPacket, rssi, snr)) {
         MissionData rxData;
         if (_comm.processLoRaPacket(loraPacket, rxData)) {
-            // Enriquece dados com metadados de recepção
             rxData.rssi = rssi;
             rxData.snr = snr;
             rxData.lastLoraRx = millis();
@@ -195,7 +210,7 @@ void TelemetryManager::_handleIncomingRadio() {
 
 void TelemetryManager::_maintainGroundNetwork() {
     static unsigned long lastMaint = 0;
-    if (millis() - lastMaint > 60000) { // A cada 1 minuto
+    if (millis() - lastMaint > 60000) { 
         lastMaint = millis();
         _groundNodes.cleanup(millis(), NODE_TTL_MS);
         _groundNodes.resetForwardFlags();
@@ -241,8 +256,11 @@ void TelemetryManager::_sendTelemetry() {
     const GroundNodeBuffer& buf = _groundNodes.buffer();
     
     if (activeModeConfig->serialLogsEnabled) {
-        DEBUG_PRINTF("[TM] TX: UTC=%s | T=%.1f C | Bat=%.1f%%\n",
-                     _rtc.getUTCDateTime().c_str(), _telemetryData.temperature, _telemetryData.batteryPercentage);
+        DEBUG_PRINTF("[TM] TX: UTC=%s | T=%.1f C | Bat=%.1f%% | Fix=%d\n",
+                     _rtc.getUTCDateTime().c_str(), 
+                     _telemetryData.temperature, 
+                     _telemetryData.batteryPercentage,
+                     _telemetryData.gpsFix); // [NOVO] Log de Fix
     }
     
     _comm.sendTelemetry(_telemetryData, buf);
@@ -265,7 +283,6 @@ void TelemetryManager::_checkOperationalConditions() {
         _power.enablePowerSave();
     }
     
-    // Reset periódico dos sensores se MPU estiver offline por muito tempo
     static unsigned long lastSensorCheck = 0;
     if (millis() - lastSensorCheck > 60000) {
         lastSensorCheck = millis();
@@ -289,11 +306,10 @@ void TelemetryManager::_handleButtonEvents() {
 }
 
 void TelemetryManager::_updateLEDIndicator(unsigned long currentTime) {
-    // Padrão de piscada baseada no modo
     bool ledState = LOW;
-    if (_mode == MODE_PREFLIGHT) ledState = HIGH; // Aceso fixo
-    else if (_mode == MODE_FLIGHT) ledState = (currentTime / 1000) % 2; // Pisca lento 1Hz
-    else if (_mode == MODE_SAFE) ledState = (currentTime / 200) % 2; // Pisca rápido 5Hz
+    if (_mode == MODE_PREFLIGHT) ledState = HIGH; 
+    else if (_mode == MODE_FLIGHT) ledState = (currentTime / 1000) % 2; 
+    else if (_mode == MODE_SAFE) ledState = (currentTime / 200) % 2; 
     
     digitalWrite(LED_BUILTIN, ledState);
 }
@@ -302,7 +318,7 @@ bool TelemetryManager::handleCommand(const String& cmd) {
     return _commandHandler.handle(cmd);
 }
 
-// Stubs para compatibilidade (se necessário)
+// Stubs para compatibilidade
 void TelemetryManager::testLoRaTransmission() { _comm.sendLoRa("TEST"); }
 void TelemetryManager::sendCustomLoRa(const String& msg) { _comm.sendLoRa(msg); }
 void TelemetryManager::printLoRaStats() {}
