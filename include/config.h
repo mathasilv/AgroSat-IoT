@@ -79,8 +79,8 @@ const ModeConfig PREFLIGHT_CONFIG = {
     true,    // sdLogs
     true,    // lora
     true,    // http
-    60000,   // envio a cada 60s
-    10000    // salva no SD a cada 10s
+    20000,   // envio a cada 60s
+    1000    // salva no SD a cada 10s
 };
 
 // Configuração de Voo (Otimizado)
