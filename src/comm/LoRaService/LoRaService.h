@@ -17,6 +17,9 @@ public:
     
     bool isOnline() const { return _online; }
     void setSpreadingFactor(int sf);
+    
+    // Novo: Controle de Potência Dinâmico
+    void setTxPower(int level);
 
 private:
     LoRaReceiver _receiver;

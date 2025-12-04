@@ -1,7 +1,7 @@
 /**
  * @file StorageManager.h
- * @brief Gerenciador de Armazenamento SD (Com Log de Sistema)
- * @version 2.2.1 (Fix Macro Conflict)
+ * @brief Gerenciador de Armazenamento SD (Otimizado para Zero Fragmentação)
+ * @version 2.3.0
  */
 
 #ifndef STORAGEMANAGER_H
@@ -49,15 +49,28 @@ private:
     unsigned long _lastInitAttempt;
     static constexpr unsigned long REINIT_INTERVAL = 5000;
     
-    // CORREÇÃO: Variável removida pois já existe #define SD_SYSTEM_LOG em config.h
-    // const char* SD_SYSTEM_LOG = "/system.log"; 
-
     // Métodos internos
     void _attemptRecovery();
     bool _checkFileSize(const char* path);
-    String _telemetryToCSV(const TelemetryData& data);
-    String _missionToCSV(const MissionData& data);
-    String _getTimestampStr();
+
+    // --- MÉTODOS OTIMIZADOS (Zero Allocation) ---
+    // Formatam diretamente no buffer para evitar criação de Strings temporárias
+    
+    /**
+     * @brief Formata dados de telemetria diretamente no buffer fornecido
+     * @param data Estrutura de dados
+     * @param buffer Ponteiro para o buffer de destino
+     * @param len Tamanho máximo do buffer
+     */
+    void _formatTelemetryToCSV(const TelemetryData& data, char* buffer, size_t len);
+
+    /**
+     * @brief Formata dados da missão diretamente no buffer fornecido
+     * @param data Estrutura de dados
+     * @param buffer Ponteiro para o buffer de destino
+     * @param len Tamanho máximo do buffer
+     */
+    void _formatMissionToCSV(const MissionData& data, char* buffer, size_t len);
 };
 
 #endif

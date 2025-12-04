@@ -47,3 +47,11 @@ void LoRaService::setSpreadingFactor(int sf) {
         _transmitter.setSpreadingFactor(sf);
     }
 }
+
+void LoRaService::setTxPower(int level) {
+    if (_online) {
+        // Limita entre 2 e 20 dBm para segurança do hardware
+        int pwr = constrain(level, 2, 20);
+        LoRa.setTxPower(pwr);
+    }
+}

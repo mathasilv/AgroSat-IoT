@@ -1,6 +1,6 @@
 /**
  * @file StorageManager.cpp
- * @brief Implementação com Log de GPS Integrado
+ * @brief Implementação com Zero Fragmentação de Heap
  */
 
 #include "StorageManager.h"
@@ -8,6 +8,9 @@
 
 // Instância global SPI para o SD (HSPI no ESP32)
 SPIClass spiSD(HSPI);
+
+// Buffer estático para formatação (evita alocação dinâmica repetitiva)
+static char fmtBuffer[512];
 
 StorageManager::StorageManager() :
     _available(false),
@@ -21,7 +24,8 @@ bool StorageManager::begin() {
     
     spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
     
-    if (!SD.begin(SD_CS, spiSD)) {
+    // Aumentamos a frequência para 4MHz para garantir estabilidade
+    if (!SD.begin(SD_CS, spiSD, 4000000)) {
         Serial.println("[StorageManager] ERRO: Falha ao montar SD Card.");
         _available = false;
         return false;
@@ -84,7 +88,9 @@ bool StorageManager::saveTelemetry(const TelemetryData& data) {
         return false;
     }
     
-    file.println(_telemetryToCSV(data));
+    // Escrita otimizada sem String()
+    _formatTelemetryToCSV(data, fmtBuffer, sizeof(fmtBuffer));
+    file.println(fmtBuffer);
     file.close();
     
     return true;
@@ -104,7 +110,8 @@ bool StorageManager::saveMissionData(const MissionData& data) {
         return false;
     }
     
-    file.println(_missionToCSV(data));
+    _formatMissionToCSV(data, fmtBuffer, sizeof(fmtBuffer));
+    file.println(fmtBuffer);
     file.close();
     
     return true;
@@ -126,8 +133,16 @@ bool StorageManager::saveLog(const String& message) {
         return false;
     }
     
-    String logLine = "[" + _getTimestampStr() + "] " + message;
-    file.println(logLine);
+    // Usa o buffer estático para formatar o log
+    String ts;
+    if (_rtcManager && _rtcManager->isInitialized()) {
+        ts = _rtcManager->getDateTime();
+    } else {
+        ts = String(millis());
+    }
+    
+    snprintf(fmtBuffer, sizeof(fmtBuffer), "[%s] %s", ts.c_str(), message.c_str());
+    file.println(fmtBuffer);
     file.close();
     
     return true;
@@ -140,19 +155,17 @@ bool StorageManager::logError(const String& errorMsg) {
 // === Gerenciamento de Arquivos e Headers ===
 
 bool StorageManager::createTelemetryFile() {
-    // Se existe, não recria. (APAGUE O ARQUIVO ANTIGO SE QUISER O NOVO HEADER)
     if (SD.exists(SD_LOG_FILE)) return true;
     
     File file = SD.open(SD_LOG_FILE, FILE_WRITE);
     if (!file) return false;
     
-    // [MODIFICADO] Header com colunas de GPS
-    file.print("ISO8601,UnixTimestamp,MissionTime,BatVoltage,BatPercent,");
-    file.print("TempFinal,TempBMP,TempSI,Pressure,Altitude,");
-    file.print("Lat,Lng,GpsAlt,Sats,Fix,"); // <--- Colunas GPS
-    file.print("GyroX,GyroY,GyroZ,AccelX,AccelY,AccelZ,MagX,MagY,MagZ,");
-    file.print("Humidity,CO2,TVOC,Status,Errors,Payload"); 
-    file.println();
+    // Header otimizado com F-macro para economizar RAM
+    file.print(F("ISO8601,UnixTimestamp,MissionTime,BatVoltage,BatPercent,"));
+    file.print(F("TempFinal,TempBMP,TempSI,Pressure,Altitude,"));
+    file.print(F("Lat,Lng,GpsAlt,Sats,Fix,")); 
+    file.print(F("GyroX,GyroY,GyroZ,AccelX,AccelY,AccelZ,MagX,MagY,MagZ,"));
+    file.println(F("Humidity,CO2,TVOC,Status,Errors,Payload")); 
     
     file.close();
     return true;
@@ -164,7 +177,7 @@ bool StorageManager::createMissionFile() {
     File file = SD.open(SD_MISSION_FILE, FILE_WRITE);
     if (!file) return false;
     
-    file.println("ISO8601,UnixTimestamp,NodeID,SoilMoisture,AmbTemp,Humidity,Irrigation,RSSI,SNR,PktsRx,PktsLost,LastRx");
+    file.println(F("ISO8601,UnixTimestamp,NodeID,SoilMoisture,AmbTemp,Humidity,Irrigation,RSSI,SNR,PktsRx,PktsLost,LastRx"));
     
     file.close();
     return true;
@@ -176,8 +189,8 @@ bool StorageManager::createLogFile() {
     File file = SD.open(SD_SYSTEM_LOG, FILE_WRITE);
     if (!file) return false;
     
-    file.println("=== AGROSAT-IOT SYSTEM LOG ===");
-    file.println("Timestamp,Message");
+    file.println(F("=== AGROSAT-IOT SYSTEM LOG ==="));
+    file.println(F("Timestamp,Message"));
     file.close();
     return true;
 }
@@ -193,8 +206,13 @@ bool StorageManager::_checkFileSize(const char* path) {
     size_t size = file.size();
     file.close();
     
-    if (size > SD_MAX_FILE_SIZE) { // 5MB
-        String timestamp = _getTimestampStr();
+    if (size > SD_MAX_FILE_SIZE) { 
+        String timestamp;
+        if (_rtcManager && _rtcManager->isInitialized()) {
+             timestamp = _rtcManager->getDateTime();
+        } else {
+             timestamp = String(millis());
+        }
         timestamp.replace(" ", "_");
         timestamp.replace(":", "-");
         
@@ -214,7 +232,7 @@ bool StorageManager::_checkFileSize(const char* path) {
 void StorageManager::listFiles() {
     if (!_available) return;
     
-    Serial.println("[StorageManager] --- Arquivos no SD ---");
+    Serial.println(F("[StorageManager] --- Arquivos no SD ---"));
     File root = SD.open("/");
     File file = root.openNextFile();
     
@@ -224,7 +242,7 @@ void StorageManager::listFiles() {
         }
         file = root.openNextFile();
     }
-    Serial.println("---------------------------");
+    Serial.println(F("---------------------------"));
 }
 
 uint64_t StorageManager::getFreeSpace() {
@@ -237,73 +255,57 @@ uint64_t StorageManager::getUsedSpace() {
     return SD.usedBytes();
 }
 
-// === Helpers de Formatação ===
+// === Helpers de Formatação (Implementação Otimizada) ===
 
-String StorageManager::_getTimestampStr() {
-    if (_rtcManager && _rtcManager->isInitialized()) {
-        return _rtcManager->getDateTime();
-    }
-    return String(millis());
-}
-
-String StorageManager::_telemetryToCSV(const TelemetryData& data) {
-    char buffer[600];
-    
+void StorageManager::_formatTelemetryToCSV(const TelemetryData& data, char* buffer, size_t len) {
     auto safeF = [](float v) { return isnan(v) ? 0.0f : v; };
-    
-    String ts = _getTimestampStr();
-    String tempSI = isnan(data.temperatureSI) ? "" : String(data.temperatureSI, 2);
-    String hum = isnan(data.humidity) ? "" : String(data.humidity, 1);
-    
-    // [MODIFICADO] Inserção dos dados de GPS
-    // Lat/Lng com 6 casas decimais de precisão
-    snprintf(buffer, sizeof(buffer),
+
+    String ts = (_rtcManager && _rtcManager->isInitialized()) ? 
+                _rtcManager->getDateTime() : String(millis());
+
+    snprintf(buffer, len,
         "%s,%lu,%lu,"             // Time
         "%.2f,%.1f,"              // Power
-        "%.2f,%.2f,%s,%.2f,%.1f," // Env
-        "%.6f,%.6f,%.1f,%d,%d,"   // GPS (Lat, Lng, Alt, Sats, Fix)
+        "%.2f,%.2f,%.2f,%.2f,%.1f," // Env
+        "%.6f,%.6f,%.1f,%d,%d,"   // GPS
         "%.2f,%.2f,%.2f,"         // Gyro
         "%.2f,%.2f,%.2f,"         // Accel
         "%.1f,%.1f,%.1f,"         // Mag
-        "%s,%.0f,%.0f,"           // Air Quality
+        "%.1f,%.0f,%.0f,"         // Air Quality
         "0x%02X,%d,%s",           // System
         
         ts.c_str(), (unsigned long)data.timestamp, (unsigned long)data.missionTime,
         data.batteryVoltage, data.batteryPercentage,
         
-        safeF(data.temperature), safeF(data.temperatureBMP), tempSI.c_str(), safeF(data.pressure), safeF(data.altitude),
+        safeF(data.temperature), safeF(data.temperatureBMP), safeF(data.temperatureSI), safeF(data.pressure), safeF(data.altitude),
         
-        // Dados GPS
         data.latitude, data.longitude, safeF(data.gpsAltitude), data.satellites, data.gpsFix,
         
         safeF(data.gyroX), safeF(data.gyroY), safeF(data.gyroZ),
         safeF(data.accelX), safeF(data.accelY), safeF(data.accelZ),
         safeF(data.magX), safeF(data.magY), safeF(data.magZ),
         
-        hum.c_str(), safeF(data.co2), safeF(data.tvoc),
+        safeF(data.humidity), safeF(data.co2), safeF(data.tvoc),
         data.systemStatus, data.errorCount, data.payload
     );
-    
-    return String(buffer);
 }
 
-String StorageManager::_missionToCSV(const MissionData& data) {
-    char buffer[256];
-    String ts = _getTimestampStr();
+void StorageManager::_formatMissionToCSV(const MissionData& data, char* buffer, size_t len) {
+    String ts = (_rtcManager && _rtcManager->isInitialized()) ? 
+                _rtcManager->getDateTime() : String(millis());
     
-    snprintf(buffer, sizeof(buffer), 
+    snprintf(buffer, len, 
         "%s,%lu,"      
         "%u,"          
         "%.1f,%.1f,%.1f,%d," 
         "%d,%.2f,"     
         "%u,%u,%lu",   
         
-        ts.c_str(), (unsigned long)(_rtcManager ? _rtcManager->getUnixTime() : millis()/1000),
+        ts.c_str(), 
+        (_rtcManager && _rtcManager->isInitialized()) ? _rtcManager->getUnixTime() : (unsigned long)(millis()/1000),
         data.nodeId, 
         data.soilMoisture, data.ambientTemp, data.humidity, data.irrigationStatus,
         data.rssi, data.snr, 
         data.packetsReceived, data.packetsLost, data.lastLoraRx
     );
-    
-    return String(buffer);
 }

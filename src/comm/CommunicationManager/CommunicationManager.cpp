@@ -22,8 +22,6 @@ bool CommunicationManager::isWiFiConnected() {
 }
 
 void CommunicationManager::connectWiFi() {
-    // O WiFiService gerencia isso automaticamente no update(),
-    // mas se quisermos forçar um ciclo:
     _wifi.begin();
 }
 
@@ -54,6 +52,14 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& tData, const Groun
 
     // 1. Envia via LoRa (Satélite + Relay)
     if (_loraEnabled) {
+        // === MELHORIA: Controle Dinâmico de Potência ===
+        // Se a bateria estiver crítica ou abaixo de 20%, reduz potência para 10dBm
+        if (tData.batteryPercentage < 20.0 || (tData.systemStatus & STATUS_BATTERY_CRIT)) {
+            _lora.setTxPower(10); 
+        } else {
+            _lora.setTxPower(LORA_TX_POWER); // Potência máxima definida no config.h
+        }
+
         String satPayload = _payload.createSatellitePayload(tData);
         if (_lora.send(satPayload)) success = true;
 

@@ -1,6 +1,6 @@
 /**
  * @file PayloadManager.cpp
- * @brief Implementação Final: GPS Integrado no Binário e JSON
+ * @brief Implementação Final: GPS Integrado com Integer Encoding
  */
 
 #include "PayloadManager.h"
@@ -16,16 +16,14 @@ PayloadManager::PayloadManager() :
     }
 }
 
-void PayloadManager::update() {
-    // Espaço para lógica futura
-}
+void PayloadManager::update() {}
 
 // ============================================================================
-// TRANSMISSÃO (TX) - LORA (BINÁRIO COMPACTO + GPS)
+// TRANSMISSÃO (TX)
 // ============================================================================
 
 String PayloadManager::createSatellitePayload(const TelemetryData& data) {
-    uint8_t buffer[128]; // Aumentado para caber GPS
+    uint8_t buffer[128];
     int offset = 0;
 
     // Header: 0xAB 0xCD + Team ID
@@ -42,7 +40,7 @@ String PayloadManager::createSatellitePayload(const TelemetryData& data) {
 String PayloadManager::createRelayPayload(const TelemetryData& data, 
                                         const GroundNodeBuffer& buffer,
                                         std::vector<uint16_t>& includedNodes) {
-    uint8_t buf[250]; // Buffer maior
+    uint8_t buf[250]; 
     int offset = 0;
 
     // Header
@@ -61,7 +59,6 @@ String PayloadManager::createRelayPayload(const TelemetryData& data,
 
     for (int i = 0; i < buffer.activeNodes; i++) {
         if (!buffer.nodes[i].forwarded && buffer.nodes[i].nodeId > 0) {
-            // Proteção de buffer
             if (offset + 10 > 240) break;
             
             _encodeNodeData(buffer.nodes[i], buf, offset);
@@ -78,7 +75,7 @@ String PayloadManager::createRelayPayload(const TelemetryData& data,
 }
 
 // ============================================================================
-// TRANSMISSÃO (TX) - HTTP JSON (OBSAT + GPS)
+// TRANSMISSÃO HTTP (JSON)
 // ============================================================================
 
 String PayloadManager::createTelemetryJSON(const TelemetryData& data, const GroundNodeBuffer& groundBuffer) {
@@ -89,19 +86,16 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
         return String(val, 2);
     };
 
-    // Helper para Double (GPS) com mais precisão
     auto fmtGPS = [](double val) -> String {
         if (isnan(val)) return "0.000000";
         return String(val, 6);
     };
 
-    // 1. Campos Obrigatórios
     doc["equipe"] = TEAM_ID;
     doc["bateria"] = (int)data.batteryPercentage;
     doc["temperatura"] = fmt(data.temperature);
     doc["pressao"]     = fmt(data.pressure);
 
-    // 2. Arrays de IMU
     JsonArray gyro = doc.createNestedArray("giroscopio");
     gyro.add(fmt(data.gyroX));
     gyro.add(fmt(data.gyroY));
@@ -112,7 +106,6 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
     accel.add(fmt(data.accelY));
     accel.add(fmt(data.accelZ));
 
-    // 3. Objeto Payload
     JsonObject payload = doc.createNestedObject("payload");
     
     if (!isnan(data.altitude)) payload["altitude"] = fmt(data.altitude);
@@ -120,7 +113,6 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
     if (!isnan(data.co2))      payload["co2"]      = (int)data.co2;
     if (!isnan(data.tvoc))     payload["tvoc"]     = (int)data.tvoc;
     
-    // [NOVO] Campos GPS
     if (data.gpsFix) {
         payload["lat"] = fmtGPS(data.latitude);
         payload["lng"] = fmtGPS(data.longitude);
@@ -132,7 +124,6 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
     
     payload["stat"] = (data.systemStatus == 0) ? "ok" : String(data.systemStatus, HEX);
     
-    // Nós de Solo
     if (groundBuffer.activeNodes > 0) {
         JsonArray nodes = payload.createNestedArray("nodes");
         for (int i = 0; i < groundBuffer.activeNodes; i++) {
@@ -181,7 +172,7 @@ bool PayloadManager::processLoRaPacket(const String& packet, MissionData& data) 
 }
 
 // ============================================================================
-// GESTÃO E HELPERS
+// GESTÃO
 // ============================================================================
 
 void PayloadManager::markNodesAsForwarded(GroundNodeBuffer& buffer, const std::vector<uint16_t>& nodeIds) {
@@ -213,7 +204,7 @@ int PayloadManager::findNodeIndex(uint16_t nodeId) {
             return i;
         }
     }
-    return 0; // Fallback
+    return 0;
 }
 
 // ============================================================================
@@ -241,22 +232,31 @@ void PayloadManager::_encodeSatelliteData(const TelemetryData& data, uint8_t* bu
     buffer[offset++] = (uint8_t)(int8_t)constrain((!isnan(data.accelY) ? data.accelY : 0.0) * 16.0, -127, 127);
     buffer[offset++] = (uint8_t)(int8_t)constrain((!isnan(data.accelZ) ? data.accelZ : 0.0) * 16.0, -127, 127);
 
-    // [NOVO] GPS Binary Encoding (Float 32-bit memcpy)
-    // Convertemos Double para Float para economizar espaço (perda desprezível para agro)
-    float latF = (float)data.latitude;
-    float lonF = (float)data.longitude;
+    // === GPS Integer Encoding (4 bytes cada, precisão 1e-7) ===
+    // Multiplica por 10.000.000 para manter 7 casas decimais em um inteiro
+    int32_t latI = 0;
+    int32_t lonI = 0;
+    uint8_t sats = 0;
 
     if (data.gpsFix) {
-        memcpy(&buffer[offset], &latF, 4); offset += 4;
-        memcpy(&buffer[offset], &lonF, 4); offset += 4;
-        buffer[offset++] = data.satellites;
-    } else {
-        // Se sem fix, manda zeros
-        float zero = 0.0f;
-        memcpy(&buffer[offset], &zero, 4); offset += 4;
-        memcpy(&buffer[offset], &zero, 4); offset += 4;
-        buffer[offset++] = 0;
+        latI = (int32_t)(data.latitude * 10000000.0);
+        lonI = (int32_t)(data.longitude * 10000000.0);
+        sats = data.satellites;
     }
+
+    // Latitude
+    buffer[offset++] = (latI >> 24) & 0xFF;
+    buffer[offset++] = (latI >> 16) & 0xFF;
+    buffer[offset++] = (latI >> 8) & 0xFF;
+    buffer[offset++] = latI & 0xFF;
+
+    // Longitude
+    buffer[offset++] = (lonI >> 24) & 0xFF;
+    buffer[offset++] = (lonI >> 16) & 0xFF;
+    buffer[offset++] = (lonI >> 8) & 0xFF;
+    buffer[offset++] = lonI & 0xFF;
+
+    buffer[offset++] = sats;
 }
 
 void PayloadManager::_encodeNodeData(const MissionData& node, uint8_t* buffer, int& offset) {
@@ -271,15 +271,10 @@ void PayloadManager::_encodeNodeData(const MissionData& node, uint8_t* buffer, i
 }
 
 // ============================================================================
-// DECODERS (RX)
+// DECODERS E UTILS
 // ============================================================================
 
 bool PayloadManager::_decodeBinaryPayload(const String& hexPayload, MissionData& data) {
-    // Decodificação de nós de solo (RX) não muda, pois a struct MissionData 
-    // é usada para receber dados DE BAIXO.
-    // O satélite TRANSMITE GPS, mas raramente recebe GPS via LoRa de nós simples.
-    // Mantemos a lógica original para processar pacotes vindos dos nós.
-    
     if (hexPayload.length() < 24) return false;
     uint8_t buffer[128];
     size_t len = hexPayload.length() / 2;
@@ -290,6 +285,8 @@ bool PayloadManager::_decodeBinaryPayload(const String& hexPayload, MissionData&
     if (buffer[0] != 0xAB || buffer[1] != 0xCD) return false;
 
     int offset = 4;
+    // Pula dados do satélite (16 bytes) para ler nós, se necessário
+    // Aqui assumimos que estamos decodificando um pacote de nó vindo da terra
     if (len < offset + 8) return false;
 
     data.nodeId = (buffer[offset] << 8) | buffer[offset+1]; offset += 2;
