@@ -9,6 +9,7 @@
 #include <Arduino.h>
 #include <RTClib.h>
 #include <Wire.h>
+#include "esp_sntp.h"
 
 class RTCManager {
 public:

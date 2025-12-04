@@ -44,7 +44,6 @@ void setup() {
     DEBUG_PRINTLN("[Main] ========================================");
     
     // Watchdog
-    esp_task_wdt_init(120, true);
     esp_task_wdt_add(NULL);
     
     // Inicialização de todos os gerenciadores (incluindo GPS)

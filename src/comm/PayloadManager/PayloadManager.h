@@ -10,6 +10,7 @@
 #include <ArduinoJson.h>
 #include <vector>
 #include "config.h" 
+#include "esp_sntp.h"
 
 class PayloadManager {
 public:

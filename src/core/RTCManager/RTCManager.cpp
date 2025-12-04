@@ -46,15 +46,17 @@ bool RTCManager::syncWithNTP() {
     }
 
     DEBUG_PRINTLN("[RTC] Sincronizando NTP...");
+    
+    // Configura o servidor
     configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER_1, NTP_SERVER_2);
 
-    struct tm timeinfo;
+    // Aguarda o STATUS do SNTP mudar para COMPLETED
+    // Isso garante que a hora veio realmente da internet, e não do cache
     uint32_t start = millis();
     bool success = false;
-    
-    // Timeout de 5s para não travar o boot
-    while (millis() - start < 5000) {
-        if (getLocalTime(&timeinfo, 10)) {
+
+    while (millis() - start < 8000) { // Aumentei timeout para 8s (NTP pode demorar)
+        if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
             success = true;
             break;
         }
@@ -66,16 +68,16 @@ bool RTCManager::syncWithNTP() {
         time(&now);
         struct tm* tm_local = localtime(&now);
         
-        // Ajusta o RTC com o tempo obtido do NTP
+        // Atualiza o hardware DS3231 com a hora real da internet
         _rtc.adjust(DateTime(tm_local->tm_year + 1900, tm_local->tm_mon + 1, tm_local->tm_mday,
                              tm_local->tm_hour, tm_local->tm_min, tm_local->tm_sec));
                              
         _lost_power = false;
-        DEBUG_PRINTF("[RTC] NTP OK: %s\n", getDateTime().c_str());
+        DEBUG_PRINTF("[RTC] NTP OK (Status Confirmado): %s\n", getDateTime().c_str());
         return true;
     } 
     
-    DEBUG_PRINTLN("[RTC] NTP Timeout.");
+    DEBUG_PRINTLN("[RTC] NTP Timeout (Servidor não respondeu).");
     return false;
 }
 

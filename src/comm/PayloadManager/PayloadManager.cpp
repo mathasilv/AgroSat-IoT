@@ -79,7 +79,7 @@ int PayloadManager::createRelayPayload(const TelemetryData& data,
 // ============================================================================
 
 String PayloadManager::createTelemetryJSON(const TelemetryData& data, const GroundNodeBuffer& groundBuffer) {
-    StaticJsonDocument<2048> doc; 
+    DynamicJsonDocument doc(2048);
     
     auto fmt = [](float val) -> String {
         if (isnan(val)) return "0.00";
