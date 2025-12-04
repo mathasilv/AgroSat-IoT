@@ -86,45 +86,26 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
         return String(val, 2);
     };
 
-    auto fmtGPS = [](double val) -> String {
-        if (isnan(val)) return "0.000000";
-        return String(val, 6);
-    };
-
     doc["equipe"] = TEAM_ID;
     doc["bateria"] = (int)data.batteryPercentage;
     doc["temperatura"] = fmt(data.temperature);
     doc["pressao"]     = fmt(data.pressure);
 
-    JsonArray gyro = doc.createNestedArray("giroscopio");
-    gyro.add(fmt(data.gyroX));
-    gyro.add(fmt(data.gyroY));
-    gyro.add(fmt(data.gyroZ));
+    // MODIFICAÇÃO: Converte os Arrays IMU para String CSV
+    // giroscopio: de Array para String "x,y,z"
+    doc["giroscopio"] = fmt(data.gyroX) + "," + fmt(data.gyroY) + "," + fmt(data.gyroZ);
 
-    JsonArray accel = doc.createNestedArray("acelerometro");
-    accel.add(fmt(data.accelX));
-    accel.add(fmt(data.accelY));
-    accel.add(fmt(data.accelZ));
+    // acelerometro: de Array para String "x,y,z"
+    doc["acelerometro"] = fmt(data.accelX) + "," + fmt(data.accelY) + "," + fmt(data.accelZ);
+    // FIM DA MODIFICAÇÃO
 
     JsonObject payload = doc.createNestedObject("payload");
     
-    if (!isnan(data.altitude)) payload["altitude"] = fmt(data.altitude);
-    if (!isnan(data.humidity)) payload["umidade"]  = fmt(data.humidity);
-    if (!isnan(data.co2))      payload["co2"]      = (int)data.co2;
-    if (!isnan(data.tvoc))     payload["tvoc"]     = (int)data.tvoc;
-    
-    if (data.gpsFix) {
-        payload["lat"] = fmtGPS(data.latitude);
-        payload["lng"] = fmtGPS(data.longitude);
-        payload["gps_alt"] = (int)data.gpsAltitude;
-        payload["sats"] = data.satellites;
-    } else {
-        payload["gps_status"] = "no_fix";
-    }
+    // Campos de ambiente e GPS foram removidos (conforme solicitação anterior)
     
     payload["stat"] = (data.systemStatus == 0) ? "ok" : String(data.systemStatus, HEX);
     
-    // Nós de Solo
+    // Nós de Solo (mantidos)
     if (groundBuffer.activeNodes > 0) {
         JsonArray nodes = payload.createNestedArray("nodes");
         for (int i = 0; i < groundBuffer.activeNodes; i++) {
@@ -144,7 +125,6 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
     serializeJson(doc, output);
     return output;
 }
-
 // ============================================================================
 // RECEPÇÃO (RX) - RESTAURADA E COMPLETA
 // ============================================================================

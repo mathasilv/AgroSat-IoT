@@ -35,7 +35,7 @@ void GPSManager::update() {
         // MONITOR SERIAL (MODO ESPIÃO)
         // Imprime no PC tudo o que o GPS envia (raw data)
         // ============================================================
-        Serial.print(c); 
+        // Serial.print(c); 
         // ============================================================
         
         // Alimenta a biblioteca TinyGPS++ para processamento
