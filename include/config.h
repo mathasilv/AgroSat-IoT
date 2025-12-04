@@ -1,8 +1,7 @@
 /**
  * @file config.h
  * @brief Configurações globais do CubeSat AgroSat-IoT - Store-and-Forward LEO
- * @version 7.2.0 (Integração GPS NEO-M8N)
- * @date 2025-12-03
+ * @version 8.0.0 (Protocolo Binário Puro + Rastreabilidade)
  */
 
 #ifndef CONFIG_H
@@ -13,15 +12,12 @@
 // Identificação
 #define TEAM_ID 666
 
-// ========== CONFIGURAÇÃO GPS (NOVO) ==========
-// Conexão UART1 Remapeada no ESP32:
-// GPS TX -> ESP32 GPIO 34 (RX)
-// GPS RX -> ESP32 GPIO 12 (TX)
+// ========== CONFIGURAÇÃO GPS ==========
 #define GPS_RX_PIN 34 
 #define GPS_TX_PIN 12 
 #define GPS_BAUD_RATE 9600
 
-// ========== LORA SX1276 (TTGO LoRa32) ==========
+// ========== LORA SX1276 ==========
 #define LORA_SCK 5
 #define LORA_MISO 19
 #define LORA_MOSI 27
@@ -40,8 +36,8 @@
 // ========== I2C SENSORS ==========
 #define SENSOR_I2C_SDA 21
 #define SENSOR_I2C_SCL 22
-#define I2C_FREQUENCY 50000   // 50kHz (Robustez CCS811)
-#define I2C_TIMEOUT_MS 3000   // 3s (Clock Stretching CCS811)
+#define I2C_FREQUENCY 50000   
+#define I2C_TIMEOUT_MS 3000   
 
 // ========== POWER MANAGEMENT ==========
 #define BATTERY_PIN 35
@@ -80,38 +76,9 @@ struct ModeConfig {
     uint32_t storageSaveInterval;
 };
 
-// Configuração Pré-Voo (Debug total)
-const ModeConfig PREFLIGHT_CONFIG = {
-    true,    // display
-    true,    // serialLogs
-    true,    // sdLogs
-    true,    // lora
-    true,    // http
-    20000,   // envio a cada 20s
-    1000     // salva no SD a cada 1s
-};
-
-// Configuração de Voo (Otimizado)
-const ModeConfig FLIGHT_CONFIG = {
-    false,   // display OFF
-    false,   // serialLogs OFF
-    false,   // sdLogs verbose OFF
-    true,    // lora ON
-    true,    // http ON
-    60000,   // envio 60s
-    10000    // salva SD 10s
-};
-
-// Configuração de Segurança (Bateria Crítica/Erro)
-const ModeConfig SAFE_CONFIG = {
-    false,
-    true,    // logs ON para diagnóstico
-    true,
-    true,    // lora ON (Beacon)
-    false,   // http OFF
-    120000,  // envio lento (2 min)
-    300000   // salva SD lento (5 min)
-};
+const ModeConfig PREFLIGHT_CONFIG = { true, true, true, true, true, 20000, 1000 };
+const ModeConfig FLIGHT_CONFIG = { false, false, false, true, true, 60000, 10000 };
+const ModeConfig SAFE_CONFIG = { false, true, true, true, false, 120000, 300000 };
 
 // ========== ENDEREÇOS I2C ==========
 #define MPU9250_ADDRESS 0x69
@@ -165,11 +132,11 @@ const ModeConfig SAFE_CONFIG = {
 #define HTTP_ENDPOINT "/teste_post/envio.php"
 #define HTTP_TIMEOUT_MS 5000
 
-// ========== BUFFERS & REDE (Correção de Erros) ==========
+// ========== BUFFERS & REDE ==========
 #define JSON_MAX_SIZE 2048 
 #define PAYLOAD_MAX_SIZE 250
-#define MAX_GROUND_NODES 3              // Necessário para GroundNodeManager
-#define NODE_TTL_MS 1800000             // 30 min (TTL de nós no buffer)
+#define MAX_GROUND_NODES 3              
+#define NODE_TTL_MS 1800000             
 #define NODE_INACTIVITY_TIMEOUT_MS 600000 
 
 // ========== INTERVALOS ==========
@@ -190,8 +157,8 @@ const ModeConfig SAFE_CONFIG = {
 #define BATTERY_LOW 3.7
 
 // ========== SISTEMA ==========
-#define MISSION_DURATION_MS 7200000 // 2 horas
-#define WATCHDOG_TIMEOUT 60         // 60 segundos
+#define MISSION_DURATION_MS 7200000 
+#define WATCHDOG_TIMEOUT 60         
 #define SYSTEM_HEALTH_INTERVAL 10000
 
 // ========== RTC & NTP ==========
@@ -199,7 +166,7 @@ const ModeConfig SAFE_CONFIG = {
 #define NTP_SERVER_PRIMARY   "pool.ntp.org"
 #define NTP_SERVER_SECONDARY "time.nist.gov"
 #endif
-#define RTC_TIMEZONE_OFFSET (-3 * 3600)  // UTC-3 Brasil
+#define RTC_TIMEZONE_OFFSET (-3 * 3600)
 
 // ========== DEBUG SERIAL ==========
 #define DEBUG_SERIAL Serial
@@ -223,13 +190,11 @@ struct TelemetryData {
     float temperatureSI;  
     float pressure;
     
-    // --- NOVOS CAMPOS GPS ---
-    double latitude;      // Double para precisão
-    double longitude;     // Double para precisão
+    double latitude;
+    double longitude;
     float gpsAltitude;
     uint8_t satellites;
     bool gpsFix;
-    // ------------------------
 
     float gyroX, gyroY, gyroZ;
     float accelX, accelY, accelZ;
@@ -259,7 +224,13 @@ struct MissionData {
     uint16_t packetsReceived;
     uint16_t packetsLost;
     unsigned long lastLoraRx;
-    unsigned long collectionTime;
+    
+    // --- TIMESTAMPS DE RASTREABILIDADE ---
+    uint32_t nodeTimestamp;           // (1) Origem: Gerado pelo Nó/Simulador
+    unsigned long collectionTime;     // (2) Chegada: Recebido pelo Satélite (RTC)
+    unsigned long retransmissionTime; // (3) Saída: Enviado para Ground Station
+    // -------------------------------------
+
     uint8_t priority;
     bool forwarded;
     char originalPayloadHex[20];

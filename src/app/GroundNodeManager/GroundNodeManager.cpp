@@ -31,6 +31,10 @@ void GroundNodeManager::updateNode(const MissionData& data, CommunicationManager
             existingNode = data;
             existingNode.lastLoraRx = millis();
             existingNode.forwarded  = false;
+            
+            // [NOVO] Reseta timestamp de retransmissão (dado novo ainda não enviado)
+            existingNode.retransmissionTime = 0; 
+            
             existingNode.priority   = comm.calculatePriority(data);
 
             _buffer.lastUpdate[existingIndex] = millis();
@@ -50,6 +54,10 @@ void GroundNodeManager::updateNode(const MissionData& data, CommunicationManager
             _buffer.nodes[newIndex] = data;
             _buffer.nodes[newIndex].lastLoraRx = millis();
             _buffer.nodes[newIndex].forwarded  = false;
+            
+            // [NOVO] Inicializa com 0
+            _buffer.nodes[newIndex].retransmissionTime = 0;
+            
             _buffer.nodes[newIndex].priority   = comm.calculatePriority(data);
 
             _buffer.lastUpdate[newIndex] = millis();
@@ -90,6 +98,10 @@ void GroundNodeManager::_replaceLowestPriorityNode(const MissionData& newData,
     _buffer.nodes[replaceIndex] = newData;
     _buffer.nodes[replaceIndex].lastLoraRx = millis();
     _buffer.nodes[replaceIndex].forwarded  = false;
+    
+    // [NOVO] Reset
+    _buffer.nodes[replaceIndex].retransmissionTime = 0;
+    
     _buffer.nodes[replaceIndex].priority   = comm.calculatePriority(newData);
     _buffer.lastUpdate[replaceIndex]       = millis();
 }

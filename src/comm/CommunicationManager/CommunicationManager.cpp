@@ -1,12 +1,11 @@
 #include "CommunicationManager.h"
 
-CommunicationManager::CommunicationManager() 
-    : _loraEnabled(true), _httpEnabled(true) {}
+CommunicationManager::CommunicationManager() : _loraEnabled(true), _httpEnabled(true) {}
 
 bool CommunicationManager::begin() {
     bool ok = true;
     if (!_lora.begin()) ok = false;
-    if (!_wifi.begin()) ok = false; // WiFi não-bloqueante
+    if (!_wifi.begin()) ok = false; 
     return ok;
 }
 
@@ -15,17 +14,8 @@ void CommunicationManager::update() {
     _payload.update();
 }
 
-// === WiFi ===
-
-bool CommunicationManager::isWiFiConnected() {
-    return _wifi.isConnected();
-}
-
-void CommunicationManager::connectWiFi() {
-    _wifi.begin();
-}
-
-// === LoRa ===
+bool CommunicationManager::isWiFiConnected() { return _wifi.isConnected(); }
+void CommunicationManager::connectWiFi() { _wifi.begin(); }
 
 bool CommunicationManager::sendLoRa(const String& data) {
     if (!_loraEnabled) return false;
@@ -37,8 +27,6 @@ bool CommunicationManager::receiveLoRaPacket(String& packet, int& rssi, float& s
     return _lora.receive(packet, rssi, snr);
 }
 
-// === Missão ===
-
 bool CommunicationManager::processLoRaPacket(const String& packet, MissionData& data) {
     return _payload.processLoRaPacket(packet, data);
 }
@@ -49,17 +37,17 @@ uint8_t CommunicationManager::calculatePriority(const MissionData& node) {
 
 bool CommunicationManager::sendTelemetry(const TelemetryData& tData, const GroundNodeBuffer& gBuffer) {
     bool success = false;
-    uint8_t txBuffer[256]; // Buffer para pacote binário
+    uint8_t txBuffer[256]; 
 
     if (_loraEnabled) {
-        // 1. Controle de Potência (Economia de Bateria)
+        // 1. Controle de Potência
         if (tData.batteryPercentage < 20.0 || (tData.systemStatus & STATUS_BATTERY_CRIT)) {
-            _lora.setTxPower(10); // Reduz potência
+            _lora.setTxPower(10); 
         } else {
             _lora.setTxPower(LORA_TX_POWER);
         }
 
-        // 2. Payload Satélite
+        // 2. Payload Satélite (Downlink de Telemetria)
         int satLen = _payload.createSatellitePayload(tData, txBuffer);
         if (satLen > 0) {
             if (_lora.send(txBuffer, satLen)) success = true;
@@ -70,14 +58,16 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& tData, const Groun
         int relayLen = _payload.createRelayPayload(tData, gBuffer, txBuffer, relayedNodes);
         
         if (relayLen > 0) {
-            delay(200); // Pausa para hardware respirar
+            delay(200); 
             if (_lora.send(txBuffer, relayLen)) {
-                _payload.markNodesAsForwarded(const_cast<GroundNodeBuffer&>(gBuffer), relayedNodes);
+                // Ao enviar com sucesso, marcamos o momento exato (Retransmission Timestamp)
+                // Usamos tData.timestamp que é sincronizado com o RTC/GPS
+                _payload.markNodesAsForwarded(const_cast<GroundNodeBuffer&>(gBuffer), relayedNodes, tData.timestamp);
             }
         }
     }
     
-    // HTTP Backup (Mantido)
+    // HTTP Backup
     if (_httpEnabled && _wifi.isConnected()) {
         String json = _payload.createTelemetryJSON(tData, gBuffer);
         _http.postJson(json);
@@ -85,8 +75,6 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& tData, const Groun
 
     return success;
 }
-
-// === Controle ===
 
 void CommunicationManager::enableLoRa(bool enable) { _loraEnabled = enable; }
 void CommunicationManager::enableHTTP(bool enable) { _httpEnabled = enable; }

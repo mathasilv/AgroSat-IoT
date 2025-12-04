@@ -36,7 +36,7 @@ public:
     
     // === Gestão ===
     void update(); 
-    void markNodesAsForwarded(GroundNodeBuffer& buffer, const std::vector<uint16_t>& nodeIds);
+    void markNodesAsForwarded(GroundNodeBuffer& buffer, const std::vector<uint16_t>& nodeIds, unsigned long timestamp);
     uint8_t calculateNodePriority(const MissionData& node);
     MissionData getLastMissionData() const { return _lastMissionData; }
     int findNodeIndex(uint16_t nodeId);
