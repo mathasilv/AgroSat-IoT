@@ -7,41 +7,30 @@ void LoRaTransmitter::setSpreadingFactor(int sf) {
     LoRa.setSpreadingFactor(sf);
 }
 
-bool LoRaTransmitter::send(const String& data) {
-    const int maxRetries = 3;        // Tenta até 3 vezes
-    // const int maxWaitTimeMs = 2000; // (Opcional) Timeout total
+// Envio Binário (Otimizado)
+bool LoRaTransmitter::send(const uint8_t* data, size_t len) {
+    const int maxRetries = 3;
     
     for (int i = 0; i <= maxRetries; i++) {
-        // 1. Verifica Canal (Listen Before Talk)
         if (_isChannelFree()) {
-            // Canal livre! Transmite.
             LoRa.beginPacket();
-            LoRa.print(data);
-            LoRa.endPacket(); 
-            LoRa.receive(); // Volta para RX imediatamente
-            
-            if (i > 0) {
-                // Debug: Mostra que o CSMA atuou
-                DEBUG_PRINTF("[LoRa] TX OK apos %d tentativas (CSMA/CA)\n", i);
-            }
+            LoRa.write(data, len); // Envia bytes brutos
+            LoRa.endPacket();
+            LoRa.receive();
             return true;
         }
-        
-        // 2. Canal Ocupado - Backoff Aleatório
-        if (i < maxRetries) {
-            DEBUG_PRINTLN("[LoRa] Canal ocupado. Aguardando...");
-            // Espera aleatória entre 100ms e 500ms para evitar colisão
-            int wait = random(100, 500);
-            delay(wait);
-        }
+        // Backoff aleatório se canal ocupado
+        if (i < maxRetries) delay(random(100, 500));
     }
-
-    DEBUG_PRINTLN("[LoRa] Falha TX: Canal congestionado.");
     return false;
 }
 
+// Envio String (Compatibilidade)
+bool LoRaTransmitter::send(const String& data) {
+    return send((const uint8_t*)data.c_str(), data.length());
+}
+
 bool LoRaTransmitter::_isChannelFree() {
-    // RSSI ambiente. Ajuste o limiar conforme seu ambiente.
-    // -90dBm é seguro para a maioria dos ambientes rurais/espaciais
-    return (LoRa.rssi() < -90); 
+    // RSSI < -90dBm considerado livre
+    return (LoRa.rssi() < -90);
 }

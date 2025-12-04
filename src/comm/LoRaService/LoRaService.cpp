@@ -32,6 +32,14 @@ bool LoRaService::begin() {
     return true;
 }
 
+// === ENVIO BINÁRIO (NOVO) ===
+bool LoRaService::send(const uint8_t* data, size_t len) {
+    if (!_online) return false;
+    // Repassa para o Transmitter (que deve ter o método binário implementado)
+    return _transmitter.send(data, len);
+}
+
+// === ENVIO LEGADO ===
 bool LoRaService::send(const String& data) {
     if (!_online) return false;
     return _transmitter.send(data);
@@ -50,7 +58,7 @@ void LoRaService::setSpreadingFactor(int sf) {
 
 void LoRaService::setTxPower(int level) {
     if (_online) {
-        // Limita entre 2 e 20 dBm para segurança do hardware
+        // Limita entre 2 e 20 dBm para segurança do hardware SX1276
         int pwr = constrain(level, 2, 20);
         LoRa.setTxPower(pwr);
     }

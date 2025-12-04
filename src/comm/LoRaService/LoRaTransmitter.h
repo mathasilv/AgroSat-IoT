@@ -8,7 +8,8 @@
 class LoRaTransmitter {
 public:
     LoRaTransmitter();
-    bool send(const String& data);
+    bool send(const uint8_t* data, size_t len); // Novo método binário
+    bool send(const String& data);              // Legado
     void setSpreadingFactor(int sf);
 
 private:

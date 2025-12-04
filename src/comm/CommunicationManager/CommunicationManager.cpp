@@ -49,35 +49,38 @@ uint8_t CommunicationManager::calculatePriority(const MissionData& node) {
 
 bool CommunicationManager::sendTelemetry(const TelemetryData& tData, const GroundNodeBuffer& gBuffer) {
     bool success = false;
+    uint8_t txBuffer[256]; // Buffer para pacote binário
 
-    // 1. Envia via LoRa (Satélite + Relay)
     if (_loraEnabled) {
-        // === MELHORIA: Controle Dinâmico de Potência ===
-        // Se a bateria estiver crítica ou abaixo de 20%, reduz potência para 10dBm
+        // 1. Controle de Potência (Economia de Bateria)
         if (tData.batteryPercentage < 20.0 || (tData.systemStatus & STATUS_BATTERY_CRIT)) {
-            _lora.setTxPower(10); 
+            _lora.setTxPower(10); // Reduz potência
         } else {
-            _lora.setTxPower(LORA_TX_POWER); // Potência máxima definida no config.h
+            _lora.setTxPower(LORA_TX_POWER);
         }
 
-        String satPayload = _payload.createSatellitePayload(tData);
-        if (_lora.send(satPayload)) success = true;
+        // 2. Payload Satélite
+        int satLen = _payload.createSatellitePayload(tData, txBuffer);
+        if (satLen > 0) {
+            if (_lora.send(txBuffer, satLen)) success = true;
+        }
 
+        // 3. Payload Relay (Store-and-Forward)
         std::vector<uint16_t> relayedNodes;
-        String relayPayload = _payload.createRelayPayload(tData, gBuffer, relayedNodes);
+        int relayLen = _payload.createRelayPayload(tData, gBuffer, txBuffer, relayedNodes);
         
-        if (relayPayload.length() > 0) {
-            delay(200); // Pausa para não congestionar buffer TX
-            if (_lora.send(relayPayload)) {
+        if (relayLen > 0) {
+            delay(200); // Pausa para hardware respirar
+            if (_lora.send(txBuffer, relayLen)) {
                 _payload.markNodesAsForwarded(const_cast<GroundNodeBuffer&>(gBuffer), relayedNodes);
             }
         }
     }
-
-    // 2. Envia via HTTP (Backup)
+    
+    // HTTP Backup (Mantido)
     if (_httpEnabled && _wifi.isConnected()) {
         String json = _payload.createTelemetryJSON(tData, gBuffer);
-        if (_http.postJson(json)) success = true;
+        _http.postJson(json);
     }
 
     return success;

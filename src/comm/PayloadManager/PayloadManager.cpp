@@ -1,6 +1,6 @@
 /**
  * @file PayloadManager.cpp
- * @brief Implementação Final: GPS Integrado com Integer Encoding
+ * @brief Implementação Completa: TX Binário Otimizado + RX Legado (Hex/ASCII) Suportado
  */
 
 #include "PayloadManager.h"
@@ -16,17 +16,33 @@ PayloadManager::PayloadManager() :
     }
 }
 
-void PayloadManager::update() {}
+void PayloadManager::update() {
+    // Reservado para lógica futura de limpeza ou timeouts
+}
 
 // ============================================================================
-// TRANSMISSÃO (TX)
+// TRANSMISSÃO BINÁRIA (TX) - OTIMIZADA
 // ============================================================================
 
-String PayloadManager::createSatellitePayload(const TelemetryData& data) {
-    uint8_t buffer[128];
+int PayloadManager::createSatellitePayload(const TelemetryData& data, uint8_t* buffer) {
     int offset = 0;
+    // Header (4 Bytes): 0xAB 0xCD + Team ID
+    buffer[offset++] = 0xAB;
+    buffer[offset++] = 0xCD;
+    buffer[offset++] = (TEAM_ID >> 8) & 0xFF;
+    buffer[offset++] = TEAM_ID & 0xFF;
 
-    // Header: 0xAB 0xCD + Team ID
+    _encodeSatelliteData(data, buffer, offset);
+    
+    return offset; // Retorna tamanho real em bytes
+}
+
+int PayloadManager::createRelayPayload(const TelemetryData& data, 
+                                       const GroundNodeBuffer& nodeBuffer,
+                                       uint8_t* buffer,
+                                       std::vector<uint16_t>& includedNodes) {
+    int offset = 0;
+    // Header
     buffer[offset++] = 0xAB;
     buffer[offset++] = 0xCD;
     buffer[offset++] = (TEAM_ID >> 8) & 0xFF;
@@ -34,48 +50,32 @@ String PayloadManager::createSatellitePayload(const TelemetryData& data) {
 
     _encodeSatelliteData(data, buffer, offset);
 
-    return _binaryToHex(buffer, offset);
-}
-
-String PayloadManager::createRelayPayload(const TelemetryData& data, 
-                                        const GroundNodeBuffer& buffer,
-                                        std::vector<uint16_t>& includedNodes) {
-    uint8_t buf[250]; 
-    int offset = 0;
-
-    // Header
-    buf[offset++] = 0xAB;
-    buf[offset++] = 0xCD;
-    buf[offset++] = (TEAM_ID >> 8) & 0xFF;
-    buf[offset++] = TEAM_ID & 0xFF;
-
-    _encodeSatelliteData(data, buf, offset);
-
-    // Byte para contagem de nós
+    // Reserva byte para contagem de nós
     uint8_t nodeCountIndex = offset++; 
     uint8_t nodesAdded = 0;
     
     includedNodes.clear();
 
-    for (int i = 0; i < buffer.activeNodes; i++) {
-        if (!buffer.nodes[i].forwarded && buffer.nodes[i].nodeId > 0) {
-            if (offset + 10 > 240) break;
+    for (int i = 0; i < nodeBuffer.activeNodes; i++) {
+        // Envia apenas se não foi enviado E se tem ID válido
+        if (!nodeBuffer.nodes[i].forwarded && nodeBuffer.nodes[i].nodeId > 0) {
+            // Proteção de buffer (max 250 bytes LoRa)
+            if (offset + 10 > 250) break;
             
-            _encodeNodeData(buffer.nodes[i], buf, offset);
-            includedNodes.push_back(buffer.nodes[i].nodeId);
+            _encodeNodeData(nodeBuffer.nodes[i], buffer, offset);
+            includedNodes.push_back(nodeBuffer.nodes[i].nodeId);
             nodesAdded++;
         }
     }
     
-    buf[nodeCountIndex] = nodesAdded; 
+    buffer[nodeCountIndex] = nodesAdded; 
 
-    if (nodesAdded == 0) return ""; 
-
-    return _binaryToHex(buf, offset);
+    if (nodesAdded == 0) return 0; // Nada para enviar
+    return offset;
 }
 
 // ============================================================================
-// TRANSMISSÃO HTTP (JSON)
+// TRANSMISSÃO HTTP (JSON) - MANTIDA PARA COMPATIBILIDADE
 // ============================================================================
 
 String PayloadManager::createTelemetryJSON(const TelemetryData& data, const GroundNodeBuffer& groundBuffer) {
@@ -124,6 +124,7 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
     
     payload["stat"] = (data.systemStatus == 0) ? "ok" : String(data.systemStatus, HEX);
     
+    // Nós de Solo
     if (groundBuffer.activeNodes > 0) {
         JsonArray nodes = payload.createNestedArray("nodes");
         for (int i = 0; i < groundBuffer.activeNodes; i++) {
@@ -145,13 +146,19 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
 }
 
 // ============================================================================
-// RECEPÇÃO (RX)
+// RECEPÇÃO (RX) - RESTAURADA E COMPLETA
 // ============================================================================
 
 bool PayloadManager::processLoRaPacket(const String& packet, MissionData& data) {
     memset(&data, 0, sizeof(MissionData));
 
-    // 1. Binário Hex
+    // 1. Verifica Binário Puro (Novo formato: começa com byte 0xAB)
+    if (packet.length() > 0 && packet.charAt(0) == (char)0xAB) {
+        // Se implementarmos RX binário no futuro, seria aqui.
+        // Por enquanto, focamos em decodificar nós que enviam HEX ou ASCII (Legado)
+    }
+
+    // 2. Binário Hexadecimal (String ASCII "AB...")
     if (packet.length() >= 12 && packet.startsWith("AB") && isxdigit(packet.charAt(2))) {
         if (_decodeBinaryPayload(packet, data)) {
             _lastMissionData = data;
@@ -159,7 +166,7 @@ bool PayloadManager::processLoRaPacket(const String& packet, MissionData& data) 
         }
     }
 
-    // 2. ASCII Legado
+    // 3. ASCII Legado ("AGRO...")
     if (packet.startsWith("AGRO")) {
         if (_validateAsciiChecksum(packet)) {
             if (_decodeAsciiPayload(packet, data)) {
@@ -172,8 +179,197 @@ bool PayloadManager::processLoRaPacket(const String& packet, MissionData& data) 
 }
 
 // ============================================================================
-// GESTÃO
+// ENCODERS (TX)
 // ============================================================================
+
+void PayloadManager::_encodeSatelliteData(const TelemetryData& data, uint8_t* buffer, int& offset) {
+    // 1. Bateria (1 byte)
+    buffer[offset++] = (uint8_t)constrain(data.batteryPercentage, 0, 100);
+    
+    // Auxiliar para encodings de 16-bit (2 bytes)
+    auto enc16 = [&](float val, float scale, float offsetVal = 0) {
+        int16_t v = (int16_t)((val + offsetVal) * scale);
+        buffer[offset++] = (v >> 8) & 0xFF; 
+        buffer[offset++] = v & 0xFF;
+    };
+    
+    // Auxiliar para encodings de 8-bit de IMU (1 byte)
+    auto encIMU = [&](float val, float scale) -> uint8_t {
+        return (uint8_t)(int8_t)constrain(val * scale, -127, 127);
+    };
+
+    // 2. Temperatura (2 bytes: precisão 0.1, range -50°C a +100°C)
+    enc16(data.temperature, 10.0, 50.0);
+    
+    // 3. Pressão (2 bytes: offset 300hPa, precisão 0.1hPa)
+    enc16(data.pressure, 10.0, -300.0);
+    
+    // 4. Altitude do Altimetro (2 bytes: 0 a 65535m)
+    enc16(data.altitude, 1.0);
+
+    // 5. Umidade (1 byte: 0-100%)
+    buffer[offset++] = (uint8_t)constrain(data.humidity, 0, 100);
+
+    // 6. CO2 (2 bytes: 0 a 8192 ppm)
+    enc16(data.co2, 1.0);
+    
+    // 7. TVOC (2 bytes: 0 a 1187 ppb)
+    enc16(data.tvoc, 1.0);
+
+    // 8. IMU (6 bytes: 3 Giroscópio, 3 Acelerômetro)
+    buffer[offset++] = encIMU(data.gyroX, 0.5); 
+    buffer[offset++] = encIMU(data.gyroY, 0.5);
+    buffer[offset++] = encIMU(data.gyroZ, 0.5);
+    buffer[offset++] = encIMU(data.accelX, 16.0); 
+    buffer[offset++] = encIMU(data.accelY, 16.0);
+    buffer[offset++] = encIMU(data.accelZ, 16.0);
+
+    // 9. GPS (15 bytes: Lat/Lon, Altitude, Satélites)
+    int32_t latI = 0, lonI = 0;
+    uint16_t gpsAlt = 0;
+    
+    // A flag gpsFix é implícita se lat/lon forem 0 (0x00000000)
+    if (data.gpsFix) {
+        latI = (int32_t)(data.latitude * 10000000.0);
+        lonI = (int32_t)(data.longitude * 10000000.0);
+        gpsAlt = (uint16_t)constrain(data.gpsAltitude, 0, 65535);
+    }
+    
+    // Latitude e Longitude (8 bytes: precisão 1e-7 deg)
+    auto enc32 = [&](int32_t v) {
+        buffer[offset++] = (v >> 24) & 0xFF;
+        buffer[offset++] = (v >> 16) & 0xFF;
+        buffer[offset++] = (v >> 8) & 0xFF;
+        buffer[offset++] = v & 0xFF;
+    };
+    
+    enc32(latI);
+    enc32(lonI);
+    
+    // Altitude GPS (2 bytes: 0 a 65535m)
+    buffer[offset++] = (gpsAlt >> 8) & 0xFF;
+    buffer[offset++] = gpsAlt & 0xFF;
+    
+    // Número de Satélites (1 byte)
+    buffer[offset++] = data.satellites;
+
+    // 10. Status do Sistema (1 byte)
+    buffer[offset++] = data.systemStatus;
+
+    // **TAMANHO TOTAL AGORA É DE 34 BYTES** (4 bytes de Header + 30 bytes de Dados)
+}
+
+void PayloadManager::_encodeNodeData(const MissionData& node, uint8_t* buffer, int& offset) {
+    buffer[offset++] = (node.nodeId >> 8) & 0xFF;
+    buffer[offset++] = node.nodeId & 0xFF;
+    buffer[offset++] = (uint8_t)constrain(node.soilMoisture, 0, 100);
+    
+    int16_t t = (int16_t)((node.ambientTemp + 50.0) * 10);
+    buffer[offset++] = (t >> 8) & 0xFF; buffer[offset++] = t & 0xFF;
+    
+    buffer[offset++] = (uint8_t)constrain(node.humidity, 0, 100);
+    buffer[offset++] = node.irrigationStatus;
+    buffer[offset++] = (uint8_t)(node.rssi + 128);
+}
+
+// ============================================================================
+// DECODERS E AUXILIARES (IMPLEMENTAÇÃO COMPLETA RESTAURADA)
+// ============================================================================
+
+bool PayloadManager::_decodeBinaryPayload(const String& hexPayload, MissionData& data) {
+    // Decodifica Hex String vindo de nós de solo legados
+    if (hexPayload.length() < 24) return false;
+    
+    uint8_t buffer[128];
+    size_t len = hexPayload.length() / 2;
+    
+    // Converte String HEX para Array de Bytes
+    for (size_t i = 0; i < len; i++) {
+        // Pega 2 caracteres (ex: "AB")
+        char byteStr[3] = { hexPayload.charAt(i*2), hexPayload.charAt(i*2+1), '\0' };
+        // Converte para byte
+        buffer[i] = (uint8_t)strtol(byteStr, NULL, 16);
+    }
+    
+    // Valida Header
+    if (buffer[0] != 0xAB || buffer[1] != 0xCD) return false;
+
+    int offset = 4;
+    
+    // Proteção de leitura
+    if (len < offset + 8) return false;
+
+    // Preenche estrutura MissionData
+    data.nodeId = (buffer[offset] << 8) | buffer[offset+1]; offset += 2;
+    data.soilMoisture = (float)buffer[offset++];
+    int16_t tRaw = (buffer[offset] << 8) | buffer[offset+1]; offset += 2;
+    data.ambientTemp = (tRaw / 10.0) - 50.0;
+    data.humidity = (float)buffer[offset++];
+    data.irrigationStatus = buffer[offset++];
+    data.rssi = (int16_t)buffer[offset++] - 128;
+    
+    return true;
+}
+
+bool PayloadManager::_decodeAsciiPayload(const String& packet, MissionData& data) {
+    // Decodifica formato: AGRO,Seq,ID,Solo,Temp,Umid,Irrig*Check
+    String p = packet;
+    
+    // Remove Checksum para processar
+    if (p.indexOf('*') > 0) p = p.substring(0, p.indexOf('*')); 
+    p.remove(0, 5); // Remove "AGRO,"
+    
+    int idx = 0;
+    String parts[10];
+    
+    // Split simples por vírgula
+    while (p.length() > 0 && idx < 10) {
+        int comma = p.indexOf(',');
+        if (comma == -1) { 
+            parts[idx++] = p; 
+            break; 
+        } else { 
+            parts[idx++] = p.substring(0, comma); 
+            p.remove(0, comma + 1); 
+        }
+    }
+    
+    if (idx < 4) return false; // Mínimo de campos não atingido
+
+    data.sequenceNumber = parts[0].toInt();
+    data.nodeId = parts[1].toInt();
+    data.soilMoisture = parts[2].toFloat();
+    data.ambientTemp = parts[3].toFloat();
+    if (idx > 4) data.humidity = parts[4].toFloat();
+    if (idx > 5) data.irrigationStatus = parts[5].toInt();
+    
+    // Lógica de perda de pacotes
+    int nodeIdx = findNodeIndex(data.nodeId);
+    if (_expectedSeqNum[nodeIdx] > 0) {
+        int16_t lost = data.sequenceNumber - _expectedSeqNum[nodeIdx];
+        if (lost > 0) _packetsLost += lost;
+    }
+    _expectedSeqNum[nodeIdx] = data.sequenceNumber + 1;
+    data.packetsReceived = 1;
+    
+    return true;
+}
+
+bool PayloadManager::_validateAsciiChecksum(const String& packet) {
+    int star = packet.lastIndexOf('*');
+    if (star == -1) return true; // Se não tiver checksum, aceita (modo debug)
+    
+    String content = packet.substring(0, star);
+    String checkStr = packet.substring(star + 1);
+    
+    uint8_t calc = 0;
+    for (unsigned int i = 0; i < content.length(); i++) calc ^= content.charAt(i);
+    
+    uint8_t received = strtol(checkStr.c_str(), NULL, 16);
+    return (calc == received);
+}
+
+// === GESTÃO DO BUFFER DE NÓS (RESTAURADO) ===
 
 void PayloadManager::markNodesAsForwarded(GroundNodeBuffer& buffer, const std::vector<uint16_t>& nodeIds) {
     for (uint16_t id : nodeIds) {
@@ -188,164 +384,27 @@ void PayloadManager::markNodesAsForwarded(GroundNodeBuffer& buffer, const std::v
 
 uint8_t PayloadManager::calculateNodePriority(const MissionData& node) {
     uint8_t priority = 0;
+    // Umidade crítica (muito seco ou muito úmido) ganha prioridade
     if (node.soilMoisture < 30 || node.soilMoisture > 90) priority += 5;
+    // Sinal forte ganha prioridade (link mais confiável)
     if (node.rssi > -90) priority += 2;
+    // Se houve perda recente, prioriza para recuperar histórico
     if (node.packetsLost > 0) priority += 2;
+    
     return constrain(priority, 0, 10);
 }
 
 int PayloadManager::findNodeIndex(uint16_t nodeId) {
+    // Busca índice existente
     for (int i = 0; i < MAX_GROUND_NODES; i++) {
         if (_seqNodeId[i] == nodeId) return i;
     }
+    // Se não achar, aloca novo slot vazio
     for (int i = 0; i < MAX_GROUND_NODES; i++) {
         if (_seqNodeId[i] == 0) {
             _seqNodeId[i] = nodeId;
             return i;
         }
     }
-    return 0;
-}
-
-// ============================================================================
-// ENCODERS (TX)
-// ============================================================================
-
-void PayloadManager::_encodeSatelliteData(const TelemetryData& data, uint8_t* buffer, int& offset) {
-    buffer[offset++] = (uint8_t)constrain(data.batteryPercentage, 0, 100);
-    
-    int16_t temp = (int16_t)((data.temperature + 50.0) * 10);
-    buffer[offset++] = (temp >> 8) & 0xFF; buffer[offset++] = temp & 0xFF;
-    
-    uint16_t press = (uint16_t)((data.pressure - 300) * 10);
-    buffer[offset++] = (press >> 8) & 0xFF; buffer[offset++] = press & 0xFF;
-    
-    uint16_t alt = (uint16_t)constrain(data.altitude, 0, 65535);
-    buffer[offset++] = (alt >> 8) & 0xFF; buffer[offset++] = alt & 0xFF;
-
-    // IMU Compacto
-    buffer[offset++] = (uint8_t)(int8_t)constrain((!isnan(data.gyroX) ? data.gyroX : 0.0) / 2.0, -127, 127);
-    buffer[offset++] = (uint8_t)(int8_t)constrain((!isnan(data.gyroY) ? data.gyroY : 0.0) / 2.0, -127, 127);
-    buffer[offset++] = (uint8_t)(int8_t)constrain((!isnan(data.gyroZ) ? data.gyroZ : 0.0) / 2.0, -127, 127);
-
-    buffer[offset++] = (uint8_t)(int8_t)constrain((!isnan(data.accelX) ? data.accelX : 0.0) * 16.0, -127, 127);
-    buffer[offset++] = (uint8_t)(int8_t)constrain((!isnan(data.accelY) ? data.accelY : 0.0) * 16.0, -127, 127);
-    buffer[offset++] = (uint8_t)(int8_t)constrain((!isnan(data.accelZ) ? data.accelZ : 0.0) * 16.0, -127, 127);
-
-    // === GPS Integer Encoding (4 bytes cada, precisão 1e-7) ===
-    // Multiplica por 10.000.000 para manter 7 casas decimais em um inteiro
-    int32_t latI = 0;
-    int32_t lonI = 0;
-    uint8_t sats = 0;
-
-    if (data.gpsFix) {
-        latI = (int32_t)(data.latitude * 10000000.0);
-        lonI = (int32_t)(data.longitude * 10000000.0);
-        sats = data.satellites;
-    }
-
-    // Latitude
-    buffer[offset++] = (latI >> 24) & 0xFF;
-    buffer[offset++] = (latI >> 16) & 0xFF;
-    buffer[offset++] = (latI >> 8) & 0xFF;
-    buffer[offset++] = latI & 0xFF;
-
-    // Longitude
-    buffer[offset++] = (lonI >> 24) & 0xFF;
-    buffer[offset++] = (lonI >> 16) & 0xFF;
-    buffer[offset++] = (lonI >> 8) & 0xFF;
-    buffer[offset++] = lonI & 0xFF;
-
-    buffer[offset++] = sats;
-}
-
-void PayloadManager::_encodeNodeData(const MissionData& node, uint8_t* buffer, int& offset) {
-    buffer[offset++] = (node.nodeId >> 8) & 0xFF;
-    buffer[offset++] = node.nodeId & 0xFF;
-    buffer[offset++] = (uint8_t)constrain(node.soilMoisture, 0, 100);
-    int16_t tempEnc = (int16_t)((node.ambientTemp + 50.0) * 10);
-    buffer[offset++] = (tempEnc >> 8) & 0xFF; buffer[offset++] = tempEnc & 0xFF;
-    buffer[offset++] = (uint8_t)constrain(node.humidity, 0, 100);
-    buffer[offset++] = node.irrigationStatus;
-    buffer[offset++] = (uint8_t)(node.rssi + 128);
-}
-
-// ============================================================================
-// DECODERS E UTILS
-// ============================================================================
-
-bool PayloadManager::_decodeBinaryPayload(const String& hexPayload, MissionData& data) {
-    if (hexPayload.length() < 24) return false;
-    uint8_t buffer[128];
-    size_t len = hexPayload.length() / 2;
-    for (size_t i = 0; i < len; i++) {
-        char byteStr[3] = { hexPayload.charAt(i*2), hexPayload.charAt(i*2+1), '\0' };
-        buffer[i] = (uint8_t)strtol(byteStr, NULL, 16);
-    }
-    if (buffer[0] != 0xAB || buffer[1] != 0xCD) return false;
-
-    int offset = 4;
-    // Pula dados do satélite (16 bytes) para ler nós, se necessário
-    // Aqui assumimos que estamos decodificando um pacote de nó vindo da terra
-    if (len < offset + 8) return false;
-
-    data.nodeId = (buffer[offset] << 8) | buffer[offset+1]; offset += 2;
-    data.soilMoisture = (float)buffer[offset++];
-    int16_t tRaw = (buffer[offset] << 8) | buffer[offset+1]; offset += 2;
-    data.ambientTemp = (tRaw / 10.0) - 50.0;
-    data.humidity = (float)buffer[offset++];
-    data.irrigationStatus = buffer[offset++];
-    data.rssi = (int16_t)buffer[offset++] - 128;
-    return true;
-}
-
-bool PayloadManager::_decodeAsciiPayload(const String& packet, MissionData& data) {
-    String p = packet;
-    if (p.indexOf('*') > 0) p = p.substring(0, p.indexOf('*')); 
-    p.remove(0, 5); 
-    int idx = 0;
-    String parts[10];
-    while (p.length() > 0 && idx < 10) {
-        int comma = p.indexOf(',');
-        if (comma == -1) { parts[idx++] = p; break; } 
-        else { parts[idx++] = p.substring(0, comma); p.remove(0, comma + 1); }
-    }
-    if (idx < 4) return false;
-    data.sequenceNumber = parts[0].toInt();
-    data.nodeId = parts[1].toInt();
-    data.soilMoisture = parts[2].toFloat();
-    data.ambientTemp = parts[3].toFloat();
-    if (idx > 4) data.humidity = parts[4].toFloat();
-    if (idx > 5) data.irrigationStatus = parts[5].toInt();
-    
-    int nodeIdx = findNodeIndex(data.nodeId);
-    if (_expectedSeqNum[nodeIdx] > 0) {
-        int16_t lost = data.sequenceNumber - _expectedSeqNum[nodeIdx];
-        if (lost > 0) _packetsLost += lost;
-    }
-    _expectedSeqNum[nodeIdx] = data.sequenceNumber + 1;
-    data.packetsReceived = 1;
-    return true;
-}
-
-bool PayloadManager::_validateAsciiChecksum(const String& packet) {
-    int star = packet.lastIndexOf('*');
-    if (star == -1) return true;
-    String content = packet.substring(0, star);
-    String checkStr = packet.substring(star + 1);
-    uint8_t calc = 0;
-    for (unsigned int i = 0; i < content.length(); i++) calc ^= content.charAt(i);
-    uint8_t received = strtol(checkStr.c_str(), NULL, 16);
-    return (calc == received);
-}
-
-String PayloadManager::_binaryToHex(const uint8_t* buffer, size_t length) {
-    String hex = "";
-    hex.reserve(length * 2);
-    for (size_t i = 0; i < length; i++) {
-        char temp[3];
-        snprintf(temp, sizeof(temp), "%02X", buffer[i]);
-        hex += temp;
-    }
-    return hex;
+    return 0; // Fallback (sobrescreve o primeiro se cheio, não ideal mas seguro)
 }
