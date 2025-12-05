@@ -1,8 +1,3 @@
-/**
- * @file PayloadManager.h
- * @brief Gerenciador de Payload Otimizado (Binário Puro)
- */
-
 #ifndef PAYLOAD_MANAGER_H
 #define PAYLOAD_MANAGER_H
 
@@ -10,24 +5,20 @@
 #include <ArduinoJson.h>
 #include <vector>
 #include "config.h" 
-#include "esp_sntp.h"
 
+// A classe deve estar totalmente definida aqui
 class PayloadManager {
 public:
     PayloadManager();
 
-    // === Transmissão (TX) - Binário ===
-    
-    // Preenche buffer com dados do satélite. Retorna tamanho em bytes.
+    // === Transmissão (TX) ===
     int createSatellitePayload(const TelemetryData& data, uint8_t* buffer);
     
-    // Preenche buffer com dados de relay. Retorna tamanho em bytes.
     int createRelayPayload(const TelemetryData& data, 
                            const GroundNodeBuffer& buffer, 
                            uint8_t* outBuffer,
                            std::vector<uint16_t>& includedNodes);
     
-    // JSON mantém-se para WiFi/Debug
     String createTelemetryJSON(const TelemetryData& data, 
                                const GroundNodeBuffer& groundBuffer);
 
@@ -48,12 +39,13 @@ private:
     uint16_t _packetsReceived;
     uint16_t _packetsLost;
     
-    // Encoders (Binário)
+    // Encoders (TX)
     void _encodeSatelliteData(const TelemetryData& data, uint8_t* buffer, int& offset);
     void _encodeNodeData(const MissionData& node, uint8_t* buffer, int& offset);
     
-    // Decoders
-    bool _decodeBinaryPayload(const String& hex, MissionData& data);
+    // Decoders (RX)
+    bool _decodeRawPacket(const String& rawData, MissionData& data);
+    bool _decodeHexStringPayload(const String& hex, MissionData& data);
     bool _decodeAsciiPayload(const String& packet, MissionData& data);
     bool _validateAsciiChecksum(const String& packet);
 };

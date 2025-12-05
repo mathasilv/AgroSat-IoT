@@ -2,9 +2,14 @@
 #define COMMUNICATION_MANAGER_H
 
 #include "config.h"
+
+// Inclusão dos Serviços
 #include "comm/LoRaService/LoRaService.h"
 #include "comm/WiFiService/WiFiService.h"
 #include "comm/HttpService/HttpService.h"
+
+// Inclusão CRÍTICA do PayloadManager
+// Certifique-se de que o arquivo existe em src/comm/PayloadManager/PayloadManager.h
 #include "comm/PayloadManager/PayloadManager.h"
 
 class CommunicationManager {
@@ -16,7 +21,7 @@ public:
 
     // WiFi & HTTP
     bool isWiFiConnected();
-    void connectWiFi(); // Wrapper para manter compatibilidade lógica
+    void connectWiFi(); 
     
     // LoRa
     bool sendLoRa(const String& data);
@@ -35,6 +40,8 @@ private:
     LoRaService _lora;
     WiFiService _wifi;
     HttpService _http;
+    
+    // A classe PayloadManager deve estar definida pelo include acima
     PayloadManager _payload;
 
     bool _loraEnabled;
