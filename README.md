@@ -1,119 +1,421 @@
-# 🛰️ AgroSat-IoT - Sistema de Monitoramento Agrícola por Satélite
+# 🛰️ AgroSat-IoT: CubeSat 1U Store-and-Forward para Agricultura de Precisão
 
-## Visão Geral do Projeto
+<div align="center">
 
-O **AgroSat-IoT** é um sistema embarcado de aquisição de dados, com capacidade de retransmissão de dados via satélite de órbita baixa (LEO) no modelo **Store-and-Forward**. Seu principal objetivo é fornecer uma solução de **Agricultura de Precisão** para monitoramento de nós terrestres (sensores de solo) em áreas rurais sem conectividade convencional.
+[![PlatformIO](https://img.shields.io/badge/PlatformIO-Built![ESP32](https://img.shields.io/badge/ESP32-Powere-green![License: MIT](https://img.shields.io/badge/License-MIT-yellow
+**Sistema de Telemetria Orbital para Monitoramento Remoto de Cultivos em Áreas sem Conectividade**
 
-Desenvolvido em torno do microcontrolador **ESP32**, o projeto foca na robustez, baixo consumo de energia e comunicação de longo alcance via **LoRa** para coletar dados dos nós terrestres e retransmiti-los para uma estação em terra durante as passagens do CubeSat.
+[Arquitetura](#-arquitetura-de-software) -  [Hardware](#-especificações-de-hardware) -  [Instalação](#-instalação-e-compilação) -  [Documentação](#-documentação-técnica) -  [Equipe](#-equipe-orbitalis)
 
-## Missão e Funcionalidades Chave
+</div>
 
-A missão principal do AgroSat-IoT é atuar como um **nó de coleta e retransmissão orbital**, garantindo que os dados críticos de campo cheguem à base de controle.
+***
 
-* **🛰️ Telemetria Científica**: Coleta contínua de dados ambientais do próprio CubeSat (temperatura, pressão, IMU 9-DOF, altitude, gases e saúde do sistema).
-* **📡 Função Store-and-Forward (LoRa Relay)**: Recebe e armazena pacotes de dados de diversos **Nós Terrestres** (Ground Nodes) via LoRa e os retransmite à estação em terra via uplink HTTP ou formato binário de satélite.
-* **⚙️ Gerenciamento de Missão**: Implementação de modos de operação (`PREFLIGHT`, `FLIGHT`, `SAFE`) com persistência de estado (NVS) e recuperação de falhas.
-* **🛡️ Saúde e Robustez do Sistema**: Monitoramento contínuo de recursos (Heap, Watchdog) com estratégias automáticas de reinicialização e modos de baixo consumo de energia.
-* **💾 Armazenamento de Dados**: Gerenciamento robusto de cartão SD (SD Card) para log de telemetria, erros e dados da missão, com função de rotação de arquivos por tamanho.
+## 📡 Visão Geral da Missão
 
-## Arquitetura de Software
+O **AgroSat-IoT** é um sistema embarcado para CubeSat 1U desenvolvido pela equipe **Orbitalis** (UFG) para a **3ª Olimpíada Brasileira de Satélites (OBSAT MCTI)**. A missão implementa um relay orbital operando no modelo **Store-and-Forward**, coletando dados de sensores agrícolas terrestres via LoRa e retransmitindo para estações base durante passagens orbitais.
 
-A arquitetura modular e orientada a objetos é implementada em C++ no framework Arduino/ESP-IDF, seguindo o padrão de **Gerenciadores de Serviço** para abstrair o hardware e o comportamento da missão.
+### 🎯 Objetivo da Missão
 
-| Diretório | Responsabilidade | Componentes Chave |
-| :--- | :--- | :--- |
-| `src/core` | Funções de baixo nível, tempo e sistema. | `RTCManager`, `PowerManager`, `SystemHealth`, `ButtonHandler` |
-| `src/sensors` | Interface centralizada para todos os sensores. | `SensorManager`, `MPU9250Manager`, `BMP280Manager`, `SI7021Manager`, `CCS811Manager` |
-| `src/comm` | Todos os links de comunicação e formatação de dados. | `CommunicationManager`, `LoRaService`, `WiFiService`, `HttpService`, `PayloadManager` |
-| `src/app` | Lógica de negócio, estado da missão e coleta de telemetria. | `TelemetryManager`, `MissionController`, `GroundNodeManager`, `TelemetryCollector` |
-| `src/storage` | Leitura/Escrita de dados no SD Card e log de sistema. | `StorageManager` |
+Democratizar acesso à agricultura de precisão em regiões rurais remotas do Brasil, permitindo monitoramento contínuo de variáveis críticas (umidade do solo, temperatura, qualidade do ar) independente de infraestrutura terrestre convencional.
 
+### ✨ Capacidades Principais
 
-## Configuração e Especificações Técnicas
+- **🌍 Store-and-Forward Orbital**: Recepção, armazenamento e retransmissão de dados de múltiplos nós terrestres
+- **📊 Telemetria Científica**: Coleta de dados ambientais (IMU 9-DOF, pressão barométrica, temperatura, umidade, gases)
+- **🔋 Gerenciamento de Energia**: Modos operacionais otimizados (PREFLIGHT/FLIGHT/SAFE) com controle dinâmico de frequência
+- **🛡️ Robustez e Recuperação**: Watchdog Timer, monitoramento de heap, persistência de estado em NVS
+- **💾 Armazenamento Robusto**: Logs estruturados em SD Card com rotação automática por tamanho
 
-### 1. Hardware e Pinos
+***
 
-O projeto é otimizado para placas com ESP32 e módulo LoRa (ex: **TTGO LoRa32-V2.1**). As configurações de pinos estão definidas em `include/config.h`.
+## 🏗️ Arquitetura de Software
 
-| Periférico | Função | Pinos (Padrão) |
-| :--- | :--- | :--- |
-| **LoRa** | SPI | SCK(5), MISO(19), MOSI(27), CS(18), RST(23), DIO0(26) |
-| **SD Card** | SPI | CS(13), MOSI(15), MISO(2), SCLK(14) |
-| **I2C Sensores** | SDA, SCL | SDA(21), SCL(22) |
-| **Bateria** | Leitura Analógica | PIN(35) |
-| **Botão de Controle** | Entrada | PIN(4) |
+Arquitetura modular orientada a objetos em **C++11/14** seguindo padrão de **Gerenciadores de Serviço**, executando sobre **FreeRTOS** (ESP-IDF + Arduino Framework).
 
-### 2. Barramento I2C Robusto
+```
+AgroSat-IoT/
+├── src/
+│   ├── app/              # Lógica de missão e controle de estados
+│   │   ├── TelemetryManager       → Orquestrador de modos operacionais
+│   │   ├── MissionController      → Estado da missão e sincronização
+│   │   ├── GroundNodeManager      → Buffer e priorização de nós terrestres
+│   │   └── TelemetryCollector     → Agregador de dados científicos
+│   │
+│   ├── comm/             # Camadas de comunicação e protocolos
+│   │   ├── CommunicationManager   → Abstração unificada de links
+│   │   ├── LoRaService           → Driver LoRa SX1276 (915 MHz)
+│   │   ├── WiFiService           → Cliente WiFi ESP32
+│   │   ├── HttpService           → Client HTTP (OBSAT API)
+│   │   └── PayloadManager        → Codificação binária/JSON
+│   │
+│   ├── core/             # Serviços de sistema e baixo nível
+│   │   ├── RTCManager            → DS3231 + NTP sync
+│   │   ├── PowerManager          → ADC bateria + DFS (Dynamic Freq Scaling)
+│   │   ├── SystemHealth          → Watchdog + Heap monitor + NVS state
+│   │   └── ButtonHandler         → Controle físico (GPIO4)
+│   │
+│   ├── sensors/          # Abstração de sensores I2C/SPI
+│   │   ├── SensorManager         → Mutex I2C + recuperação de falhas
+│   │   ├── MPU9250Manager        → IMU 9-DOF + calibração magnética
+│   │   ├── BMP280Manager         → Altímetro/Temperatura
+│   │   ├── SI7021Manager         → Umidade relativa/Temperatura
+│   │   └── CCS811Manager         → eCO2/TVOC (Clock stretching fix)
+│   │
+│   └── storage/          # Persistência de dados
+│       └── StorageManager        → SD Card SPI + CSV logging
+│
+├── include/
+│   └── config.h          # Pinout e constantes de missão
+│
+└── platformio.ini        # Build config + dependências
+```
 
-A configuração do I2C é crítica para o funcionamento do sensor de qualidade do ar **CCS811**, que utiliza **Clock Stretching**. O sistema aplica uma correção de inicialização para evitar falhas I2C (`ERRO 263`):
-* **Frequência**: $50 \text{kHz}$ (Para robustez)
-* **Timeout**: $3000 \text{ms}$
+### 🔄 Fluxo de Dados Store-and-Forward
 
-### 3. Modos de Operação
+```mermaid
+graph LR
+    A[Nó Terrestre] -->|LoRa Uplink| B[CubeSat]
+    B -->|Validação CRC| C[PayloadManager]
+    C -->|Decodificação| D[GroundNodeManager]
+    D -->|Buffer RAM + SD| E[Priorização]
+    E -->|Janela Orbital| F[Downlink para GS]
+    F -->|HTTP/LoRa| G[Estação Base]
+```
 
-O sistema possui modos operacionais distintos, gerenciados pelo `TelemetryManager`, com configurações específicas de consumo e comunicação:
+***
 
-| Modo | Descrição | Log Serial | LoRa TX | HTTP TX | Intervalo SD |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `MODE_PREFLIGHT` | Debug total / Standby na base. | **Sim** | **Sim** | **Sim** | $10 \text{s}$ |
-| `MODE_FLIGHT` | Missão ativa (Otimizado). | Não | **Sim** | **Sim** | $10 \text{s}$ |
-| `MODE_SAFE` | Bateria crítica / Erro. | **Sim** | **Sim** (Beacon Lento) | Não | $300 \text{s}$ |
+## ⚙️ Especificações de Hardware
 
-## Configuração do Ambiente de Desenvolvimento
+### Plataforma Principal
+- **MCU**: ESP32 (Xtensa LX6 Dual-Core @ 240 MHz)
+- **Board**: TTGO LoRa32 V2.1 (16MB Flash)
+- **Transceptor**: SX1276 LoRa (915 MHz, SF7-12, BW 125 kHz)
+
+### Sensores Científicos
+
+| Sensor | Função | Interface | Endereço I2C |
+|--------|--------|-----------|--------------|
+| **MPU9250** | IMU 9-DOF (Accel + Gyro + Mag) | I2C | `0x68` |
+| **BMP280** | Pressão barométrica + Temperatura | I2C | `0x76` |
+| **SI7021** | Umidade relativa + Temperatura | I2C | `0x40` |
+| **CCS811** | eCO2 + TVOC (Qualidade do ar) | I2C | `0x5A` |
+| **DS3231** | RTC (Real-Time Clock) | I2C | `0x68` |
+| **NEO-M8N** | GPS/GNSS | UART | - |
+
+### Pinout Crítico (TTGO LoRa32 V2.1)
+
+```cpp
+// LoRa SX1276 (SPI)
+#define LORA_SCK      5
+#define LORA_MISO     19
+#define LORA_MOSI     27
+#define LORA_CS       18
+#define LORA_RST      23
+#define LORA_DIO0     26
+
+// SD Card (SPI)
+#define SD_CS         13
+#define SD_MOSI       15
+#define SD_MISO       2
+#define SD_SCLK       14
+
+// I2C Sensors
+#define I2C_SDA       21
+#define I2C_SCL       22
+#define I2C_FREQ      50000  // 50 kHz (Clock stretching CCS811)
+
+// Power Monitor
+#define BATTERY_PIN   35     // ADC1_CH7
+```
+
+### Correção I2C para CCS811
+
+O sensor de qualidade do ar **CCS811** requer **clock stretching** prolongado. Configuração aplicada:
+
+```cpp
+Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
+Wire.setTimeout(3000);  // 3s timeout
+Wire.setBufferSize(512);
+```
+
+***
+
+## 🎮 Modos Operacionais
+
+Sistema de estados finitos com persistência em NVS (Non-Volatile Storage) para recuperação pós-reset.
+
+| Modo | Condição de Ativação | Log Serial | LoRa TX | HTTP TX | CPU Freq | Intervalo SD |
+|------|---------------------|------------|---------|---------|----------|--------------|
+| **PREFLIGHT** | Boot padrão ou comando manual | ✅ | ✅ | ✅ | 240 MHz | 10s |
+| **FLIGHT** | Comando remoto ou timer | ❌ | ✅ | ✅ | 240 MHz | 10s |
+| **SAFE** | Bateria <3.3V ou Heap <20KB | ✅ | Beacon (300s) | ❌ | 80 MHz | 300s |
+
+### Transições de Estado
+
+```cpp
+PREFLIGHT → FLIGHT  // Via comando serial "START_MISSION"
+FLIGHT → SAFE       // Auto: Bateria crítica ou erro fatal
+SAFE → PREFLIGHT    // Reset manual + bateria restaurada
+```
+
+***
+
+## 📦 Instalação e Compilação
 
 ### Pré-requisitos
-* **PlatformIO IDE**: Recomendado o uso do Visual Studio Code com a extensão PlatformIO.
+
+- **Visual Studio Code** + **PlatformIO IDE Extension**
+- **Python 3.7+** (para build tools)
+- **Driver USB-Serial**: CP2104 (TTGO LoRa32)
+
+### Dependências (Auto-instaladas via `platformio.ini`)
+
+```ini
+sandeepmistry/LoRa @ ^0.8.0
+adafruit/Adafruit BusIO @ ^1.16.2
+adafruit/RTClib @ ^2.1.4
+bblanchon/ArduinoJson @ ^7.2.1
+mikalhart/TinyGPSPlus @ ^1.1.0
+adafruit/Adafruit MPU6050 @ ^2.2.6
+adafruit/Adafruit BMP280 Library @ ^2.6.8
+adafruit/Adafruit Si7021 Library @ ^1.6.1
+adafruit/Adafruit CCS811 Library @ ^1.1.3
+```
 
 ### Build e Upload
-1.  **Clone o Repositório**:
-    ```bash
-    git clone [https://github.com/mathasilv/AgroSat-IoT.git](https://github.com/mathasilv/AgroSat-IoT.git)
-    cd AgroSat-IoT
-    ```
 
-2.  **Instale Dependências (PlatformIO)**: As dependências principais (LoRa, RTClib, ArduinoJson) são listadas em `platformio.ini`.
-    ```bash
-    pio lib install
-    ```
+1. **Clone o repositório**:
+   ```bash
+   git clone https://github.com/mathasilv/AgroSat-IoT.git
+   cd AgroSat-IoT
+   git checkout feature/refactor-structure
+   ```
 
-3.  **Compile e Faça Upload**:
-    ```bash
-    pio run -e ttgo-lora32-v21 -t upload
-    ```
-    *(O ambiente `ttgo-lora32-v21` é o board de destino padrão, definido em `platformio.ini`)*.
+2. **Compile o projeto**:
+   ```bash
+   pio run -e ttgo-lora32-v21
+   ```
 
-## Formato de Telemetria
+3. **Upload para o ESP32**:
+   ```bash
+   pio run -e ttgo-lora32-v21 -t upload
+   ```
 
-Os dados são transmitidos em dois formatos:
+4. **Monitor Serial** (115200 baud):
+   ```bash
+   pio device monitor
+   ```
 
-### 1. HTTP/JSON (Formato OBSAT)
-Utilizado para envio de dados quando a conexão WiFi está disponível (após a missão ou durante testes). É um JSON rigoroso, compatível com a plataforma OBSAT, que inclui todos os dados do CubeSat mais um array detalhado dos **Nós Terrestres** coletados.
+***
 
-### 2. LoRa (Payload Binário Compacto)
-Utilizado para comunicação de satélite (Store-and-Forward) e retransmissão de Ground Nodes. O formato binário garante o uso eficiente da largura de banda LoRa. Os pacotes são codificados em hexadecimal para transmissão.
+## 🔧 Comandos do Console Serial
 
-## Comandos de Console (Serial Monitor)
+Interface de comandos disponível nos modos PREFLIGHT e SAFE:
 
-Durante o desenvolvimento ou no modo `PREFLIGHT`/`SAFE`, comandos podem ser enviados via Serial Monitor:
+| Comando | Função | Exemplo |
+|---------|--------|---------|
+| `STATUS` | Exibe estado de todos os sensores (online/offline + leituras) | `STATUS` |
+| `CALIB_MAG` | Inicia calibração do magnetômetro (rotacionar CubeSat 360°) | `CALIB_MAG` |
+| `CLEAR_MAG` | Apaga offsets de calibração do magnetômetro (NVS) | `CLEAR_MAG` |
+| `SAVE_BASELINE` | Salva baseline CCS811 (executar em ar puro 20min) | `SAVE_BASELINE` |
+| `START_MISSION` | Transição PREFLIGHT → FLIGHT | `START_MISSION` |
+| `SAFE_MODE` | Força entrada no modo SAFE | `SAFE_MODE` |
+| `HELP` | Lista comandos disponíveis | `HELP` |
 
-| Comando | Descrição | Módulo Principal |
-| :--- | :--- | :--- |
-| `STATUS` | Exibe o status detalhado de todos os sensores (online/offline, leituras). | `SensorManager` |
-| `CALIB_MAG` | Inicia a rotina de calibração do Magnetômetro (MPU9250). | `MPU9250Manager` |
-| `CLEAR_MAG` | Apaga os offsets de calibração do Magnetômetro salvos na NVS. | `MPU9250Manager` |
-| `SAVE_BASELINE` | Salva o valor de Baseline do CCS811 na NVS (usar em ar puro). | `CCS811Manager` |
-| `HELP` | Lista os comandos disponíveis. | `CommandHandler` |
+***
 
----
+## 📡 Protocolos de Comunicação
 
-## 👨‍💻 Contribuindo
+### LoRa (Satélite ↔ Terra)
 
-Se você deseja contribuir, siga as diretrizes padrão do GitHub (Fork, Feature Branch, Pull Request).
+**Configuração de Rádio**:
+```cpp
+Frequência: 915 MHz
+Spreading Factor: SF7 (alta taxa) / SF12 (longo alcance)
+Bandwidth: 125 kHz
+Coding Rate: 4/5
+Potência: 20 dBm (máx)
+```
 
-* **Boas Práticas**: Priorize o uso das classes Gerenciadoras existentes e mantenha a lógica de "negócio" em `src/app`.
+**Estrutura de Pacote Binário** (Store-and-Forward):
 
-## Licença
+```
+[Header: 2B] [Team ID: 2B] [Timestamp: 4B] [Payload: NB] [CRC: 2B]
+```
 
-Este projeto está licenciado sob a Licença MIT.
+### HTTP/JSON (Backup/Testes)
 
-*Agradecimentos especiais a OBSAT e ao workflow PlatformIO por apoiar o desenvolvimento de sistemas espaciais embarcados.*
+Endpoint OBSAT API (quando WiFi disponível):
+
+```json
+POST /api/telemetry
+{
+  "team_id": 1234,
+  "timestamp": "2025-12-07T03:00:00Z",
+  "cubesat": {
+    "battery_voltage": 3.85,
+    "temperature": 22.5,
+    "position": {"lat": -16.6869, "lon": -49.2648}
+  },
+  "ground_nodes": [
+    {
+      "node_id": "GN001",
+      "soil_moisture": 45.2,
+      "air_temp": 28.7,
+      "rssi": -87,
+      "received_at": "2025-12-07T02:58:12Z"
+    }
+  ]
+}
+```
+
+***
+
+## 📊 Formato de Telemetria
+
+### Dados Científicos Coletados
+
+**CubeSat (Taxa: 10s PREFLIGHT/FLIGHT, 300s SAFE)**:
+- Tensão da bateria (V)
+- Atitude (roll/pitch/yaw) do IMU
+- Posição GPS (lat/lon/altitude)
+- Temperatura interna (°C)
+- Pressão atmosférica (hPa)
+- Umidade relativa (%)
+- Qualidade do ar (eCO2 ppm, TVOC ppb)
+
+**Nós Terrestres (Store-and-Forward)**:
+- ID do nó
+- Umidade do solo (%)
+- Temperatura ambiente (°C)
+- RSSI/SNR do link LoRa
+- Timestamp de geração/recepção/retransmissão
+
+### Armazenamento em SD Card
+
+Estrutura de arquivos CSV com rotação automática (10MB):
+
+```
+/telemetry/
+  ├── telemetry_001.csv      # Dados do CubeSat
+  ├── telemetry_002.csv
+  ├── ground_nodes_001.csv   # Dados Store-and-Forward
+  └── system_log_001.csv     # Logs de sistema
+```
+
+***
+
+## 🛡️ Robustez e Recuperação de Falhas
+
+### Watchdog Timer (WDT)
+
+- **Timeout**: 8 segundos
+- **Reset Automático**: Trava de tarefas FreeRTOS
+- **Persistência**: Contador de resets em NVS
+
+### Monitoramento de Heap
+
+```cpp
+if (ESP.getFreeHeap() < 20 * 1024) {  // < 20 KB
+    enterSafeMode();
+}
+```
+
+### Persistência de Estado (NVS)
+
+Dados salvos em memória não-volátil:
+- Modo operacional atual
+- Offsets de calibração de sensores
+- Contador de missões
+- Baseline CCS811
+- Estatísticas de uptime
+
+***
+
+## 📚 Documentação Técnica
+
+### Arquivos de Configuração
+
+- [`platformio.ini`](https://github.com/mathasilv/AgroSat-IoT/blob/feature/refactor-structure/platformio.ini) - Build config + libs
+- [`include/config.h`](https://github.com/mathasilv/AgroSat-IoT/blob/feature/refactor-structure/include/config.h) - Pinout + constantes
+
+### Estrutura Detalhada
+
+```
+src/
+├── app/
+│   ├── TelemetryManager.cpp       # Orquestrador principal
+│   ├── MissionController.cpp      # FSM (Finite State Machine)
+│   ├── GroundNodeManager.cpp      # Buffer circular + priorização
+│   └── TelemetryCollector.cpp     # Agregador de dados
+├── comm/
+│   ├── CommunicationManager.cpp   # Multiplexador de links
+│   ├── LoRaService.cpp            # Driver SX1276
+│   └── PayloadManager.cpp         # Serialização binária
+├── core/
+│   ├── RTCManager.cpp             # DS3231 + NTP
+│   ├── PowerManager.cpp           # ADC + histerese
+│   └── SystemHealth.cpp           # WDT + Heap + NVS
+└── sensors/
+    ├── SensorManager.cpp          # Mutex I2C
+    └── [drivers específicos]
+```
+
+***
+
+## 🤝 Contribuindo
+
+Contribuições são bem-vindas! Siga o fluxo padrão de contribuição do GitHub:
+
+1. **Fork** este repositório
+2. Crie uma **feature branch**: `git checkout -b feature/nova-funcionalidade`
+3. **Commit** suas mudanças: `git commit -m 'Add: Nova funcionalidade X'`
+4. **Push** para a branch: `git push origin feature/nova-funcionalidade`
+5. Abra um **Pull Request**
+
+### Diretrizes de Código
+
+- Use **C++11/14** para compatibilidade ESP32
+- Evite alocação dinâmica (`malloc/new`) quando possível
+- Documente código complexo ou hardware-specific
+- Teste em hardware real (TTGO LoRa32) antes do PR
+- Mantenha consistência com padrão de Gerenciadores existente
+
+***
+
+## 👨‍🚀 Equipe Orbitalis
+
+**Categoria N3 - 3ª Olimpíada Brasileira de Satélites (OBSAT MCTI)**
+
+- **Instituição**: Universidade Federal de Goiás (UFG)
+- **Desenvolvedores**:
+  - Matheus Aparecido Souza Silva - Firmware Lead
+  - Luana Sthephany Rodrigues Mamed - Hardware & Integration
+- **Tutor**: Prof. Aldo Diaz
+- **Organização**: Ministério da Ciência, Tecnologia e Inovação (MCTI)
+
+***
+
+## 📄 Licença
+
+Este projeto está licenciado sob a **MIT License** - veja o arquivo [LICENSE](LICENSE) para detalhes.
+
+***
+
+## 🙏 Agradecimentos
+
+- **OBSAT MCTI** pelo suporte à competição
+- **PlatformIO** pela plataforma de desenvolvimento robusta
+- **Espressif Systems** pela arquitetura ESP32
+- **LoRa Alliance** pelos padrões de comunicação
+- Comunidade open-source de sistemas embarcados aeroespaciais
+
+***
+
+<div align="center">
+
+**🛰️ Desenvolvido com ❤️ para democratizar acesso à agricultura de precisão no Brasil**
+
+[![GitHub](https://img.shields.io/badge/GitHub-mathasilv%
+[![OBSAT](https://img.shields.io/badge/Website-OBSAT-re</div>
