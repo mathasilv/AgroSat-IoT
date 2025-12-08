@@ -1,6 +1,6 @@
 /**
  * @file MissionController.h
- * @brief Controlador de ciclo de vida de missão (Com Persistência)
+ * @brief Controlador de ciclo de vida de missão
  */
 
 #ifndef MISSION_CONTROLLER_H
@@ -9,14 +9,16 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include "config.h"
-#include "core/RTCManager/RTCManager.h"
-#include "app/GroundNodeManager/GroundNodeManager.h"
+
+// Forward declarations (evita include circular)
+class RTCManager;
+class GroundNodeManager;
 
 class MissionController {
 public:
     MissionController(RTCManager& rtc, GroundNodeManager& nodes);
     
-    bool begin(); // Novo: Carrega estado anterior
+    bool begin(); 
     bool start();
     bool stop();
     
@@ -27,15 +29,15 @@ public:
 private:
     RTCManager& _rtc;
     GroundNodeManager& _nodes;
-    Preferences _prefs; // Para salvar estado na Flash
+    Preferences _prefs;
     
     bool _active;
-    unsigned long _startTime;    // millis() do início (recalculado no boot)
-    uint32_t _startTimestampUTC; // Unix timestamp fixo do início
+    unsigned long _startTime;
+    uint32_t _startTimestampUTC;
     
     void _printStatistics();
-    void _saveState();   // Salva na NVS
-    void _clearState();  // Limpa da NVS
+    void _saveState();
+    void _clearState();
     
     void _calculateLinkStats(int& avgRSSI, int& bestRSSI, int& worstRSSI,
                              float& avgSNR, float& packetLossRate);

@@ -89,9 +89,9 @@ const ModeConfig SAFE_CONFIG = { false, true, true, true, false, 120000, 300000,
 #define DS3231_ADDRESS 0x68
 
 // ========== LIMITES DE VALIDAÇÃO ==========
-#define TEMP_MIN_VALID -50.0
+#define TEMP_MIN_VALID -90.0
 #define TEMP_MAX_VALID 100.0
-#define PRESSURE_MIN_VALID 300.0
+#define PRESSURE_MIN_VALID 5.0
 #define PRESSURE_MAX_VALID 1100.0
 #define HUMIDITY_MIN_VALID 0.0
 #define HUMIDITY_MAX_VALID 100.0
@@ -169,7 +169,7 @@ const ModeConfig SAFE_CONFIG = { false, true, true, true, false, 120000, 300000,
 // ========== BATERIA ==========
 #define BATTERY_MIN_VOLTAGE 3.5
 #define BATTERY_MAX_VOLTAGE 4.2
-#define BATTERY_CRITICAL 3.6
+#define BATTERY_CRITICAL 3.3
 #define BATTERY_LOW 3.7
 
 // ========== SISTEMA (CORRIGIDO - 4.5) ==========

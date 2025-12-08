@@ -1,4 +1,5 @@
 #include "GroundNodeManager.h"
+#include "comm/CommunicationManager/CommunicationManager.h" // Include movido para cá
 
 GroundNodeManager::GroundNodeManager() {
     memset(&_buffer, 0, sizeof(GroundNodeBuffer));
@@ -23,30 +24,20 @@ void GroundNodeManager::updateNode(const MissionData& data, CommunicationManager
             DEBUG_PRINTF("[GroundNodeManager] Node %u atualizado (seq %u -> %u)\n",
                          data.nodeId, existingNode.sequenceNumber, data.sequenceNumber);
 
-            if (data.sequenceNumber > existingNode.sequenceNumber + 1) {
-                uint16_t lost = data.sequenceNumber - existingNode.sequenceNumber - 1;
-                DEBUG_PRINTF("[GroundNodeManager] %u pacote(s) perdido(s)\n", lost);
-            }
-
             existingNode = data;
             existingNode.lastLoraRx = millis();
             existingNode.forwarded  = false;
-            
-            // [NOVO] Reseta timestamp de retransmissão (dado novo ainda não enviado)
             existingNode.retransmissionTime = 0; 
             
+            // Agora temos acesso à definição completa de CommunicationManager
             existingNode.priority   = comm.calculatePriority(data);
 
             _buffer.lastUpdate[existingIndex] = millis();
             _buffer.totalPacketsCollected++;
 
-            DEBUG_PRINTF("[GroundNodeManager] Node %u pronto para retransmitir\n", data.nodeId);
         } else if (data.sequenceNumber == existingNode.sequenceNumber) {
             DEBUG_PRINTF("[GroundNodeManager] Node %u duplicado (seq %u), ignorando\n",
                          data.nodeId, data.sequenceNumber);
-        } else {
-            DEBUG_PRINTF("[GroundNodeManager] Node %u pacote antigo (seq %u < %u), ignorando\n",
-                         data.nodeId, data.sequenceNumber, existingNode.sequenceNumber);
         }
     } else {
         if (_buffer.activeNodes < MAX_GROUND_NODES) {
@@ -54,8 +45,6 @@ void GroundNodeManager::updateNode(const MissionData& data, CommunicationManager
             _buffer.nodes[newIndex] = data;
             _buffer.nodes[newIndex].lastLoraRx = millis();
             _buffer.nodes[newIndex].forwarded  = false;
-            
-            // [NOVO] Inicializa com 0
             _buffer.nodes[newIndex].retransmissionTime = 0;
             
             _buffer.nodes[newIndex].priority   = comm.calculatePriority(data);
@@ -98,8 +87,6 @@ void GroundNodeManager::_replaceLowestPriorityNode(const MissionData& newData,
     _buffer.nodes[replaceIndex] = newData;
     _buffer.nodes[replaceIndex].lastLoraRx = millis();
     _buffer.nodes[replaceIndex].forwarded  = false;
-    
-    // [NOVO] Reset
     _buffer.nodes[replaceIndex].retransmissionTime = 0;
     
     _buffer.nodes[replaceIndex].priority   = comm.calculatePriority(newData);

@@ -1,7 +1,7 @@
 /**
  * @file TelemetryManager.h
- * @brief Gerenciador Central com Beacon SAFE e Link Budget
- * @version 10.0.0 (5.4 Beacon SAFE + 4.2 Link Budget + 5.2 Adaptive SF)
+ * @brief Gerenciador Central (SF Estático - Versão Leve)
+ * @version 10.2.0
  */
 
 #ifndef TELEMETRYMANAGER_H
@@ -19,7 +19,7 @@
 #include "core/ButtonHandler/ButtonHandler.h"
 #include "storage/StorageManager.h"
 #include "comm/CommunicationManager/CommunicationManager.h"
-#include "comm/LinkBudgetCalculator.h"  // NOVO 4.2
+// LinkBudgetCalculator removido
 
 // Controllers
 #include "app/GroundNodeManager/GroundNodeManager.h"
@@ -61,8 +61,7 @@ private:
     TelemetryCollector   _telemetryCollector;
     CommandHandler       _commandHandler;
     
-    // NOVO 4.2: Link Budget Calculator
-    LinkBudgetCalculator _linkBudget;
+    // _linkBudget removido
 
     OperationMode  _mode;
     bool           _missionActive;
@@ -73,16 +72,15 @@ private:
     unsigned long  _lastStorageSave;
     unsigned long  _missionStartTime;
     unsigned long  _lastSensorReset;
-    unsigned long  _lastBeaconTime;      // NOVO 5.4
-    unsigned long  _lastLinkBudgetCalc;  // NOVO 4.2
+    unsigned long  _lastBeaconTime;
+    // _lastLinkBudgetCalc removido
 
-    // Helpers de Inicialização
+    // Helpers
     void _initModeDefaults();
     void _initSubsystems(uint8_t& subsystemsOk, bool& success);
     void _syncNTPIfAvailable();
     void _logInitSummary(bool success, uint8_t subsystemsOk, uint32_t initialHeap);
 
-    // Helpers de Loop
     void _handleIncomingRadio();   
     void _maintainGroundNetwork(); 
     void _sendTelemetry();
@@ -91,12 +89,8 @@ private:
     void _handleButtonEvents();
     void _updateLEDIndicator(unsigned long currentTime);
     
-    // NOVO 5.4: Beacon Automático em Modo SAFE
     void _sendSafeBeacon();
-    
-    // NOVO 4.2 + 5.2: Link Budget e Adaptive SF
-    void _updateLinkBudget();
-    void _applyAdaptiveSF();
+    // _updateLinkBudget removido
 };
 
 #endif

@@ -70,9 +70,9 @@ private:
     static constexpr uint16_t MAX_IDENTICAL_READINGS = 200;     // Ciclos para considerar travado
     
     // Limites (Datasheet)
-    static constexpr float TEMP_MIN = -40.0f;
+    static constexpr float TEMP_MIN = -60.0f;
     static constexpr float TEMP_MAX = 85.0f;
-    static constexpr float PRESSURE_MIN = 300.0f;
+    static constexpr float PRESSURE_MIN = 5.0f;
     static constexpr float PRESSURE_MAX = 1100.0f;
     
     // Taxas máximas de mudança (Física)

@@ -1,7 +1,7 @@
 /**
  * @file LoRaService.h
- * @brief Serviço LoRa com Adaptive SF, Duty Cycle e Criptografia
- * @version 3.0.0 (5.2 Adaptive SF + 4.8 Duty Cycle + 4.1 Crypto)
+ * @brief Serviço LoRa com SF Estático, Duty Cycle e Criptografia
+ * @version 3.1.0 (SF Dinâmico Removido)
  */
 
 #ifndef LORA_SERVICE_H
@@ -57,21 +57,7 @@ public:
      */
     void setTxPower(int level);
     
-    // --- NOVO 5.2: ADAPTIVE SPREADING FACTOR ---
-    /**
-     * @brief Ajusta SF dinamicamente baseado na qualidade do link
-     * @param rssi RSSI atual (dBm)
-     * @param snr SNR atual (dB)
-     */
-    void adjustSFBasedOnLinkQuality(int rssi, float snr);
-    
-    /**
-     * @brief Ajusta SF baseado na distância calculada
-     * @param distanceKm Distância em km
-     */
-    void adjustSFBasedOnDistance(float distanceKm);
-    
-    // --- NOVO 4.8: DUTY CYCLE ---
+    // --- DUTY CYCLE ---
     /**
      * @brief Verifica se pode transmitir agora (sem violar duty cycle)
      * @param payloadSize Tamanho do payload em bytes
@@ -100,13 +86,10 @@ public:
 private:
     LoRaReceiver _receiver;
     LoRaTransmitter _transmitter;
-    DutyCycleTracker _dutyCycleTracker;  // NOVO 4.8
+    DutyCycleTracker _dutyCycleTracker;
     
     bool _online;
     int _currentSF;  // SF atual em uso
-    
-    // Helpers internos
-    bool _sendWithDutyCycleCheck(const uint8_t* data, size_t len);
 };
 
 #endif

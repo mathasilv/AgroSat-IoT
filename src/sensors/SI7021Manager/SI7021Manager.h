@@ -39,7 +39,7 @@ private:
     unsigned long _lastRead;
 
     // Limites de Validação
-    static constexpr float TEMP_MIN = -40.0f;
+    static constexpr float TEMP_MIN = -90.0f;
     static constexpr float TEMP_MAX = 85.0f;
     static constexpr float HUM_MIN = 0.0f;
     static constexpr float HUM_MAX = 100.0f;

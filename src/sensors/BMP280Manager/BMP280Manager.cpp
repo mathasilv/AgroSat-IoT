@@ -1,9 +1,10 @@
 /**
  * @file BMP280Manager.cpp
- * @brief Implementação limpa e otimizada do gerenciador BMP280
+ * @brief Implementação Final Corrigida (Estabilidade Bancada + Voo)
  */
 
 #include "BMP280Manager.h"
+#include <math.h>
 
 BMP280Manager::BMP280Manager() 
     : _bmp280(Wire),
@@ -34,7 +35,7 @@ bool BMP280Manager::begin() {
     _identicalReadings = 0;
     _initHistoryValues();
     
-    // 1. Tentar endereços I2C (0x76 e 0x77)
+    // 1. Tentar endereços I2C
     uint8_t addresses[] = {BMP280::I2C_ADDR_PRIMARY, BMP280::I2C_ADDR_SECONDARY};
     bool detected = false;
     
@@ -51,25 +52,29 @@ bool BMP280Manager::begin() {
         return false;
     }
     
-    // 2. Configuração Otimizada (Datasheet Handheld Device Dynamic)
+    // 2. Configuração
     if (!_bmp280.configure(
         BMP280::Mode::NORMAL,
         BMP280::TempOversampling::X1,
-        BMP280::PressOversampling::X8,  // Alta resolução
-        BMP280::Filter::OFF,            // Filtro OFF para resposta rápida
+        BMP280::PressOversampling::X8,
+        BMP280::Filter::OFF,
         BMP280::StandbyTime::MS_125
     )) {
         DEBUG_PRINTLN("[BMP280Manager] ERRO: Falha na configuração.");
         return false;
     }
     
-    // 3. Warm-up e teste inicial
+    // 3. Leitura inicial para "seed" do histórico
     delay(100); 
     float t, p, a;
     if (_readRaw(t, p, a)) {
         _online = true;
         _tempValid = true;
         _warmupStartTime = millis();
+        
+        // Preenche histórico inicial com valor real
+        for(int i=0; i<HISTORY_SIZE; i++) _updateHistory(t, p, a);
+        
         DEBUG_PRINTLN("[BMP280Manager] Inicializado com sucesso.");
         return true;
     }
@@ -83,7 +88,7 @@ void BMP280Manager::update() {
     
     float temp, press, alt;
     
-    // Tenta ler até 3 vezes em caso de falha I2C momentânea
+    // Tenta ler até 3 vezes
     bool readSuccess = false;
     for (int i = 0; i < 3; i++) {
         if (_readRaw(temp, press, alt)) {
@@ -101,15 +106,46 @@ void BMP280Manager::update() {
         }
         return;
     }
+
+    // ============================================================
+    // CORREÇÃO: Sincronização apenas se inválido (Fresh Start)
+    // ============================================================
+    if (!_tempValid) {
+        _temperature = temp;
+        _pressure = press;
+        _altitude = alt;
+        _tempValid = true;
+        _failCount = 0;
+        
+        // Reinicia histórico
+        for (uint8_t i = 0; i < HISTORY_SIZE; i++) {
+            _pressureHistory[i] = press;
+            _altitudeHistory[i] = alt;
+            _tempHistory[i] = temp;
+        }
+        _historyFull = true;
+        _lastUpdateTime = millis();
+        
+        DEBUG_PRINTLN("[BMP280Manager] Histórico reiniciado (Recuperação).");
+        return;
+    }
     
-    // Validação Lógica (Ranges, Travamento, Taxa de variação)
+    // Validação Lógica
     if (!_validateReading(temp, press, alt)) {
         _failCount++;
-        // Se falhar validação muitas vezes ou travar, força reinit
-        if ((_failCount >= 20 || _identicalReadings >= MAX_IDENTICAL_READINGS) && _canReinit()) {
-            DEBUG_PRINTLN("[BMP280Manager] Dados inválidos ou sensor travado. Resetando...");
+        
+        // Se falhar muitas vezes, reseta
+        if ((_failCount >= 20) && _canReinit()) {
+            DEBUG_PRINTLN("[BMP280Manager] Dados inválidos persistentes. Resetando...");
             forceReinit();
         }
+        // Se estiver travado por muito tempo (apenas log, evita reset agressivo em bancada)
+        if (_identicalReadings >= 500 && _canReinit()) {
+             DEBUG_PRINTLN("[BMP280Manager] Aviso: Leitura estática (OK em bancada).");
+             // Opcional: forceReinit(); -> Removido para evitar loop em bancada
+             _identicalReadings = 0; // Reseta contador para não travar logs
+        }
+        
         return;
     }
     
@@ -145,29 +181,32 @@ void BMP280Manager::printStatus() const {
 }
 
 // ========================================
-// MÉTODOS PRIVADOS - LEITURA & CÁLCULO
+// MÉTODOS PRIVADOS
 // ========================================
 
 bool BMP280Manager::_readRaw(float& temp, float& press, float& alt) {
     temp = _bmp280.readTemperature();
     press = _bmp280.readPressure() / 100.0f; // Pa -> hPa
     alt = _bmp280.readAltitude();
-    
     return (!isnan(temp) && !isnan(press) && !isnan(alt));
 }
 
 bool BMP280Manager::_validateReading(float temp, float press, float alt) {
-    // 1. Range Físico (Datasheet)
+    // 1. Range Físico (Configurado para Balão: -90C a +85C / 5hPa a 1100hPa)
     if (temp < TEMP_MIN || temp > TEMP_MAX) return false;
     if (press < PRESSURE_MIN || press > PRESSURE_MAX) return false;
     
-    // 2. Detecção de Travamento (Valores idênticos repetidos)
-    if (_isFrozen(press)) return false;
+    // 2. Detecção de Travamento (Relaxada para evitar falsos positivos)
+    if (_isFrozen(press)) {
+        // Em voo real, pressão muda sempre. Em bancada, pode ser estável.
+        // Retornamos false aqui para contar como "falha", mas o update() trata sem resetar agressivamente.
+        return false; 
+    }
     
     // 3. Ignorar validação fina durante warm-up
     if ((millis() - _warmupStartTime) < WARMUP_DURATION) return true;
     
-    // 4. Taxa de Variação e Outliers (apenas se tiver histórico)
+    // 4. Taxa de Variação
     if (_lastUpdateTime > 0) {
         float dt = (millis() - _lastUpdateTime) / 1000.0f;
         if (dt > 0.1f && dt < 10.0f) {
@@ -183,25 +222,26 @@ bool BMP280Manager::_validateReading(float temp, float press, float alt) {
 }
 
 bool BMP280Manager::_isFrozen(float currentPressure) {
-    // Tolerância mínima para ruído do sensor
-    if (fabs(currentPressure - _lastPressureRead) < 0.02f) { 
+    // Tolerância aumentada de 0.02 para 0.05 hPa para lidar com ruído natural
+    if (fabs(currentPressure - _lastPressureRead) < 0.05f) { 
         _identicalReadings++;
     } else {
         _identicalReadings = 0;
     }
     _lastPressureRead = currentPressure;
     
-    return (_identicalReadings >= MAX_IDENTICAL_READINGS);
+    // Aumentado limite para considerar travado (500 ciclos ~ 50-100 segundos)
+    return (_identicalReadings >= 500); 
 }
 
 bool BMP280Manager::_checkRateOfChange(float temp, float press, float alt, float deltaTime) {
-    uint8_t prevIdx = (_historyIndex + HISTORY_SIZE - 1) % HISTORY_SIZE;
+    uint8_t prevIdx = (_historyIndex == 0) ? HISTORY_SIZE - 1 : _historyIndex - 1;
     
     float pressRate = fabs(press - _pressureHistory[prevIdx]) / deltaTime;
-    float altRate = fabs(alt - _altitudeHistory[prevIdx]) / deltaTime;
+    // float altRate = fabs(alt - _altitudeHistory[prevIdx]) / deltaTime; // Opcional checar altitude
     
-    if (pressRate > MAX_PRESSURE_RATE) return false;
-    if (altRate > MAX_ALTITUDE_RATE) return false;
+    // Aumentei tolerância de taxa para o lançamento (subida rápida/turbulência)
+    if (pressRate > (MAX_PRESSURE_RATE * 2.0f)) return false; 
     
     return true;
 }
@@ -214,17 +254,15 @@ bool BMP280Manager::_isOutlier(float value, float* history, uint8_t count) const
     for (uint8_t i = 0; i < count; i++) deviations[i] = fabs(history[i] - median);
     
     float mad = _getMedian(deviations, count);
-    if (mad < 0.1f) mad = 0.1f; // Evitar divisão por zero/ruído zero
+    if (mad < 0.1f) mad = 0.1f; 
     
     float score = fabs(value - median) / mad;
-    return (score > 4.0f); // Tolerância (Z-Score modificado)
+    return (score > 8.0f); // Tolerância bem alta para evitar rejeitar dados reais de subida rápida
 }
 
 float BMP280Manager::_getMedian(float* values, uint8_t count) const {
     float sorted[HISTORY_SIZE];
     memcpy(sorted, values, count * sizeof(float));
-    
-    // Bubble sort simples para poucos elementos
     for (uint8_t i = 0; i < count - 1; i++) {
         for (uint8_t j = 0; j < count - i - 1; j++) {
             if (sorted[j] > sorted[j + 1]) {
@@ -241,10 +279,8 @@ void BMP280Manager::_updateHistory(float temp, float press, float alt) {
     _pressureHistory[_historyIndex] = press;
     _altitudeHistory[_historyIndex] = alt;
     _tempHistory[_historyIndex] = temp;
-    
     _historyIndex = (_historyIndex + 1) % HISTORY_SIZE;
     if (_historyIndex == 0) _historyFull = true;
-    
     _lastUpdateTime = millis();
 }
 

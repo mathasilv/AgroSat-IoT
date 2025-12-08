@@ -4,14 +4,15 @@
  */
 
 #include "MissionController.h"
+#include "core/RTCManager/RTCManager.h" // Include real
+#include "app/GroundNodeManager/GroundNodeManager.h" // Include real
 
 MissionController::MissionController(RTCManager& rtc, GroundNodeManager& nodes) 
     : _rtc(rtc), _nodes(nodes), _active(false), _startTime(0), _startTimestampUTC(0)
 {}
 
 bool MissionController::begin() {
-    // Tenta recuperar missão interrompida (ex: Watchdog reset em voo)
-    _prefs.begin("mission", true); // Read-only
+    _prefs.begin("mission", true); 
     bool wasActive = _prefs.getBool("active", false);
     uint32_t savedStartUTC = _prefs.getUInt("start_utc", 0);
     _prefs.end();
@@ -20,8 +21,6 @@ bool MissionController::begin() {
         _active = true;
         _startTimestampUTC = savedStartUTC;
         
-        // Recalcula o _startTime (millis) aproximado baseado no RTC
-        // Se o RTC falhar, assume que o boot foi agora (melhor que nada)
         if (_rtc.isInitialized()) {
             uint32_t currentUnix = _rtc.getUnixTime();
             uint32_t elapsedSec = (currentUnix > _startTimestampUTC) ? (currentUnix - _startTimestampUTC) : 0;
@@ -31,7 +30,6 @@ bool MissionController::begin() {
         }
 
         DEBUG_PRINTLN("[Mission] ⚠ MISSÃO RECUPERADA DE REINICIALIZAÇÃO!");
-        DEBUG_PRINTF("[Mission] Início original: %u (Unix)\n", _startTimestampUTC);
         return true;
     }
     
@@ -46,13 +44,13 @@ bool MissionController::start() {
     if (_rtc.isInitialized()) {
         _startTimestampUTC = _rtc.getUnixTime();
     } else {
-        _startTimestampUTC = 0; // Marca temporal inválida, mas missão segue
+        _startTimestampUTC = 0;
     }
     
     _startTime = millis();
     _active = true;
     
-    _saveState(); // Persiste na Flash
+    _saveState();
     return true;
 }
 
@@ -66,12 +64,12 @@ bool MissionController::stop() {
     _startTime = 0;
     _startTimestampUTC = 0;
     
-    _clearState(); // Remove da Flash
+    _clearState();
     return true;
 }
 
 void MissionController::_saveState() {
-    _prefs.begin("mission", false); // Read/Write
+    _prefs.begin("mission", false);
     _prefs.putBool("active", true);
     _prefs.putUInt("start_utc", _startTimestampUTC);
     _prefs.end();
@@ -119,8 +117,13 @@ void MissionController::_calculateLinkStats(int& avgRSSI, int& bestRSSI, int& wo
         totalRx += n.packetsReceived;
     }
 
-    avgRSSI = totalRSSI / buf.activeNodes;
-    avgSNR = totalSNR / buf.activeNodes;
+    if (buf.activeNodes > 0) {
+        avgRSSI = totalRSSI / buf.activeNodes;
+        avgSNR = totalSNR / buf.activeNodes;
+    } else {
+        avgRSSI = 0; avgSNR = 0;
+    }
+    
     uint32_t totalPkts = totalRx + totalLost;
     packetLossRate = (totalPkts > 0) ? ((float)totalLost / totalPkts * 100.0) : 0.0;
 }

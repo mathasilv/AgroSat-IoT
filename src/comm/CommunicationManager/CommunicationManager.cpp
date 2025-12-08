@@ -20,7 +20,6 @@ bool CommunicationManager::begin() {
     
     if (!_wifi.begin()) {
         DEBUG_PRINTLN("[CommManager] AVISO: WiFi falhou (não crítico).");
-        // Não marca como erro crítico, WiFi é opcional
     }
     
     return ok;
@@ -48,12 +47,10 @@ bool CommunicationManager::sendLoRa(const String& data) {
 }
 
 // ============================================================================
-// ENVIO LoRa (Binário - NOVO)
+// ENVIO LoRa (Binário)
 // ============================================================================
 bool CommunicationManager::sendLoRa(const uint8_t* data, size_t len) {
     if (!_loraEnabled) return false;
-    
-    // Usa o método binário do LoRaService (com duty cycle check)
     return _lora.send(data, len, false);  // false = sem criptografia por padrão
 }
 
@@ -87,7 +84,7 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& tData,
             _lora.setTxPower(10);  // Reduz para 10 dBm
             DEBUG_PRINTLN("[CommManager] Bateria baixa: Potência reduzida (10 dBm)");
         } else {
-            _lora.setTxPower(LORA_TX_POWER);  // Potência normal (20 dBm)
+            _lora.setTxPower(LORA_TX_POWER);  // Potência normal
         }
 
         // 2. Payload Satélite (Downlink de Telemetria própria)
@@ -124,7 +121,7 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& tData,
                     DEBUG_PRINTF("[CommManager] Relay enviado: %d nós, %d bytes\n", 
                                  relayedNodes.size(), relayLen);
                     
-                    // Log de priorização (NOVO 5.3)
+                    // Log de priorização (QoS)
                     uint8_t crit, high, norm, low;
                     _payload.getPriorityStats(gBuffer, crit, high, norm, low);
                     DEBUG_PRINTF("[CommManager] QoS: CRIT=%d HIGH=%d NORM=%d LOW=%d\n",

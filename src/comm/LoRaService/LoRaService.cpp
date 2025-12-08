@@ -2,7 +2,7 @@
 
 /**
  * @file LoRaService.cpp
- * @brief Implementação LoRa com Adaptive SF e Duty Cycle
+ * @brief Implementação LoRa com SF Estático e Duty Cycle
  */
 
 #include "LoRaService.h"
@@ -28,15 +28,12 @@ bool LoRaService::begin() {
 
     // Configurações Padrão
     LoRa.setSignalBandwidth(LORA_SIGNAL_BANDWIDTH);
-    LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR);  // LDRO gerenciado automaticamente aqui
+    LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR);
     LoRa.setCodingRate4(LORA_CODING_RATE);
     LoRa.setTxPower(LORA_TX_POWER);
     LoRa.setSyncWord(LORA_SYNC_WORD);
     if (LORA_CRC_ENABLED) LoRa.enableCrc();
     
-    // NOTA: LDRO é habilitado automaticamente pela biblioteca quando SF >= 11
-    // Não é necessário chamar setLdoFlag() manualmente (método privado)
-
     DEBUG_PRINTF("[LoRa] Online! Freq=%.1f MHz, SF=%d, BW=%.1f kHz, PWR=%d dBm\n",
                  LORA_FREQUENCY/1e6, LORA_SPREADING_FACTOR, 
                  LORA_SIGNAL_BANDWIDTH/1e3, LORA_TX_POWER);
@@ -51,7 +48,7 @@ bool LoRaService::begin() {
 }
 
 // ============================================================================
-// ENVIO COM DUTY CYCLE CHECK E CRIPTOGRAFIA (4.1 + 4.8)
+// ENVIO COM DUTY CYCLE CHECK E CRIPTOGRAFIA
 // ============================================================================
 bool LoRaService::send(const uint8_t* data, size_t len, bool encrypt) {
     if (!_online) return false;
@@ -60,7 +57,6 @@ bool LoRaService::send(const uint8_t* data, size_t len, bool encrypt) {
     uint8_t txBuffer[256];
     size_t txLen = len;
     
-    // NOVO 4.1: Criptografar se solicitado
     if (encrypt && CryptoManager::isEnabled()) {
         // Adicionar padding para completar blocos de 16 bytes
         uint8_t paddedData[272];  // len + até 16 bytes de padding
@@ -78,7 +74,7 @@ bool LoRaService::send(const uint8_t* data, size_t len, bool encrypt) {
         memcpy(txBuffer, data, len);
     }
     
-    // NOVO 4.8: Calcular ToA e verificar duty cycle
+    // Calcular ToA e verificar duty cycle
     uint32_t toaMs = calculateToA(txLen, _currentSF);
     
     if (!_dutyCycleTracker.canTransmit(toaMs)) {
@@ -115,9 +111,6 @@ void LoRaService::setSpreadingFactor(int sf) {
         _transmitter.setSpreadingFactor(sf);
         _currentSF = sf;
         
-        // LDRO é gerenciado automaticamente pela biblioteca ao definir SF
-        // Não é necessário chamar setLdoFlag() (método privado)
-        
         DEBUG_PRINTF("[LoRa] SF alterado para %d", sf);
         if (sf >= 11) {
             DEBUG_PRINTF(" (LDRO auto-habilitado)");
@@ -135,65 +128,6 @@ void LoRaService::setTxPower(int level) {
 }
 
 // ============================================================================
-// NOVO 5.2: ADAPTIVE SPREADING FACTOR
-// ============================================================================
-void LoRaService::adjustSFBasedOnLinkQuality(int rssi, float snr) {
-    int newSF = _currentSF;
-    
-    // Tabela de decisão baseada em RSSI e SNR
-    if (rssi < -120 || snr < -10) {
-        newSF = LORA_SPREADING_FACTOR_SAFE;  // SF12 (mais confiável)
-        DEBUG_PRINTF("[LoRa] Link CRÍTICO (RSSI=%d, SNR=%.1f) -> SF12\n", rssi, snr);
-    } 
-    else if (rssi < -115 || snr < -5) {
-        newSF = 11;
-        DEBUG_PRINTF("[LoRa] Link RUIM (RSSI=%d, SNR=%.1f) -> SF11\n", rssi, snr);
-    } 
-    else if (rssi < -110 || snr < 0) {
-        newSF = 10;
-        DEBUG_PRINTF("[LoRa] Link MODERADO (RSSI=%d, SNR=%.1f) -> SF10\n", rssi, snr);
-    } 
-    else if (rssi < -105 && snr < 5) {
-        newSF = 9;
-        DEBUG_PRINTF("[LoRa] Link BOM (RSSI=%d, SNR=%.1f) -> SF9\n", rssi, snr);
-    } 
-    else if (rssi > -100 && snr > 5) {
-        newSF = 7;  // SF7 (mais rápido, menos ToA)
-        DEBUG_PRINTF("[LoRa] Link EXCELENTE (RSSI=%d, SNR=%.1f) -> SF7\n", rssi, snr);
-    }
-    
-    // Aplicar mudança apenas se diferente do atual
-    if (newSF != _currentSF) {
-        setSpreadingFactor(newSF);
-    }
-}
-
-void LoRaService::adjustSFBasedOnDistance(float distanceKm) {
-    int newSF = 7;
-    
-    // Tabela empírica baseada em testes LoRa-Satélite
-    if (distanceKm < 500.0f) {
-        newSF = 7;
-    } else if (distanceKm < 800.0f) {
-        newSF = 8;
-    } else if (distanceKm < 1100.0f) {
-        newSF = 9;
-    } else if (distanceKm < 1400.0f) {
-        newSF = 10;
-    } else if (distanceKm < 1800.0f) {
-        newSF = 11;
-    } else {
-        newSF = 12;
-    }
-    
-    DEBUG_PRINTF("[LoRa] Distância %.1f km -> SF%d\n", distanceKm, newSF);
-    
-    if (newSF != _currentSF) {
-        setSpreadingFactor(newSF);
-    }
-}
-
-// ============================================================================
 // DUTY CYCLE HELPERS
 // ============================================================================
 bool LoRaService::canTransmitNow(uint32_t payloadSize) {
@@ -206,9 +140,6 @@ uint32_t LoRaService::calculateToA(uint32_t payloadSize, int sf) {
     if (sf < 0) sf = _currentSF;
     
     // Fórmula simplificada de Time on Air (ToA)
-    // ToA ≈ (Preamble + Payload) * (2^SF / BW)
-    // Simplificação: ToA_ms ≈ payloadBytes * 8 * (2^SF) / (BW/1000)
-    
     uint32_t symbolDuration = (1 << sf);  // 2^SF
     uint32_t bwKhz = LORA_SIGNAL_BANDWIDTH / 1000;
     
