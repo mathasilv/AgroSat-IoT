@@ -1,6 +1,7 @@
 /**
  * @file PowerManager.h
- * @brief Gerenciador de Energia com Histerese e Filtro
+ * @brief Gerenciador de Energia com Curva de Descarga Li-ion Real
+ * @version 2.0.0 (MODERADO 4.4 - Curva Não-Linear Implementada)
  */
 
 #ifndef POWER_MANAGER_H
@@ -26,28 +27,29 @@ public:
     // Controle de Energia
     void enablePowerSave();
     void disablePowerSave();
+    
+    // NOVO - 5.2: Ajuste dinâmico de CPU baseado em carga
+    void adjustCpuFrequency();
 
 private:
     float _voltage;
     float _percentage;
     
-    // Flags de Estado (Histerese)
     bool _isCritical;
     bool _isLow;
     bool _powerSaveEnabled;
 
-    // Filtro
     float _avgVoltage;
     uint32_t _lastUpdate;
     
-    // Configurações Internas
     static constexpr uint32_t UPDATE_INTERVAL = 1000;
-    
-    // Histerese (Margem de recuperação)
-    static constexpr float HYSTERESIS = 0.1f; // 0.1V
+    static constexpr float HYSTERESIS = 0.1f;
 
     float _readVoltage();
+    
+    // CORRIGIDO 4.4: Curva de descarga Li-ion 18650 real
     float _calculatePercentage(float voltage);
+    
     void _updateStatus(float voltage);
 };
 

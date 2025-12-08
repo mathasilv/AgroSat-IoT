@@ -1,7 +1,7 @@
 /**
  * @file config.h
  * @brief Configurações globais do CubeSat AgroSat-IoT - Store-and-Forward LEO
- * @version 8.0.0 (Protocolo Binário Puro + Rastreabilidade)
+ * @version 9.0.0 (Correções Críticas Implementadas)
  */
 
 #ifndef CONFIG_H
@@ -12,9 +12,9 @@
 // Identificação
 #define TEAM_ID 666
 
-// ========== CONFIGURAÇÃO GPS ==========
-#define GPS_RX_PIN 34 
-#define GPS_TX_PIN 12 
+// ========== CONFIGURAÇÃO GPS (CORRIGIDO - CRÍTICO 2) ==========
+#define GPS_RX_PIN 16      // U2_RXD (Serial2 padrão ESP32)
+#define GPS_TX_PIN 17      // U2_TXD (ou -1 se GPS só TX)
 #define GPS_BAUD_RATE 9600
 
 // ========== LORA SX1276 ==========
@@ -33,11 +33,11 @@
 #define SD_MISO 2
 #define SD_SCLK 14
 
-// ========== I2C SENSORS ==========
+// ========== I2C SENSORS (CORRIGIDO - CRÍTICO 3) ==========
 #define SENSOR_I2C_SDA 21
 #define SENSOR_I2C_SCL 22
-#define I2C_FREQUENCY 50000   
-#define I2C_TIMEOUT_MS 3000   
+#define I2C_FREQUENCY 100000    // 100kHz Standard Mode (CORRIGIDO de 50kHz)
+#define I2C_TIMEOUT_MS 3000     
 
 // ========== POWER MANAGEMENT ==========
 #define BATTERY_PIN 35
@@ -74,11 +74,12 @@ struct ModeConfig {
     bool httpEnabled;
     uint32_t telemetrySendInterval;
     uint32_t storageSaveInterval;
+    uint32_t beaconInterval;  // NOVO - 5.4
 };
 
-const ModeConfig PREFLIGHT_CONFIG = { true, true, true, true, true, 20000, 1000 };
-const ModeConfig FLIGHT_CONFIG = { false, false, false, true, true, 60000, 10000 };
-const ModeConfig SAFE_CONFIG = { false, true, true, true, false, 120000, 300000 };
+const ModeConfig PREFLIGHT_CONFIG = { true, true, true, true, true, 20000, 1000, 0 };
+const ModeConfig FLIGHT_CONFIG = { false, false, false, true, true, 60000, 10000, 0 };
+const ModeConfig SAFE_CONFIG = { false, true, true, true, false, 120000, 300000, 180000 }; // Beacon a cada 3min
 
 // ========== ENDEREÇOS I2C ==========
 #define MPU9250_ADDRESS 0x69
@@ -114,12 +115,27 @@ const ModeConfig SAFE_CONFIG = { false, true, true, true, false, 120000, 300000 
 #define LORA_TX_POWER 20                
 #define LORA_PREAMBLE_LENGTH 8          
 #define LORA_SYNC_WORD 0x12             
-#define LORA_CRC_ENABLED true           
+#define LORA_CRC_ENABLED true
+#define LORA_LDRO_ENABLED true          // NOVO - 4.2           
 #define LORA_MAX_TX_TIME_MS 400
 #define LORA_MIN_INTERVAL_MS 20000
 #define LORA_MAX_PAYLOAD_SIZE 255       
 #define LORA_TX_TIMEOUT_MS_NORMAL 2000   
-#define LORA_TX_TIMEOUT_MS_SAFE   5000   
+#define LORA_TX_TIMEOUT_MS_SAFE   5000
+
+// ========== LORA DUTY CYCLE (NOVO - 4.8) ==========
+#define LORA_DUTY_CYCLE_PERCENT 10      // 10% (ANATEL 915MHz)
+#define LORA_DUTY_CYCLE_WINDOW_MS 3600000  // 1 hora
+
+// ========== LINK BUDGET (NOVO - 4.2) ==========
+#define LINK_MARGIN_MIN_DB 3.0f         // Margem mínima viável
+#define MAX_COMM_DISTANCE_KM 2302.0f    // Distância máxima LoRa LEO
+#define EARTH_RADIUS_KM 6371.0f
+#define ORBITAL_ALTITUDE_KM 600.0f      // Assumindo órbita típica
+
+// ========== CRIPTOGRAFIA (NOVO - 4.1) ==========
+#define AES_KEY_SIZE 16                 // AES-128
+#define AES_ENABLED true                // Habilitar criptografia
 
 // ========== WIFI & HTTP ==========
 #define WIFI_SSID "MATHEUS "
@@ -156,9 +172,11 @@ const ModeConfig SAFE_CONFIG = { false, true, true, true, false, 120000, 300000 
 #define BATTERY_CRITICAL 3.6
 #define BATTERY_LOW 3.7
 
-// ========== SISTEMA ==========
+// ========== SISTEMA (CORRIGIDO - 4.5) ==========
 #define MISSION_DURATION_MS 7200000 
-#define WATCHDOG_TIMEOUT 60         
+#define WATCHDOG_TIMEOUT_PREFLIGHT 60   // 60s (NOVO)
+#define WATCHDOG_TIMEOUT_FLIGHT 90      // 90s (NOVO)
+#define WATCHDOG_TIMEOUT_SAFE 180       // 180s (NOVO - Corrigido)
 #define SYSTEM_HEALTH_INTERVAL 10000
 
 // ========== RTC & NTP ==========
@@ -176,6 +194,14 @@ extern bool currentSerialLogsEnabled;
 #define DEBUG_PRINT(x) if(currentSerialLogsEnabled){DEBUG_SERIAL.print(x);}
 #define DEBUG_PRINTLN(x) if(currentSerialLogsEnabled){DEBUG_SERIAL.println(x);}
 #define DEBUG_PRINTF(...) if(currentSerialLogsEnabled){DEBUG_SERIAL.printf(__VA_ARGS__);}
+
+// ========== QoS PRIORITY (NOVO - 5.3) ==========
+enum class PacketPriority : uint8_t {
+    CRITICAL = 0,  // Alertas de irrigação, pragas
+    HIGH = 1,      // Dados de sensores críticos
+    NORMAL = 2,    // Telemetria regular
+    LOW = 3        // Logs, debug
+};
 
 // ========== ESTRUTURAS DE DADOS ==========
 struct TelemetryData {
@@ -210,6 +236,13 @@ struct TelemetryData {
     uint16_t errorCount;
     
     char payload[PAYLOAD_MAX_SIZE];
+    
+    // NOVO - 5.6 Health Telemetry
+    uint32_t uptime;
+    uint16_t resetCount;
+    uint8_t resetReason;
+    uint32_t minFreeHeap;
+    float cpuTemp;
 };
 
 struct MissionData {
@@ -225,13 +258,11 @@ struct MissionData {
     uint16_t packetsLost;
     unsigned long lastLoraRx;
     
-    // --- TIMESTAMPS DE RASTREABILIDADE ---
-    uint32_t nodeTimestamp;           // (1) Origem: Gerado pelo Nó/Simulador
-    unsigned long collectionTime;     // (2) Chegada: Recebido pelo Satélite (RTC)
-    unsigned long retransmissionTime; // (3) Saída: Enviado para Ground Station
-    // -------------------------------------
+    uint32_t nodeTimestamp;           
+    unsigned long collectionTime;     
+    unsigned long retransmissionTime; 
 
-    uint8_t priority;
+    uint8_t priority;  // Usando PacketPriority
     bool forwarded;
     char originalPayloadHex[20];
     uint8_t payloadLength;
@@ -254,6 +285,16 @@ enum SystemStatusErrors : uint8_t {
     STATUS_BATTERY_CRIT = 0x20,
     STATUS_TEMP_ALARM = 0x40,
     STATUS_WATCHDOG = 0x80
+};
+
+// ========== LINK BUDGET STRUCTURE (NOVO - 4.2) ==========
+struct LinkBudget {
+    float maxDistance;      // km
+    float currentDistance;  // km (calculado via GPS)
+    float linkMargin;       // dB
+    float pathLoss;         // dB
+    bool isViable;          // true se margin > 3dB
+    int8_t recommendedSF;   // SF recomendado baseado em distância
 };
 
 #endif // CONFIG_H

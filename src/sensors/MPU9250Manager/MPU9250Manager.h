@@ -1,7 +1,7 @@
 /**
  * @file MPU9250Manager.h
- * @brief Gerenciador MPU9250 (Aplicação)
- * @details Controla calibração, offsets e leitura filtrada.
+ * @brief Gerenciador MPU9250 com Calibração Hard + Soft Iron
+ * @version 2.0.0 (MODERADO 4.7 - Soft Iron Distortion Corrigida)
  */
 
 #ifndef MPU9250MANAGER_H
@@ -34,7 +34,7 @@ public:
     float getMagY() const { return _magY; }
     float getMagZ() const { return _magZ; }
 
-    // Raw Data (para telemetria rápida)
+    // Raw Data
     void getRawData(float& gx, float& gy, float& gz, 
                     float& ax, float& ay, float& az,
                     float& mx, float& my, float& mz) const;
@@ -45,9 +45,10 @@ public:
     bool isCalibrated() const { return _calibrated; }
     uint8_t getFailCount() const { return _failCount; }
 
-    // Calibração de Magnetômetro
-    bool calibrateMagnetometer(); // Executa calibração de 10s
+    // CORRIGIDO 4.7: Calibração Hard + Soft Iron
+    bool calibrateMagnetometer();
     void getMagOffsets(float& x, float& y, float& z) const;
+    void getSoftIronMatrix(float matrix[3][3]) const;
     void clearOffsetsFromMemory();
 
 private:
@@ -63,8 +64,11 @@ private:
     float _gyroX, _gyroY, _gyroZ;
     float _magX, _magY, _magZ;
 
-    // Offsets Magnetômetro
+    // Hard Iron Offsets (bias)
     float _magOffX, _magOffY, _magOffZ;
+    
+    // NOVO 4.7: Soft Iron Distortion Matrix (3x3)
+    float _softIronMatrix[3][3];
 
     // Filtro Média Móvel (Acelerômetro)
     static constexpr uint8_t FILTER_SIZE = 5;
@@ -79,6 +83,10 @@ private:
     bool _loadOffsets();
     bool _saveOffsets();
     float _applyFilter(float val, float* buf);
+    
+    // NOVO 4.7: Aplicar correção Soft Iron
+    void _applySoftIronCorrection(float& mx, float& my, float& mz);
+    void _calculateSoftIronMatrix(float samples[][3], int numSamples);
 };
 
 #endif

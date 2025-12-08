@@ -1,6 +1,7 @@
 /**
  * @file SystemHealth.h
- * @brief Monitoramento de Saúde do Sistema
+ * @brief Monitoramento de Saúde do Sistema com Telemetria Detalhada
+ * @version 2.0.0 (MELHORIA 5.6 - Health Telemetry Implementada)
  */
 
 #ifndef SYSTEM_HEALTH_H
@@ -8,13 +9,31 @@
 
 #include <Arduino.h>
 #include <esp_task_wdt.h>
+#include <Preferences.h>
 #include "config.h"
+
+// ============================================================================
+// NOVO 5.6: Estrutura de Telemetria de Saúde Detalhada
+// ============================================================================
+struct HealthTelemetry {
+    uint32_t uptime;           // Segundos desde boot
+    uint16_t resetCount;       // Número total de resets (persistido)
+    uint8_t resetReason;       // Razão do último reset
+    uint32_t minFreeHeap;      // Menor heap livre já visto
+    uint32_t currentFreeHeap;  // Heap livre atual
+    float cpuTemp;             // Temperatura CPU (°C)
+    uint8_t sdCardStatus;      // 0=OK, 1=Erro
+    uint16_t crcErrors;        // Erros de CRC acumulados
+    uint16_t i2cErrors;        // Erros I2C acumulados
+    uint16_t watchdogResets;   // Resets por watchdog
+    uint8_t currentMode;       // Modo operacional atual
+    float batteryVoltage;      // Tensão da bateria
+};
 
 class SystemHealth {
 public:
     SystemHealth();
 
-    // Enum seguro contra macros do Arduino (LOW)
     enum class HeapStatus { 
         HEAP_OK, 
         HEAP_LOW, 
@@ -28,6 +47,7 @@ public:
 
     void reportError(uint8_t errorCode, const String& description);
     
+    // Getters
     float getCPUTemperature();
     uint32_t getFreeHeap();
     uint32_t getMinFreeHeap() const { return _minFreeHeap; }
@@ -39,6 +59,14 @@ public:
 
     void startMission();
     bool isMissionActive() const { return _missionActive; }
+    
+    // NOVO 5.6: Telemetria de Saúde Detalhada
+    HealthTelemetry getHealthTelemetry();
+    void incrementCRCError() { _crcErrors++; }
+    void incrementI2CError() { _i2cErrors++; }
+    void setSDCardStatus(bool ok) { _sdCardStatus = ok ? 0 : 1; }
+    void setCurrentMode(uint8_t mode) { _currentMode = mode; }
+    void setBatteryVoltage(float voltage) { _batteryVoltage = voltage; }
 
 private:
     bool _healthy;
@@ -54,9 +82,24 @@ private:
     bool _missionActive;
     uint32_t _lastWatchdogFeed;
     uint32_t _lastHealthCheck;
+    
+    // NOVO 5.6: Contadores de Health
+    uint16_t _resetCount;
+    uint8_t _resetReason;
+    uint16_t _crcErrors;
+    uint16_t _i2cErrors;
+    uint16_t _watchdogResets;
+    uint8_t _sdCardStatus;
+    uint8_t _currentMode;
+    float _batteryVoltage;
+    
+    Preferences _prefs;
 
     void _checkResources();
     float _readInternalTemp();
+    void _loadPersistentData();
+    void _savePersistentData();
+    void _incrementResetCount();
 };
 
 #endif

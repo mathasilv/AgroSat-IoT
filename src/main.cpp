@@ -1,6 +1,7 @@
 /**
  * @file main.cpp
  * @brief Programa principal - Integração Completa (LoRa, Sensores, GPS)
+ * @version 9.0.0 - I2C Clock Corrigido (100kHz)
  */
 #include <Arduino.h>
 #include <Wire.h>
@@ -18,18 +19,19 @@ void setup() {
     Serial.begin(DEBUG_BAUDRATE);
     
     // ============================================================
-    // 🚑 CONFIGURAÇÃO DE SEGURANÇA I2C
+    // 🚑 CONFIGURAÇÃO I2C CORRIGIDA (CRÍTICO 3)
     // ============================================================
     DEBUG_PRINTLN("[Main] Configurando I2C Mestre...");
     
-    // Inicia o barramento I2C
     Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
     
-    // Configurações para estabilidade com cabos longos e sensores lentos (CCS811)
-    Wire.setClock(50000);   // 50kHz
-    Wire.setTimeout(3000);  // 3000ms
+    // CORRIGIDO: 100kHz Standard Mode (de 50kHz)
+    Wire.setClock(I2C_FREQUENCY);  // 100000 Hz
+    Wire.setTimeout(I2C_TIMEOUT_MS);
+    Wire.setBufferSize(512);  // ADICIONADO: Buffer maior para estabilidade
     
-    DEBUG_PRINTLN("[Main] I2C Configurado: 50kHz, Timeout 3000ms");
+    DEBUG_PRINTF("[Main] I2C Configurado: %d kHz, Timeout %d ms\n", 
+                 I2C_FREQUENCY/1000, I2C_TIMEOUT_MS);
     delay(500); 
     // ============================================================
 
@@ -40,13 +42,13 @@ void setup() {
     
     DEBUG_PRINTLN("");
     DEBUG_PRINTLN("[Main] ========================================");
-    DEBUG_PRINTLN("[Main] INICIALIZANDO AGROSAT-IOT v7.2 (GPS)");
+    DEBUG_PRINTLN("[Main] INICIALIZANDO AGROSAT-IOT v9.0 (FIXED)");
     DEBUG_PRINTLN("[Main] ========================================");
     
-    // Watchdog
+    // Watchdog com timeout adaptativo
+    esp_task_wdt_init(WATCHDOG_TIMEOUT_PREFLIGHT, true);
     esp_task_wdt_add(NULL);
     
-    // Inicialização de todos os gerenciadores (incluindo GPS)
     if (!telemetry.begin()) {
         DEBUG_PRINTLN("[Main] ERRO CRÍTICO: Falha na inicialização de subsistemas!");
     } else {
@@ -60,10 +62,8 @@ void loop() {
     esp_task_wdt_reset();
     processSerialCommands();
     
-    // Loop principal (processa GPS, LoRa, Sensores)
     telemetry.loop();
     
-    // Pequeno delay para estabilidade do loop sem travar o RTOS
     delay(10); 
 }
 
@@ -81,5 +81,15 @@ void processSerialCommands() {
 }
 
 void printAvailableCommands() {
-    DEBUG_PRINTLN("--- COMANDOS: STATUS_SENSORES, RECALIBRAR_MAG, SALVAR_BASELINE, HELP ---");
+    DEBUG_PRINTLN("=== COMANDOS DISPONÍVEIS ===");
+    DEBUG_PRINTLN("  STATUS          : Status detalhado dos sensores");
+    DEBUG_PRINTLN("  CALIB_MAG       : Calibra magnetômetro (hard+soft iron)");
+    DEBUG_PRINTLN("  CLEAR_MAG       : Apaga calibração do magnetômetro");
+    DEBUG_PRINTLN("  SAVE_BASELINE   : Salva baseline CCS811");
+    DEBUG_PRINTLN("  START_MISSION   : Inicia modo FLIGHT");
+    DEBUG_PRINTLN("  STOP_MISSION    : Retorna ao modo PREFLIGHT");
+    DEBUG_PRINTLN("  SAFE_MODE       : Força modo SAFE");
+    DEBUG_PRINTLN("  LINK_BUDGET     : Mostra cálculo de link budget");
+    DEBUG_PRINTLN("  HELP            : Este menu");
+    DEBUG_PRINTLN("============================");
 }
