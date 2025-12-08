@@ -14,6 +14,7 @@ private:
     
     void _printHelp();
     void _handleSensorCmd(const String& cmd);
+     void _printLinkBudget();
 };
 
 #endif

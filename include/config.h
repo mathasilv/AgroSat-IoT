@@ -12,9 +12,9 @@
 // Identificação
 #define TEAM_ID 666
 
-// ========== CONFIGURAÇÃO GPS (CORRIGIDO - CRÍTICO 2) ==========
-#define GPS_RX_PIN 16      // U2_RXD (Serial2 padrão ESP32)
-#define GPS_TX_PIN 17      // U2_TXD (ou -1 se GPS só TX)
+// ========== CONFIGURAÇÃO GPS ==========
+#define GPS_RX_PIN 34 
+#define GPS_TX_PIN 12 
 #define GPS_BAUD_RATE 9600
 
 // ========== LORA SX1276 ==========
@@ -197,10 +197,10 @@ extern bool currentSerialLogsEnabled;
 
 // ========== QoS PRIORITY (NOVO - 5.3) ==========
 enum class PacketPriority : uint8_t {
-    CRITICAL = 0,  // Alertas de irrigação, pragas
-    HIGH = 1,      // Dados de sensores críticos
-    NORMAL = 2,    // Telemetria regular
-    LOW = 3        // Logs, debug
+    CRITICAL = 0,       // Alertas de irrigação, pragas
+    HIGH_PRIORITY = 1,  // Dados de sensores críticos
+    NORMAL = 2,         // Telemetria regular
+    LOW_PRIORITY = 3    // Logs, debug (RENOMEADO)
 };
 
 // ========== ESTRUTURAS DE DADOS ==========

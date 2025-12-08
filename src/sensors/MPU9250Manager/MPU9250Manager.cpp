@@ -195,25 +195,42 @@ void MPU9250Manager::_applySoftIronCorrection(float& mx, float& my, float& mz) {
 }
 
 // ============================================================================
-// NOVO 4.7: Calcular Matriz de Soft Iron (Ellipsoid Fitting)
+// CORRIGIDO: Calcular Matriz de Soft Iron SEM overflow de stack
 // ============================================================================
 void MPU9250Manager::_calculateSoftIronMatrix(float samples[][3], int numSamples) {
-    // Algoritmo simplificado: calcular escalas dos eixos (semi-eixos da elipse)
+    // CRÍTICO: Alocar dinamicamente para evitar stack overflow
+    float* centeredX = (float*)malloc(numSamples * sizeof(float));
+    float* centeredY = (float*)malloc(numSamples * sizeof(float));
+    float* centeredZ = (float*)malloc(numSamples * sizeof(float));
+    
+    if (!centeredX || !centeredY || !centeredZ) {
+        DEBUG_PRINTLN("[MPU9250Manager] ERRO: Memória insuficiente para Soft Iron");
+        free(centeredX);
+        free(centeredY);
+        free(centeredZ);
+        
+        // Usar matriz identidade (sem correção)
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                _softIronMatrix[i][j] = (i == j) ? 1.0f : 0.0f;
+            }
+        }
+        return;
+    }
     
     // 1. Remover Hard Iron offset das amostras
-    float centered[500][3];
     for (int i = 0; i < numSamples; i++) {
-        centered[i][0] = samples[i][0] - _magOffX;
-        centered[i][1] = samples[i][1] - _magOffY;
-        centered[i][2] = samples[i][2] - _magOffZ;
+        centeredX[i] = samples[i][0] - _magOffX;
+        centeredY[i] = samples[i][1] - _magOffY;
+        centeredZ[i] = samples[i][2] - _magOffZ;
     }
     
     // 2. Calcular variâncias (aproximação dos semi-eixos)
     float varX = 0, varY = 0, varZ = 0;
     for (int i = 0; i < numSamples; i++) {
-        varX += centered[i][0] * centered[i][0];
-        varY += centered[i][1] * centered[i][1];
-        varZ += centered[i][2] * centered[i][2];
+        varX += centeredX[i] * centeredX[i];
+        varY += centeredY[i] * centeredY[i];
+        varZ += centeredZ[i] * centeredZ[i];
     }
     
     varX = sqrt(varX / numSamples);
@@ -223,9 +240,9 @@ void MPU9250Manager::_calculateSoftIronMatrix(float samples[][3], int numSamples
     // 3. Calcular fatores de escala (normalizar para esfera)
     float avgScale = (varX + varY + varZ) / 3.0f;
     
-    float scaleX = avgScale / varX;
-    float scaleY = avgScale / varY;
-    float scaleZ = avgScale / varZ;
+    float scaleX = (varX > 0.1f) ? (avgScale / varX) : 1.0f;  // Evitar divisão por zero
+    float scaleY = (varY > 0.1f) ? (avgScale / varY) : 1.0f;
+    float scaleZ = (varZ > 0.1f) ? (avgScale / varZ) : 1.0f;
     
     // 4. Criar matriz diagonal de correção
     _softIronMatrix[0][0] = scaleX;
@@ -247,7 +264,13 @@ void MPU9250Manager::_calculateSoftIronMatrix(float samples[][3], int numSamples
                  _softIronMatrix[1][0], _softIronMatrix[1][1], _softIronMatrix[1][2]);
     DEBUG_PRINTF("  [%.3f, %.3f, %.3f]\n", 
                  _softIronMatrix[2][0], _softIronMatrix[2][1], _softIronMatrix[2][2]);
+    
+    // Liberar memória alocada
+    free(centeredX);
+    free(centeredY);
+    free(centeredZ);
 }
+
 
 // ============================================================================
 // Métodos Privados
