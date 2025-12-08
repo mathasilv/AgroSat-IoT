@@ -1,9 +1,16 @@
+// ARQUIVO: src/comm/CryptoManager.cpp
+
 /**
  * @file CryptoManager.cpp
  * @brief Implementação de Criptografia AES-128
  */
 
 #include "CryptoManager.h"
+
+// ============================================================================
+// CORREÇÃO: Definição externa da chave AES (requerido pelo linker)
+// ============================================================================
+constexpr uint8_t CryptoManager::AES_KEY[16];
 
 bool CryptoManager::encrypt(const uint8_t* plaintext, size_t len, uint8_t* ciphertext) {
     // Validação: tamanho deve ser múltiplo de 16 (bloco AES)

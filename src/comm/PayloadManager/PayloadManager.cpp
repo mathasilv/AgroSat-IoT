@@ -1,6 +1,8 @@
+// ARQUIVO: src/comm/PayloadManager/PayloadManager.cpp
+
 /**
- * @file PayloadManager.cpp - Parte 1
- * @brief Implementação Completa com QoS Priority
+ * @file PayloadManager.cpp
+ * @brief Implementação Completa com QoS Priority (Correção de conflito de macros)
  */
 
 #include "PayloadManager.h"
@@ -72,7 +74,7 @@ int PayloadManager::createRelayPayload(const TelemetryData& data,
     // Log de ordenação
     DEBUG_PRINTLN("[PayloadManager] === Nós Ordenados por Prioridade (QoS) ===");
     for (int i = 0; i < nodeBuffer.activeNodes; i++) {
-        const char* priName[] = {"CRITICAL", "HIGH", "NORMAL", "LOW"};
+        const char* priName[] = {"CRITICAL", "HIGH_PRIORITY", "NORMAL", "LOW_PRIORITY"};
         DEBUG_PRINTF("  %d. Node %u - %s (Pri=%d)\n", 
                      i+1, sortedNodes[i].nodeId, 
                      priName[sortedNodes[i].priority], 
@@ -108,19 +110,19 @@ int PayloadManager::createRelayPayload(const TelemetryData& data,
 // NOVO 5.3: Cálculo de Prioridade QoS Inteligente
 // ============================================================================
 uint8_t PayloadManager::calculateNodePriority(const MissionData& node) {
-    uint8_t priority = (uint8_t)PacketPriority::NORMAL;  // Padrão: NORMAL
+    uint8_t priority = static_cast<uint8_t>(PacketPriority::NORMAL);  // Padrão: NORMAL
     
     // === REGRA 1: Alertas Críticos de Irrigação ===
     // Umidade do solo fora da faixa ideal (20-80%)
     if (node.soilMoisture < 20.0f) {
-        priority = (uint8_t)PacketPriority::CRITICAL;
+        priority = static_cast<uint8_t>(PacketPriority::CRITICAL);
         DEBUG_PRINTF("[QoS] Node %u: CRÍTICO - Solo seco (%.1f%%)\n", 
                      node.nodeId, node.soilMoisture);
         return priority;
     }
     
     if (node.soilMoisture > 90.0f) {
-        priority = (uint8_t)PacketPriority::CRITICAL;
+        priority = static_cast<uint8_t>(PacketPriority::CRITICAL);
         DEBUG_PRINTF("[QoS] Node %u: CRÍTICO - Solo encharcado (%.1f%%)\n", 
                      node.nodeId, node.soilMoisture);
         return priority;
@@ -128,7 +130,7 @@ uint8_t PayloadManager::calculateNodePriority(const MissionData& node) {
     
     // === REGRA 2: Temperatura Extrema ===
     if (node.ambientTemp > 40.0f || node.ambientTemp < 5.0f) {
-        priority = (uint8_t)PacketPriority::CRITICAL;
+        priority = static_cast<uint8_t>(PacketPriority::CRITICAL);
         DEBUG_PRINTF("[QoS] Node %u: CRÍTICO - Temp extrema (%.1f°C)\n", 
                      node.nodeId, node.ambientTemp);
         return priority;
@@ -136,7 +138,7 @@ uint8_t PayloadManager::calculateNodePriority(const MissionData& node) {
     
     // === REGRA 3: Link Degradado (Priorizar antes de perder) ===
     if (node.rssi < -110) {
-        priority = (uint8_t)PacketPriority::HIGH;
+        priority = static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY);
         DEBUG_PRINTF("[QoS] Node %u: HIGH - Link ruim (%d dBm)\n", 
                      node.nodeId, node.rssi);
         return priority;
@@ -144,7 +146,7 @@ uint8_t PayloadManager::calculateNodePriority(const MissionData& node) {
     
     // === REGRA 4: Perda de Pacotes Excessiva ===
     if (node.packetsLost > 5) {
-        priority = (uint8_t)PacketPriority::HIGH;
+        priority = static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY);
         DEBUG_PRINTF("[QoS] Node %u: HIGH - Perdas (%d pacotes)\n", 
                      node.nodeId, node.packetsLost);
         return priority;
@@ -152,7 +154,7 @@ uint8_t PayloadManager::calculateNodePriority(const MissionData& node) {
     
     // === REGRA 5: Irrigação Ativa ===
     if (node.irrigationStatus == 1) {
-        priority = (uint8_t)PacketPriority::HIGH;
+        priority = static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY);
         DEBUG_PRINTF("[QoS] Node %u: HIGH - Irrigação ativa\n", node.nodeId);
         return priority;
     }
@@ -160,11 +162,11 @@ uint8_t PayloadManager::calculateNodePriority(const MissionData& node) {
     // === REGRA 6: Dados Recentes têm Prioridade ===
     unsigned long age = millis() - node.lastLoraRx;
     if (age < 60000) {  // < 1 minuto
-        priority = (uint8_t)PacketPriority::NORMAL;
+        priority = static_cast<uint8_t>(PacketPriority::NORMAL);
     } else if (age < 300000) {  // < 5 minutos
-        priority = (uint8_t)PacketPriority::NORMAL;
+        priority = static_cast<uint8_t>(PacketPriority::NORMAL);
     } else {
-        priority = (uint8_t)PacketPriority::LOW;  // Dados antigos
+        priority = static_cast<uint8_t>(PacketPriority::LOW_PRIORITY);  // Dados antigos
         DEBUG_PRINTF("[QoS] Node %u: LOW - Dados antigos (%.1f min)\n", 
                      node.nodeId, age / 60000.0f);
     }
@@ -172,8 +174,8 @@ uint8_t PayloadManager::calculateNodePriority(const MissionData& node) {
     // === REGRA 7: Condições de Solo Moderadas ===
     if (node.soilMoisture >= 30.0f && node.soilMoisture <= 70.0f) {
         // Solo em condição ideal, baixar prioridade se já era NORMAL
-        if (priority == (uint8_t)PacketPriority::NORMAL && age > 120000) {
-            priority = (uint8_t)PacketPriority::LOW;
+        if (priority == static_cast<uint8_t>(PacketPriority::NORMAL) && age > 120000) {
+            priority = static_cast<uint8_t>(PacketPriority::LOW_PRIORITY);
         }
     }
     
@@ -220,10 +222,18 @@ void PayloadManager::getPriorityStats(const GroundNodeBuffer& buffer,
     
     for (int i = 0; i < buffer.activeNodes; i++) {
         switch (buffer.nodes[i].priority) {
-            case (uint8_t)PacketPriority::CRITICAL: critical++; break;
-            case (uint8_t)PacketPriority::HIGH:     high++;     break;
-            case (uint8_t)PacketPriority::NORMAL:   normal++;   break;
-            case (uint8_t)PacketPriority::LOW:      low++;      break;
+            case static_cast<uint8_t>(PacketPriority::CRITICAL): 
+                critical++; 
+                break;
+            case static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY):
+                high++;     
+                break;
+            case static_cast<uint8_t>(PacketPriority::NORMAL):   
+                normal++;   
+                break;
+            case static_cast<uint8_t>(PacketPriority::LOW_PRIORITY):
+                low++;      
+                break;
         }
     }
 }

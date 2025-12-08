@@ -1,3 +1,5 @@
+// ARQUIVO: src/comm/LoRaService/LoRaService.cpp
+
 /**
  * @file LoRaService.cpp
  * @brief Implementação LoRa com Adaptive SF e Duty Cycle
@@ -26,19 +28,14 @@ bool LoRaService::begin() {
 
     // Configurações Padrão
     LoRa.setSignalBandwidth(LORA_SIGNAL_BANDWIDTH);
-    LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR);
+    LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR);  // LDRO gerenciado automaticamente aqui
     LoRa.setCodingRate4(LORA_CODING_RATE);
     LoRa.setTxPower(LORA_TX_POWER);
     LoRa.setSyncWord(LORA_SYNC_WORD);
     if (LORA_CRC_ENABLED) LoRa.enableCrc();
     
-    // NOVO: Habilitar LDRO (Low Data Rate Optimization) para SF11/SF12
-    #ifdef LORA_LDRO_ENABLED
-    if (LORA_LDRO_ENABLED && LORA_SPREADING_FACTOR >= 11) {
-        LoRa.setLdroEnable(true);
-        DEBUG_PRINTLN("[LoRa] LDRO habilitado (SF >= 11)");
-    }
-    #endif
+    // NOTA: LDRO é habilitado automaticamente pela biblioteca quando SF >= 11
+    // Não é necessário chamar setLdoFlag() manualmente (método privado)
 
     DEBUG_PRINTF("[LoRa] Online! Freq=%.1f MHz, SF=%d, BW=%.1f kHz, PWR=%d dBm\n",
                  LORA_FREQUENCY/1e6, LORA_SPREADING_FACTOR, 
@@ -118,14 +115,14 @@ void LoRaService::setSpreadingFactor(int sf) {
         _transmitter.setSpreadingFactor(sf);
         _currentSF = sf;
         
-        // Ajustar LDRO automaticamente
-        #ifdef LORA_LDRO_ENABLED
-        if (LORA_LDRO_ENABLED) {
-            LoRa.setLdroEnable(sf >= 11);
-        }
-        #endif
+        // LDRO é gerenciado automaticamente pela biblioteca ao definir SF
+        // Não é necessário chamar setLdoFlag() (método privado)
         
-        DEBUG_PRINTF("[LoRa] SF alterado para %d\n", sf);
+        DEBUG_PRINTF("[LoRa] SF alterado para %d", sf);
+        if (sf >= 11) {
+            DEBUG_PRINTF(" (LDRO auto-habilitado)");
+        }
+        DEBUG_PRINTLN("");
     }
 }
 
