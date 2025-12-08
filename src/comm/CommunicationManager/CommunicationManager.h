@@ -1,3 +1,9 @@
+/**
+ * @file CommunicationManager.h
+ * @brief Gerenciador de Comunicação com Adaptive SF e Duty Cycle
+ * @version 3.0.0
+ */
+
 #ifndef COMMUNICATION_MANAGER_H
 #define COMMUNICATION_MANAGER_H
 
@@ -7,10 +13,8 @@
 #include "comm/LoRaService/LoRaService.h"
 #include "comm/WiFiService/WiFiService.h"
 #include "comm/HttpService/HttpService.h"
-
-// Inclusão CRÍTICA do PayloadManager
-// Certifique-se de que o arquivo existe em src/comm/PayloadManager/PayloadManager.h
 #include "comm/PayloadManager/PayloadManager.h"
+#include "comm/LoRaService/DutyCycleTracker.h"
 
 class CommunicationManager {
 public:
@@ -25,6 +29,7 @@ public:
     
     // LoRa
     bool sendLoRa(const String& data);
+    bool sendLoRa(const uint8_t* data, size_t len);  // NOVO: Binário
     bool receiveLoRaPacket(String& packet, int& rssi, float& snr);
     
     // Missão
@@ -35,13 +40,37 @@ public:
     void enableLoRa(bool enable);
     void enableHTTP(bool enable);
     uint8_t calculatePriority(const MissionData& node);
+    
+    // NOVO 5.2: Controle de Spreading Factor
+    void setSpreadingFactor(int sf) { _lora.setSpreadingFactor(sf); }
+    int getCurrentSF() const { return _lora.getCurrentSF(); }
+    
+    // NOVO 5.2: Adaptive SF
+    void adjustSFBasedOnLinkQuality(int rssi, float snr) {
+        _lora.adjustSFBasedOnLinkQuality(rssi, snr);
+    }
+    
+    void adjustSFBasedOnDistance(float distanceKm) {
+        _lora.adjustSFBasedOnDistance(distanceKm);
+    }
+    
+    // NOVO 4.8: Duty Cycle
+    DutyCycleTracker& getDutyCycleTracker() { 
+        return _lora.getDutyCycleTracker(); 
+    }
+    
+    bool canTransmitNow(uint32_t payloadSize) {
+        return _lora.canTransmitNow(payloadSize);
+    }
+    
+    // Estatísticas
+    int getLastRSSI() const { return _lora.getLastRSSI(); }
+    float getLastSNR() const { return _lora.getLastSNR(); }
 
 private:
     LoRaService _lora;
     WiFiService _wifi;
     HttpService _http;
-    
-    // A classe PayloadManager deve estar definida pelo include acima
     PayloadManager _payload;
 
     bool _loraEnabled;

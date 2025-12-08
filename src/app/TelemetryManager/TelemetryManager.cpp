@@ -1,36 +1,48 @@
 /**
- * @file TelemetryManager.cpp
- * @brief Gerenciador Central (Versão com GPS)
+ * @file TelemetryManager.cpp - Parte 1
+ * @brief Gerenciador Central Completo
+ * @version 10.0.0
  */
 
 #include "TelemetryManager.h"
 #include "config.h"
 
-// Variáveis Globais de Configuração (extern em config.h)
+// Variáveis Globais de Configuração
 bool currentSerialLogsEnabled = PREFLIGHT_CONFIG.serialLogsEnabled;
 const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
 
 TelemetryManager::TelemetryManager() :
     _sensors(), 
-    _gps(), // [NOVO] Inicializa GPS
-    _power(), _systemHealth(), _rtc(), _button(),
-    _storage(), _comm(), _groundNodes(),
+    _gps(),
+    _power(), 
+    _systemHealth(), 
+    _rtc(), 
+    _button(),
+    _storage(), 
+    _comm(), 
+    _groundNodes(),
     _mission(_rtc, _groundNodes),
-    // [NOVO] Passando _gps para o coletor (atualizaremos o Collector a seguir)
     _telemetryCollector(_sensors, _gps, _power, _systemHealth, _rtc, _groundNodes),
     _commandHandler(_sensors),
-    _mode(MODE_INIT), _missionActive(false),
-    _lastTelemetrySend(0), _lastStorageSave(0),
-    _missionStartTime(0), _lastSensorReset(0)
+    _mode(MODE_INIT), 
+    _missionActive(false),
+    _lastTelemetrySend(0), 
+    _lastStorageSave(0),
+    _missionStartTime(0), 
+    _lastSensorReset(0),
+    _lastBeaconTime(0),      // NOVO 5.4
+    _lastLinkBudgetCalc(0)   // NOVO 4.2
 {
     memset(&_telemetryData, 0, sizeof(TelemetryData));
-    // Inicializa floats com NAN para indicar "sem leitura"
+    
+    // Inicializa floats com NAN
     _telemetryData.humidity = NAN;
     _telemetryData.co2 = NAN;
     _telemetryData.tvoc = NAN;
-    _telemetryData.magX = NAN; _telemetryData.magY = NAN; _telemetryData.magZ = NAN;
+    _telemetryData.magX = NAN; 
+    _telemetryData.magY = NAN; 
+    _telemetryData.magZ = NAN;
     
-    // [NOVO] Inicializa campos do GPS
     _telemetryData.latitude = 0.0;
     _telemetryData.longitude = 0.0;
     _telemetryData.gpsAltitude = 0.0;
@@ -52,7 +64,7 @@ bool TelemetryManager::begin() {
     _initSubsystems(subsystemsOk, success);
     _syncNTPIfAvailable();
 
-    // === RECUPERAÇÃO DE MISSÃO ===
+    // Recuperação de Missão (se resetou durante voo)
     if (_mission.begin()) { 
         DEBUG_PRINTLN("[TelemetryManager] Restaurando modo FLIGHT...");
         _mode = MODE_FLIGHT;
@@ -70,7 +82,7 @@ void TelemetryManager::_initModeDefaults() {
 }
 
 void TelemetryManager::_initSubsystems(uint8_t& subsystemsOk, bool& success) {
-    // 1. RTC (Core)
+    // 1. RTC
     DEBUG_PRINTLN("[TelemetryManager] Init RTC (UTC)");
     if (_rtc.begin(&Wire)) subsystemsOk++;
     else success = false;
@@ -94,10 +106,9 @@ void TelemetryManager::_initSubsystems(uint8_t& subsystemsOk, bool& success) {
     if (_sensors.begin()) subsystemsOk++;
     else success = false;
     
-    // 6. GPS (NOVO)
+    // 6. GPS
     DEBUG_PRINTLN("[TelemetryManager] Init GPSManager");
     if (_gps.begin()) subsystemsOk++;
-    // Nota: Falha no GPS não é fatal para o boot (não seta success = false)
 
     // 7. Storage
     DEBUG_PRINTLN("[TelemetryManager] Init Storage");
@@ -121,12 +132,13 @@ void TelemetryManager::_syncNTPIfAvailable() {
 
 void TelemetryManager::_logInitSummary(bool success, uint8_t subsystemsOk, uint32_t initialHeap) {
     uint32_t used = initialHeap - ESP.getFreeHeap();
-    // Atualizado para 8 subsistemas
     DEBUG_PRINTF("[TelemetryManager] Init: %s, subsistemas=%d/8, heap usado=%lu bytes\n",
                  success ? "OK" : "ERRO", subsystemsOk, used);
 }
 
-// === Loop Principal ===
+// ============================================================================
+// LOOP PRINCIPAL
+// ============================================================================
 
 void TelemetryManager::loop() {
     uint32_t currentTime = millis();
@@ -157,8 +169,9 @@ void TelemetryManager::loop() {
 
     // 2. Atualização de Subsistemas
     _power.update();
+    _power.adjustCpuFrequency();  // NOVO 5.2: CPU dinâmica
     _sensors.update(); 
-    _gps.update(); // [NOVO] Processamento Serial do GPS
+    _gps.update();
     _comm.update();
     _rtc.update();
 
@@ -169,8 +182,14 @@ void TelemetryManager::loop() {
     _handleIncomingRadio();
     _maintainGroundNetwork();
 
-    // 4. Coleta e Envio de Telemetria (Local + Satélite)
+    // 4. Coleta e Envio de Telemetria
     _telemetryCollector.collect(_telemetryData);
+    
+    // Atualizar SystemHealth com dados de telemetria (NOVO 5.6)
+    _systemHealth.setCurrentMode((uint8_t)_mode);
+    _systemHealth.setBatteryVoltage(_power.getVoltage());
+    _systemHealth.setSDCardStatus(_storage.isAvailable());
+    
     _checkOperationalConditions();
 
     if (currentTime - _lastTelemetrySend >= activeModeConfig->telemetrySendInterval) {
@@ -182,6 +201,22 @@ void TelemetryManager::loop() {
     if (currentTime - _lastStorageSave >= activeModeConfig->storageSaveInterval) {
         _lastStorageSave = currentTime;
         _saveToStorage();
+    }
+    
+    // === NOVO 5.4: BEACON AUTOMÁTICO EM SAFE MODE ===
+    if (_mode == MODE_SAFE) {
+        uint32_t beaconInterval = activeModeConfig->beaconInterval;
+        if (beaconInterval > 0 && (currentTime - _lastBeaconTime >= beaconInterval)) {
+            _sendSafeBeacon();
+            _lastBeaconTime = currentTime;
+        }
+    }
+    
+    // === NOVO 4.2 + 5.2: LINK BUDGET E ADAPTIVE SF ===
+    if (_gps.hasFix() && (currentTime - _lastLinkBudgetCalc >= 30000)) {
+        _lastLinkBudgetCalc = currentTime;
+        _updateLinkBudget();
+        _applyAdaptiveSF();
     }
 }
 
@@ -203,7 +238,11 @@ void TelemetryManager::_handleIncomingRadio() {
             _groundNodes.updateNode(rxData, _comm);
             if (_storage.isAvailable()) _storage.saveMissionData(rxData);
             
-            DEBUG_PRINTF("[TM] Node %u RX: RSSI=%d dBm\n", rxData.nodeId, rssi);
+            DEBUG_PRINTF("[TM] Node %u RX: RSSI=%d dBm, SNR=%.1f dB\n", 
+                         rxData.nodeId, rssi, snr);
+            
+            // NOVO 5.2: Ajustar SF baseado na qualidade do link recebido
+            _comm.adjustSFBasedOnLinkQuality(rssi, snr);
         }
     }
 }
@@ -216,6 +255,10 @@ void TelemetryManager::_maintainGroundNetwork() {
         _groundNodes.resetForwardFlags();
     }
 }
+
+// ============================================================================
+// Continuação TelemetryManager.cpp - Parte 2 FINAL
+// ============================================================================
 
 void TelemetryManager::applyModeConfig(uint8_t modeIndex) {
     OperationMode mode = static_cast<OperationMode>(modeIndex);
@@ -230,8 +273,9 @@ void TelemetryManager::applyModeConfig(uint8_t modeIndex) {
     _comm.enableLoRa(activeModeConfig->loraEnabled);
     _comm.enableHTTP(activeModeConfig->httpEnabled);
     
-    DEBUG_PRINTF("[TelemetryManager] Modo: %d (LoRa=%d HTTP=%d)\n", 
-                 mode, activeModeConfig->loraEnabled, activeModeConfig->httpEnabled);
+    DEBUG_PRINTF("[TelemetryManager] Modo: %d (LoRa=%d HTTP=%d Beacon=%d)\n", 
+                 mode, activeModeConfig->loraEnabled, activeModeConfig->httpEnabled,
+                 activeModeConfig->beaconInterval > 0);
 }
 
 void TelemetryManager::startMission() {
@@ -256,11 +300,12 @@ void TelemetryManager::_sendTelemetry() {
     const GroundNodeBuffer& buf = _groundNodes.buffer();
     
     if (activeModeConfig->serialLogsEnabled) {
-        DEBUG_PRINTF("[TM] TX: UTC=%s | T=%.1f C | Bat=%.1f%% | Fix=%d\n",
+        DEBUG_PRINTF("[TM] TX: UTC=%s | T=%.1f C | Bat=%.1f%% | Fix=%d | Nodes=%d\n",
                      _rtc.getUTCDateTime().c_str(), 
                      _telemetryData.temperature, 
                      _telemetryData.batteryPercentage,
-                     _telemetryData.gpsFix); // [NOVO] Log de Fix
+                     _telemetryData.gpsFix,
+                     buf.activeNodes);
     }
     
     _comm.sendTelemetry(_telemetryData, buf);
@@ -269,7 +314,7 @@ void TelemetryManager::_sendTelemetry() {
 void TelemetryManager::_saveToStorage() {
     if (_storage.isAvailable()) {
         _storage.saveTelemetry(_telemetryData);
-        // Salva nós terrestres ativos também
+        
         const GroundNodeBuffer& buf = _groundNodes.buffer();
         for(int i=0; i<buf.activeNodes; i++) {
             _storage.saveMissionData(buf.nodes[i]);
@@ -314,11 +359,226 @@ void TelemetryManager::_updateLEDIndicator(unsigned long currentTime) {
     digitalWrite(LED_BUILTIN, ledState);
 }
 
-bool TelemetryManager::handleCommand(const String& cmd) {
-    return _commandHandler.handle(cmd);
+// ============================================================================
+// NOVO 5.4: BEACON AUTOMÁTICO EM MODO SAFE
+// ============================================================================
+void TelemetryManager::_sendSafeBeacon() {
+    uint8_t beacon[32];
+    int offset = 0;
+    
+    // Header mágico: BEACON
+    beacon[offset++] = 0xBE;
+    beacon[offset++] = 0xAC;
+    
+    // Team ID
+    beacon[offset++] = (TEAM_ID >> 8) & 0xFF;
+    beacon[offset++] = TEAM_ID & 0xFF;
+    
+    // Modo atual
+    beacon[offset++] = (uint8_t)_mode;
+    
+    // Tensão da bateria (centivolt)
+    uint16_t batVoltageInt = (uint16_t)(_power.getVoltage() * 100);
+    beacon[offset++] = (batVoltageInt >> 8) & 0xFF;
+    beacon[offset++] = batVoltageInt & 0xFF;
+    
+    // Uptime (segundos)
+    uint32_t uptime = _systemHealth.getUptime() / 1000;
+    beacon[offset++] = (uptime >> 24) & 0xFF;
+    beacon[offset++] = (uptime >> 16) & 0xFF;
+    beacon[offset++] = (uptime >> 8) & 0xFF;
+    beacon[offset++] = uptime & 0xFF;
+    
+    // Status do sistema
+    beacon[offset++] = _systemHealth.getSystemStatus();
+    
+    // Contador de erros
+    uint16_t errors = _systemHealth.getErrorCount();
+    beacon[offset++] = (errors >> 8) & 0xFF;
+    beacon[offset++] = errors & 0xFF;
+    
+    // Heap livre
+    uint32_t freeHeap = _systemHealth.getFreeHeap();
+    beacon[offset++] = (freeHeap >> 24) & 0xFF;
+    beacon[offset++] = (freeHeap >> 16) & 0xFF;
+    beacon[offset++] = (freeHeap >> 8) & 0xFF;
+    beacon[offset++] = freeHeap & 0xFF;
+    
+    // NOVO 5.6: Dados de Health Telemetry
+    HealthTelemetry health = _systemHealth.getHealthTelemetry();
+    beacon[offset++] = (health.resetCount >> 8) & 0xFF;
+    beacon[offset++] = health.resetCount & 0xFF;
+    
+    beacon[offset++] = health.resetReason;
+    
+    // GPS Fix (1 byte)
+    beacon[offset++] = _gps.hasFix() ? 1 : 0;
+    
+    // Enviar beacon (prioriza transmissão mesmo se duty cycle próximo do limite)
+    DEBUG_PRINTLN("[TM] ========================================");
+    DEBUG_PRINTLN("[TM] ENVIANDO BEACON SAFE MODE");
+    DEBUG_PRINTF("[TM] Bat: %.2fV | Uptime: %lu s | Heap: %lu bytes\n",
+                 _power.getVoltage(), uptime, freeHeap);
+    DEBUG_PRINTF("[TM] Erros: %d | Resets: %d | GPS: %s\n",
+                 errors, health.resetCount, _gps.hasFix() ? "FIX" : "NOFIX");
+    DEBUG_PRINTLN("[TM] ========================================");
+    
+    if (_comm.sendLoRa(beacon, offset)) {
+        DEBUG_PRINTLN("[TM] Beacon SAFE enviado com sucesso!");
+    } else {
+        DEBUG_PRINTLN("[TM] ERRO ao enviar Beacon SAFE.");
+    }
 }
 
-// Stubs para compatibilidade
-void TelemetryManager::testLoRaTransmission() { _comm.sendLoRa("TEST"); }
-void TelemetryManager::sendCustomLoRa(const String& msg) { _comm.sendLoRa(msg); }
-void TelemetryManager::printLoRaStats() {}
+// ============================================================================
+// NOVO 4.2: LINK BUDGET CALCULATOR
+// ============================================================================
+void TelemetryManager::_updateLinkBudget() {
+    if (!_gps.hasFix()) {
+        DEBUG_PRINTLN("[TM] Sem GPS fix. Link Budget não calculado.");
+        return;
+    }
+    
+    // Posição do satélite (do GPS)
+    double satLat = _gps.getLatitude();
+    double satLon = _gps.getLongitude();
+    float satAlt = _gps.getAltitude() / 1000.0f;  // m -> km
+    
+    // Posição do nó terrestre (exemplo: Goiânia - UFG)
+    // NOTA: Ajustar para posição real do nó de teste
+    double groundLat = -16.6869;
+    double groundLon = -49.2648;
+    
+    // Calcular link budget
+    LinkBudget budget = _linkBudget.calculate(
+        satLat, satLon, satAlt,
+        groundLat, groundLon,
+        _comm.getCurrentSF(),
+        LORA_SIGNAL_BANDWIDTH
+    );
+    
+    // Log detalhado
+    DEBUG_PRINTLN("[TM] ========================================");
+    DEBUG_PRINTLN("[TM] LINK BUDGET ATUALIZADO");
+    DEBUG_PRINTF("[TM] Distância: %.1f / %.1f km\n", 
+                 budget.currentDistance, budget.maxDistance);
+    DEBUG_PRINTF("[TM] Path Loss: %.1f dB\n", budget.pathLoss);
+    DEBUG_PRINTF("[TM] Link Margin: %.1f dB (%s)\n", 
+                 budget.linkMargin, budget.isViable ? "VIÁVEL" : "CRÍTICO");
+    DEBUG_PRINTF("[TM] SF Recomendado: %d (Atual: %d)\n", 
+                 budget.recommendedSF, _comm.getCurrentSF());
+    DEBUG_PRINTLN("[TM] ========================================");
+}
+
+// ============================================================================
+// NOVO 5.2: ADAPTIVE SPREADING FACTOR
+// ============================================================================
+void TelemetryManager::_applyAdaptiveSF() {
+    LinkBudget budget = _linkBudget.getLastBudget();
+    
+    // Estratégia 1: Baseado na viabilidade do link
+    if (!budget.isViable) {
+        DEBUG_PRINTLN("[TM] Link budget insuficiente! Forçando SF12.");
+        _comm.setSpreadingFactor(LORA_SPREADING_FACTOR_SAFE);
+        return;
+    }
+    
+    // Estratégia 2: Baseado na margem de link
+    if (budget.linkMargin > 15.0f) {
+        // Margem excelente: usar SF mais baixo (mais rápido)
+        _comm.setSpreadingFactor(7);
+        DEBUG_PRINTLN("[TM] Margem excelente (>15dB) -> SF7");
+    } 
+    else if (budget.linkMargin > 10.0f) {
+        _comm.setSpreadingFactor(8);
+        DEBUG_PRINTLN("[TM] Margem boa (>10dB) -> SF8");
+    }
+    else if (budget.linkMargin > 5.0f) {
+        // Margem moderada: usar SF recomendado pelo calculador
+        _comm.setSpreadingFactor(budget.recommendedSF);
+        DEBUG_PRINTF("[TM] Margem moderada -> SF%d (recomendado)\n", 
+                     budget.recommendedSF);
+    }
+    else {
+        // Margem baixa: ser conservador
+        _comm.setSpreadingFactor(LORA_SPREADING_FACTOR_SAFE);
+        DEBUG_PRINTLN("[TM] Margem baixa (<5dB) -> SF12 (conservador)");
+    }
+}
+
+// ============================================================================
+// COMANDOS
+// ============================================================================
+bool TelemetryManager::handleCommand(const String& cmd) {
+    String cmdUpper = cmd;
+    cmdUpper.toUpperCase();
+    cmdUpper.trim();
+    
+    // Comando LINK_BUDGET (NOVO 4.2)
+    if (cmdUpper == "LINK_BUDGET") {
+        _updateLinkBudget();
+        
+        LinkBudget b = _linkBudget.getLastBudget();
+        DEBUG_PRINTLN("=== LINK BUDGET ===");
+        DEBUG_PRINTF("Distância: %.1f / %.1f km\n", b.currentDistance, b.maxDistance);
+        DEBUG_PRINTF("Path Loss: %.1f dB\n", b.pathLoss);
+        DEBUG_PRINTF("Link Margin: %.1f dB\n", b.linkMargin);
+        DEBUG_PRINTF("SF Recomendado: %d\n", b.recommendedSF);
+        DEBUG_PRINTF("Viável: %s\n", b.isViable ? "SIM" : "NÃO");
+        DEBUG_PRINTLN("===================");
+        return true;
+    }
+    
+    // Comando START_MISSION
+    if (cmdUpper == "START_MISSION") {
+        startMission();
+        return true;
+    }
+    
+    // Comando STOP_MISSION
+    if (cmdUpper == "STOP_MISSION") {
+        stopMission();
+        return true;
+    }
+    
+    // Comando SAFE_MODE
+    if (cmdUpper == "SAFE_MODE") {
+        applyModeConfig(MODE_SAFE);
+        _mode = MODE_SAFE;
+        DEBUG_PRINTLN("[TM] SAFE MODE ATIVADO (Comando)");
+        return true;
+    }
+    
+    // Comando DUTY_CYCLE (NOVO 4.8)
+    if (cmdUpper == "DUTY_CYCLE") {
+        auto& dc = _comm.getDutyCycleTracker();
+        DEBUG_PRINTLN("=== DUTY CYCLE ===");
+        DEBUG_PRINTF("Usado: %lu ms / %lu ms\n", 
+                     dc.getAccumulatedTxTime(), 360000);  // 6 min
+        DEBUG_PRINTF("Percentual: %.1f%% (Limite: 10%%)\n", 
+                     dc.getDutyCyclePercent());
+        DEBUG_PRINTF("Disponível: %lu ms\n", dc.getRemainingTime());
+        DEBUG_PRINTLN("==================");
+        return true;
+    }
+    
+    // Delegar para CommandHandler (sensores, calibração, etc.)
+    return _commandHandler.handle(cmdUpper);
+}
+
+// Stubs de compatibilidade
+void TelemetryManager::testLoRaTransmission() { 
+    _comm.sendLoRa("TEST"); 
+}
+
+void TelemetryManager::sendCustomLoRa(const String& msg) { 
+    _comm.sendLoRa(msg); 
+}
+
+void TelemetryManager::printLoRaStats() {
+    DEBUG_PRINTLN("=== LoRa Stats ===");
+    DEBUG_PRINTF("SF Atual: %d\n", _comm.getCurrentSF());
+    DEBUG_PRINTF("Último RSSI: %d dBm\n", _comm.getLastRSSI());
+    DEBUG_PRINTF("Último SNR: %.1f dB\n", _comm.getLastSNR());
+    DEBUG_PRINTLN("==================");
+}
