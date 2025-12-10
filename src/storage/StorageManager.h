@@ -1,7 +1,7 @@
 /**
  * @file StorageManager.h
- * @brief Gerenciador de Armazenamento com CRC16 e Redundância Tripla
- * @version 3.0.0 (MODERADO 4.6 + MELHORIA 5.8)
+ * @brief Gerenciador de Armazenamento com CRC16 e Redundância Tripla (FIX: Sync SystemHealth)
+ * @version 3.2.0
  */
 
 #ifndef STORAGEMANAGER_H
@@ -13,10 +13,9 @@
 #include "config.h"
 
 class RTCManager; 
+class SystemHealth; // <--- NOVO: Forward Declaration
 
-// ============================================================================
-// NOVO 5.8: Estrutura de Dados Redundante com CRC
-// ============================================================================
+// Estrutura de Dados Redundante com CRC
 struct RedundantData {
     uint32_t timestamp;
     float value;
@@ -30,6 +29,9 @@ public:
     bool begin();
     void setRTCManager(RTCManager* rtcManager);
     
+    // === NOVO: Conectar ao SystemHealth para reportar erros ===
+    void setSystemHealth(SystemHealth* systemHealth);
+    
     // Salvar Log de Texto
     bool saveLog(const String& message);
     
@@ -38,7 +40,7 @@ public:
     bool saveMissionData(const MissionData& data);
     bool logError(const String& errorMsg);
     
-    // NOVO 5.8: Salvamento com Redundância Tripla
+    // Salvamento com Redundância Tripla
     bool saveTelemetryRedundant(const TelemetryData& data);
     bool saveMissionDataRedundant(const MissionData& data);
       
@@ -54,19 +56,20 @@ public:
     uint64_t getFreeSpace();
     uint64_t getUsedSpace();
     
-    // NOVO 4.6: Estatísticas de integridade
+    // Estatísticas de integridade
     uint16_t getCRCErrors() const { return _crcErrors; }
     uint16_t getTotalWrites() const { return _totalWrites; }
     
 private:
     bool _available;
     RTCManager* _rtcManager;
+    SystemHealth* _systemHealth; // <--- NOVO
     
     // Controle de Recuperação
     unsigned long _lastInitAttempt;
     static constexpr unsigned long REINIT_INTERVAL = 5000;
     
-    // NOVO 4.6: Contadores de integridade
+    // Contadores de integridade
     uint16_t _crcErrors;
     uint16_t _totalWrites;
     
@@ -78,12 +81,15 @@ private:
     void _formatTelemetryToCSV(const TelemetryData& data, char* buffer, size_t len);
     void _formatMissionToCSV(const MissionData& data, char* buffer, size_t len);
     
-    // NOVO 4.6: Cálculo de CRC-16 (CCITT)
+    // Cálculo de CRC-16 (CCITT)
     uint16_t _calculateCRC16(const uint8_t* data, size_t length);
     
-    // NOVO 5.8: Escrita redundante
+    // Escrita redundante
     bool _writeTripleRedundant(const char* path, const uint8_t* data, size_t len);
     bool _readWithRedundancy(const char* path, uint8_t* data, size_t len);
+    
+    // Helper para reportar erro
+    void _reportCRCError(uint8_t count = 1);
 };
 
 #endif

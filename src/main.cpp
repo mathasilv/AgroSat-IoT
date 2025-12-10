@@ -59,14 +59,15 @@ void setup() {
 }
 
 void loop() {
-    esp_task_wdt_reset();
+    // CORRIGIDO: Centralizando a lógica de reset do Watchdog
+    telemetry.feedWatchdog(); 
+    
     processSerialCommands();
     
     telemetry.loop();
     
     delay(10); 
 }
-
 void processSerialCommands() {
     if (!Serial.available()) return;
     String cmd = Serial.readStringUntil('\n');

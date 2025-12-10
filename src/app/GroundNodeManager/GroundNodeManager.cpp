@@ -1,5 +1,5 @@
 #include "GroundNodeManager.h"
-#include "comm/CommunicationManager/CommunicationManager.h" // Include movido para cá
+#include "comm/PayloadManager/PayloadManager.h" // FIX: Uso direto para lógica de negócio (prioridade)
 
 GroundNodeManager::GroundNodeManager() {
     memset(&_buffer, 0, sizeof(GroundNodeBuffer));
@@ -7,7 +7,8 @@ GroundNodeManager::GroundNodeManager() {
     _buffer.totalPacketsCollected = 0;
 }
 
-void GroundNodeManager::updateNode(const MissionData& data, CommunicationManager& comm) {
+// FIX: Removemos dependência de CommunicationManager
+void GroundNodeManager::updateNode(const MissionData& data) {
     int existingIndex = -1;
 
     for (uint8_t i = 0; i < _buffer.activeNodes; i++) {
@@ -29,8 +30,8 @@ void GroundNodeManager::updateNode(const MissionData& data, CommunicationManager
             existingNode.forwarded  = false;
             existingNode.retransmissionTime = 0; 
             
-            // Agora temos acesso à definição completa de CommunicationManager
-            existingNode.priority   = comm.calculatePriority(data);
+            // FIX: Chamada estática direta
+            existingNode.priority = PayloadManager::calculateNodePriority(data);
 
             _buffer.lastUpdate[existingIndex] = millis();
             _buffer.totalPacketsCollected++;
@@ -47,7 +48,8 @@ void GroundNodeManager::updateNode(const MissionData& data, CommunicationManager
             _buffer.nodes[newIndex].forwarded  = false;
             _buffer.nodes[newIndex].retransmissionTime = 0;
             
-            _buffer.nodes[newIndex].priority   = comm.calculatePriority(data);
+            // FIX: Chamada estática direta
+            _buffer.nodes[newIndex].priority = PayloadManager::calculateNodePriority(data);
 
             _buffer.lastUpdate[newIndex] = millis();
             _buffer.activeNodes++;
@@ -56,13 +58,13 @@ void GroundNodeManager::updateNode(const MissionData& data, CommunicationManager
             DEBUG_PRINTF("[GroundNodeManager] Node %u novo (slot %d) | Total: %d/%d\n",
                          data.nodeId, newIndex, _buffer.activeNodes, MAX_GROUND_NODES);
         } else {
-            _replaceLowestPriorityNode(data, comm);
+            _replaceLowestPriorityNode(data);
         }
     }
 }
 
-void GroundNodeManager::_replaceLowestPriorityNode(const MissionData& newData,
-                                                   CommunicationManager& comm) {
+// FIX: Removemos dependência de CommunicationManager
+void GroundNodeManager::_replaceLowestPriorityNode(const MissionData& newData) {
     uint8_t replaceIndex   = 0;
     uint8_t lowestPriority = 255;
     unsigned long oldestTime = ULONG_MAX;
@@ -89,8 +91,9 @@ void GroundNodeManager::_replaceLowestPriorityNode(const MissionData& newData,
     _buffer.nodes[replaceIndex].forwarded  = false;
     _buffer.nodes[replaceIndex].retransmissionTime = 0;
     
-    _buffer.nodes[replaceIndex].priority   = comm.calculatePriority(newData);
-    _buffer.lastUpdate[replaceIndex]       = millis();
+    // FIX: Chamada estática direta
+    _buffer.nodes[replaceIndex].priority = PayloadManager::calculateNodePriority(newData);
+    _buffer.lastUpdate[replaceIndex]     = millis();
 }
 
 void GroundNodeManager::cleanup(unsigned long now, unsigned long maxAgeMs) {

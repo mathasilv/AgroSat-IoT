@@ -1,7 +1,7 @@
 /**
  * @file TelemetryManager.h
- * @brief Gerenciador Central (SF Estático - Versão Leve)
- * @version 10.2.0
+ * @brief Gerenciador Central (FIX: Redundâncias Removidas)
+ * @version 10.5.0
  */
 
 #ifndef TELEMETRYMANAGER_H
@@ -19,7 +19,6 @@
 #include "core/ButtonHandler/ButtonHandler.h"
 #include "storage/StorageManager.h"
 #include "comm/CommunicationManager/CommunicationManager.h"
-// LinkBudgetCalculator removido
 
 // Controllers
 #include "app/GroundNodeManager/GroundNodeManager.h"
@@ -34,6 +33,9 @@ public:
     bool begin();
     void loop();
     bool handleCommand(const String& cmd);
+
+    // Wrapper do Watchdog (Clean Code)
+    void feedWatchdog();
 
     // Controle de Missão
     void startMission();
@@ -61,10 +63,9 @@ private:
     TelemetryCollector   _telemetryCollector;
     CommandHandler       _commandHandler;
     
-    // _linkBudget removido
-
     OperationMode  _mode;
-    bool           _missionActive;
+    // REMOVIDO: bool _missionActive; (Redundante, usar _mission.isActive())
+    
     TelemetryData  _telemetryData;
 
     // Timers
@@ -73,7 +74,6 @@ private:
     unsigned long  _missionStartTime;
     unsigned long  _lastSensorReset;
     unsigned long  _lastBeaconTime;
-    // _lastLinkBudgetCalc removido
 
     // Helpers
     void _initModeDefaults();
@@ -90,7 +90,6 @@ private:
     void _updateLEDIndicator(unsigned long currentTime);
     
     void _sendSafeBeacon();
-    // _updateLinkBudget removido
 };
 
 #endif

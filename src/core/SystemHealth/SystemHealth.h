@@ -1,7 +1,7 @@
 /**
  * @file SystemHealth.h
  * @brief Monitoramento de Saúde em Tempo Real (Status Dinâmico)
- * @version 2.2.0
+ * @version 2.2.1 (FIX: Watchdog Dinâmico)
  */
 
 #ifndef SYSTEM_HEALTH_H
@@ -12,6 +12,7 @@
 #include <Preferences.h>
 #include "config.h"
 
+// (Struct HealthTelemetry mantida igual...)
 struct HealthTelemetry {
     uint32_t uptime;
     uint16_t resetCount;
@@ -39,6 +40,9 @@ public:
     void update();
     void feedWatchdog();
 
+    // === NOVO: Reconfiguração Dinâmica do Watchdog ===
+    void setWatchdogTimeout(uint32_t seconds);
+
     void reportError(uint8_t errorCode, const String& description);
     
     float getCPUTemperature();
@@ -57,25 +61,19 @@ public:
     void incrementCRCError() { _crcErrors++; }
     void incrementI2CError() { _i2cErrors++; }
     
-    // Status do Cartão SD (Específico)
     void setSDCardStatus(bool ok) { 
         _sdCardStatus = ok ? 0 : 1; 
         setSystemError(STATUS_SD_ERROR, !ok);
     }
 
-    // =========================================================
-    // NOVO: Método Genérico para Status em Tempo Real
-    // =========================================================
     void setSystemError(uint8_t errorFlag, bool active) {
         if (active) {
-            // Só incrementa o contador se o erro for NOVO (borda de subida)
-            // Isso evita contagem infinita enquanto o erro persiste
             if (!(_systemStatus & errorFlag)) {
                 _errorCount++;
             }
-            _systemStatus |= errorFlag;  // Liga o bit
+            _systemStatus |= errorFlag;
         } else {
-            _systemStatus &= ~errorFlag; // Desliga o bit
+            _systemStatus &= ~errorFlag;
         }
     }
 
@@ -96,6 +94,9 @@ private:
     bool _missionActive;
     uint32_t _lastWatchdogFeed;
     uint32_t _lastHealthCheck;
+    
+    // === NOVO: Variável para controle do feed ===
+    uint32_t _currentWdtTimeout; 
     
     uint16_t _resetCount;
     uint8_t _resetReason;

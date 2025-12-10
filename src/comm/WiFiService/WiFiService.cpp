@@ -1,6 +1,6 @@
 /**
  * @file WiFiService.cpp
- * @brief Implementação WiFi Robusta
+ * @brief Implementação WiFi Robusta (FIX: Timeout correto)
  */
 
 #include "WiFiService.h"
@@ -15,9 +15,9 @@ bool WiFiService::begin() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(_ssid, _pass);
     
-    // Tentativa inicial rápida (timeout curto de 3s para não atrasar sensores)
+    // CORRIGIDO: Usa o timeout definido na configuração global
     unsigned long start = millis();
-    while (millis() - start < 3000) {
+    while (millis() - start < WIFI_TIMEOUT_MS) {
         if (WiFi.status() == WL_CONNECTED) {
             _connected = true;
             DEBUG_PRINTF("[WiFi] Conectado! IP: %s (%d dBm)\n", 

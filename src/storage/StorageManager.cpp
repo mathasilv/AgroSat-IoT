@@ -1,11 +1,12 @@
 /**
  * @file StorageManager.cpp
- * @brief Gerenciador de Armazenamento (FIX: Hot-Swap e Recuperação SPI)
- * @version 3.1.0
+ * @brief Gerenciador de Armazenamento (FIX: Reporte de Erros ao SystemHealth)
+ * @version 3.2.0
  */
 
 #include "StorageManager.h"
 #include "core/RTCManager/RTCManager.h"
+#include "core/SystemHealth/SystemHealth.h" // <--- NOVO: Include real
 
 SPIClass spiSD(HSPI);
 static char fmtBuffer[512];
@@ -13,6 +14,7 @@ static char fmtBuffer[512];
 StorageManager::StorageManager() : 
     _available(false), 
     _rtcManager(nullptr), 
+    _systemHealth(nullptr), // <--- NOVO
     _lastInitAttempt(0),
     _crcErrors(0),
     _totalWrites(0) 
@@ -21,16 +23,12 @@ StorageManager::StorageManager() :
 bool StorageManager::begin() {
     Serial.println("[StorageManager] Inicializando SD Card...");
     
-    // Força o pino CS para HIGH antes de iniciar para garantir estado inativo
     pinMode(SD_CS, OUTPUT);
     digitalWrite(SD_CS, HIGH);
     delay(10); 
 
-    // Inicia o barramento SPI
     spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
     
-    // Tenta montar o sistema de arquivos
-    // Frequência reduzida para 4MHz para maior estabilidade
     if (!SD.begin(SD_CS, spiSD, 4000000)) {
         Serial.println("[StorageManager] ERRO: Falha ao montar SD Card.");
         _available = false; 
@@ -56,37 +54,38 @@ void StorageManager::setRTCManager(RTCManager* rtcManager) {
     _rtcManager = rtcManager; 
 }
 
+// === NOVO: Setter para SystemHealth ===
+void StorageManager::setSystemHealth(SystemHealth* systemHealth) {
+    _systemHealth = systemHealth;
+}
+
+// === NOVO: Helper privado para reportar erros ===
+void StorageManager::_reportCRCError(uint8_t count) {
+    _crcErrors += count;
+    if (_systemHealth) {
+        for(uint8_t i=0; i<count; i++) _systemHealth->incrementCRCError();
+    }
+}
+
 void StorageManager::_attemptRecovery() {
-    // Só tenta recuperar se o intervalo passou
     unsigned long now = millis();
     if (now - _lastInitAttempt < REINIT_INTERVAL) return;
     _lastInitAttempt = now;
     
     Serial.println("[StorageManager] Tentando recuperar SD Card (Hard Reset)...");
     
-    // 1. Desmonta o sistema de arquivos para limpar caches
     SD.end();
-    
-    // 2. Encerra o barramento SPI para resetar o periférico do ESP32
-    // Isso é crucial para destravar o hardware após remoção abrupta
     spiSD.end(); 
-    
-    // 3. Pequeno delay físico
     delay(100);
     
-    // 4. Tenta iniciar tudo do zero (que vai chamar spiSD.begin novamente)
     if (begin()) {
         Serial.println("[StorageManager] RECUPERADO COM SUCESSO!");
-        // Registra o evento no log para auditoria
         saveLog("Sistema de arquivos recuperado apos falha/remocao.");
     } else {
         Serial.println("[StorageManager] Recuperação falhou. Tentarei novamente em breve.");
     }
 }
 
-// ============================================================================
-// Salvamento Normal (CSV com CRC no final da linha)
-// ============================================================================
 bool StorageManager::saveTelemetry(const TelemetryData& data) {
     if (!_available) { 
         _attemptRecovery(); 
@@ -141,9 +140,6 @@ bool StorageManager::saveMissionData(const MissionData& data) {
     return true;
 }
 
-// ============================================================================
-// NOVO 5.8: Salvamento com Redundância Tripla
-// ============================================================================
 bool StorageManager::saveTelemetryRedundant(const TelemetryData& data) {
     if (!_available) { 
         _attemptRecovery(); 
@@ -187,7 +183,7 @@ bool StorageManager::saveMissionDataRedundant(const MissionData& data) {
 bool StorageManager::_writeTripleRedundant(const char* path, const uint8_t* data, size_t len) {
     File file = SD.open(path, FILE_APPEND);
     if (!file) {
-        _available = false; // Marca falha na escrita
+        _available = false;
         return false;
     }
     
@@ -201,10 +197,10 @@ bool StorageManager::_writeTripleRedundant(const char* path, const uint8_t* data
     file.close();
     _totalWrites++;
     
-    Serial.printf("[StorageManager] Escrita redundante: %d bytes x3\n", len);
     return true;
 }
 
+// === FIX: Método Atualizado com Sincronização de Erros ===
 bool StorageManager::_readWithRedundancy(const char* path, uint8_t* data, size_t len) {
     if (!_available) return false;
 
@@ -220,20 +216,34 @@ bool StorageManager::_readWithRedundancy(const char* path, uint8_t* data, size_t
     file.read(copy3, len); file.read((uint8_t*)&crc3, sizeof(crc3));
     file.close();
     
-    // Validar CRCs
     bool valid1 = (_calculateCRC16(copy1, len) == crc1);
     bool valid2 = (_calculateCRC16(copy2, len) == crc2);
     bool valid3 = (_calculateCRC16(copy3, len) == crc3);
     
+    // Se 2 ou 3 cópias são válidas, recuperamos os dados (sem erro fatal)
     if (valid1 && valid2) { memcpy(data, copy1, len); return true; }
     if (valid1 && valid3) { memcpy(data, copy1, len); return true; }
     if (valid2 && valid3) { memcpy(data, copy2, len); return true; }
     
-    if (valid1) { memcpy(data, copy1, len); _crcErrors++; return true; }
-    if (valid2) { memcpy(data, copy2, len); _crcErrors++; return true; }
-    if (valid3) { memcpy(data, copy3, len); _crcErrors++; return true; }
+    // Recuperação de falha parcial (apenas 1 cópia válida) -> Reporta Erro
+    if (valid1) { 
+        memcpy(data, copy1, len); 
+        _reportCRCError(1); // 2 cópias corrompidas
+        return true; 
+    }
+    if (valid2) { 
+        memcpy(data, copy2, len); 
+        _reportCRCError(1); 
+        return true; 
+    }
+    if (valid3) { 
+        memcpy(data, copy3, len); 
+        _reportCRCError(1); 
+        return true; 
+    }
     
-    _crcErrors += 3;
+    // Falha total -> Reporta 3 erros
+    _reportCRCError(3);
     return false;
 }
 
@@ -315,7 +325,7 @@ bool StorageManager::createLogFile() {
     File file = SD.open(SD_SYSTEM_LOG, FILE_WRITE);
     if (!file) return false;
     
-    file.println(F("=== AGROSAT-IOT SYSTEM LOG v3.1 ==="));
+    file.println(F("=== AGROSAT-IOT SYSTEM LOG v3.2 ==="));
     file.println(F("Timestamp,Message,CRC16"));
     file.close();
     return true;

@@ -1,7 +1,7 @@
 /**
  * @file TelemetryManager.cpp
- * @brief Gerenciador Central (FIX: Monitoramento Completo em Tempo Real)
- * @version 10.4.0
+ * @brief Gerenciador Central (FIX: Lógica Unificada de Missão)
+ * @version 10.5.0
  */
 
 #include "TelemetryManager.h"
@@ -25,7 +25,7 @@ TelemetryManager::TelemetryManager() :
     _telemetryCollector(_sensors, _gps, _power, _systemHealth, _rtc, _groundNodes),
     _commandHandler(_sensors),
     _mode(MODE_INIT), 
-    _missionActive(false),
+    // _missionActive removido
     _lastTelemetrySend(0), 
     _lastStorageSave(0),
     _missionStartTime(0), 
@@ -63,7 +63,7 @@ bool TelemetryManager::begin() {
     if (_mission.begin()) { 
         DEBUG_PRINTLN("[TelemetryManager] Restaurando modo FLIGHT...");
         _mode = MODE_FLIGHT;
-        _missionActive = true;
+        // _missionActive = true; // REMOVIDO: Redundante
         applyModeConfig(MODE_FLIGHT);
     }
 
@@ -102,6 +102,7 @@ void TelemetryManager::_initSubsystems(uint8_t& subsystemsOk, bool& success) {
     DEBUG_PRINTLN("[TelemetryManager] Init Storage");
     if (_storage.begin()) {
         _storage.setRTCManager(&_rtc); 
+        _storage.setSystemHealth(&_systemHealth); // <--- LINHA ADICIONADA
         subsystemsOk++;
     } else success = false;
 
@@ -121,6 +122,10 @@ void TelemetryManager::_logInitSummary(bool success, uint8_t subsystemsOk, uint3
     uint32_t used = initialHeap - ESP.getFreeHeap();
     DEBUG_PRINTF("[TelemetryManager] Init: %s, subsistemas=%d/8, heap usado=%lu bytes\n",
                  success ? "OK" : "ERRO", subsystemsOk, used);
+}
+
+void TelemetryManager::feedWatchdog() {
+    _systemHealth.feedWatchdog();
 }
 
 void TelemetryManager::loop() {
@@ -166,7 +171,6 @@ void TelemetryManager::loop() {
     _systemHealth.setBatteryVoltage(_power.getVoltage());
     _systemHealth.setSDCardStatus(_storage.isAvailable());
     
-    // VERIFICAÇÃO DE ERROS EM TEMPO REAL
     _checkOperationalConditions();
 
     if (currentTime - _lastTelemetrySend >= activeModeConfig->telemetrySendInterval) {
@@ -188,53 +192,40 @@ void TelemetryManager::loop() {
     }
 }
 
-// ============================================================================
-// LÓGICA DE MONITORAMENTO DE ERROS (CORRIGIDO)
-// ============================================================================
+// ... (Método _checkOperationalConditions mantido igual ao anterior) ...
 void TelemetryManager::_checkOperationalConditions() {
-    // 1. Monitoramento de Bateria
-    // Acende LED Vermelho se Crítica, Amarelo se Baixa (no Dashboard)
     bool batCritical = _power.isCritical();
-    bool batLow = (_power.getVoltage() <= BATTERY_LOW); // 3.7V default
+    bool batLow = (_power.getVoltage() <= BATTERY_LOW); 
     
     if (batCritical) _power.enablePowerSave();
     
     _systemHealth.setSystemError(STATUS_BATTERY_CRIT, batCritical);
     _systemHealth.setSystemError(STATUS_BATTERY_LOW, batLow);
     
-    // 2. Monitoramento de Sensores
-    // Verifica se algum sensor crítico está offline e tenta recuperar
     bool sensorFail = !_sensors.isMPU9250Online() || !_sensors.isBMP280Online(); 
     
     if (sensorFail) {
         static unsigned long lastSensorReset = 0;
-        // Tenta resetar os sensores a cada 10 segundos se falharem
         if (millis() - lastSensorReset > 10000) {
             DEBUG_PRINTLN("[TM] Sensores instáveis. Tentando reset...");
             _sensors.resetAll();
             lastSensorReset = millis();
         }
     }
-    // Atualiza status do sensor no Dashboard
     _systemHealth.setSystemError(STATUS_SENSOR_ERROR, sensorFail);
     
-    // 3. Monitoramento de WiFi (Apenas se HTTP estiver ativo)
     if (activeModeConfig->httpEnabled) {
         bool wifiDown = !_comm.isWiFiConnected();
-        
         if (wifiDown) {
             static unsigned long lastWifiRetry = 0;
-            // Tenta reconectar WiFi a cada 30 segundos
             if (millis() - lastWifiRetry > 30000) {
                 DEBUG_PRINTLN("[TM] WiFi caiu. Reconectando...");
                 _comm.connectWiFi();
                 lastWifiRetry = millis();
             }
         }
-        // Atualiza status do WiFi no Dashboard
         _systemHealth.setSystemError(STATUS_WIFI_ERROR, wifiDown);
     } else {
-        // Se HTTP está desativado (ex: modo voo), limpa o erro de WiFi
         _systemHealth.setSystemError(STATUS_WIFI_ERROR, false);
     }
 }
@@ -252,16 +243,16 @@ void TelemetryManager::_handleIncomingRadio() {
             rxData.lastLoraRx = millis();
             rxData.collectionTime = _rtc.isInitialized() ? _rtc.getUnixTime() : (millis()/1000);
             
-            _groundNodes.updateNode(rxData, _comm);
+            // FIX: Chamada simplificada (GroundNodeManager já sabe calcular prioridade)
+            _groundNodes.updateNode(rxData);
             
-            // Tenta salvar mesmo se SD falhou antes (para tentar recovery)
             _storage.saveMissionData(rxData);
             
             DEBUG_PRINTF("[TM] Node %u RX: RSSI=%d dBm, SNR=%.1f dB\n", 
                          rxData.nodeId, rssi, snr);
         }
     }
-}
+}W
 
 void TelemetryManager::_maintainGroundNetwork() {
     static unsigned long lastMaint = 0;
@@ -274,36 +265,52 @@ void TelemetryManager::_maintainGroundNetwork() {
 
 void TelemetryManager::applyModeConfig(uint8_t modeIndex) {
     OperationMode mode = static_cast<OperationMode>(modeIndex);
+    uint32_t wdtTimeout = WATCHDOG_TIMEOUT_PREFLIGHT; 
+
     switch (mode) {
-        case MODE_PREFLIGHT: activeModeConfig = &PREFLIGHT_CONFIG; break;
-        case MODE_FLIGHT:    activeModeConfig = &FLIGHT_CONFIG; break;
-        case MODE_SAFE:      activeModeConfig = &SAFE_CONFIG; break;
-        default:             activeModeConfig = &PREFLIGHT_CONFIG; break;
+        case MODE_PREFLIGHT: 
+            activeModeConfig = &PREFLIGHT_CONFIG; 
+            wdtTimeout = WATCHDOG_TIMEOUT_PREFLIGHT;
+            break;
+        case MODE_FLIGHT:    
+            activeModeConfig = &FLIGHT_CONFIG; 
+            wdtTimeout = WATCHDOG_TIMEOUT_FLIGHT;
+            break;
+        case MODE_SAFE:      
+            activeModeConfig = &SAFE_CONFIG; 
+            wdtTimeout = WATCHDOG_TIMEOUT_SAFE;
+            break;
+        default:             
+            activeModeConfig = &PREFLIGHT_CONFIG; 
+            wdtTimeout = WATCHDOG_TIMEOUT_PREFLIGHT;
+            break;
     }
     
     currentSerialLogsEnabled = activeModeConfig->serialLogsEnabled;
     _comm.enableLoRa(activeModeConfig->loraEnabled);
     _comm.enableHTTP(activeModeConfig->httpEnabled);
     
-    DEBUG_PRINTF("[TelemetryManager] Modo: %d (LoRa=%d HTTP=%d Beacon=%d)\n", 
+    _systemHealth.setWatchdogTimeout(wdtTimeout);
+    
+    DEBUG_PRINTF("[TelemetryManager] Modo: %d (LoRa=%d HTTP=%d Beacon=%d WDT=%ds)\n", 
                  mode, activeModeConfig->loraEnabled, activeModeConfig->httpEnabled,
-                 activeModeConfig->beaconInterval > 0);
+                 activeModeConfig->beaconInterval > 0, wdtTimeout);
 }
 
 void TelemetryManager::startMission() {
     if (_mode == MODE_FLIGHT) return;
     if (_mission.start()) {
         _mode = MODE_FLIGHT;
-        _missionActive = true;
+        // _missionActive = true; // REMOVIDO: Redundante
         applyModeConfig(MODE_FLIGHT);
     }
 }
 
 void TelemetryManager::stopMission() {
-    if (!_missionActive) return;
+    if (!_mission.isActive()) return; // CORRIGIDO: Checa direto no MissionController
     if (_mission.stop()) {
         _mode = MODE_PREFLIGHT;
-        _missionActive = false;
+        // _missionActive = false; // REMOVIDO: Redundante
         applyModeConfig(MODE_PREFLIGHT);
     }
 }
@@ -324,7 +331,6 @@ void TelemetryManager::_sendTelemetry() {
 }
 
 void TelemetryManager::_saveToStorage() {
-    // Salvamento com recuperação automática (Fix Hot-Swap)
     bool success = _storage.saveTelemetry(_telemetryData);
     
     if (success) {

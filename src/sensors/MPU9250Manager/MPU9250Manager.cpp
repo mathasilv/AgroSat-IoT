@@ -1,10 +1,12 @@
 /**
  * @file MPU9250Manager.cpp
- * @brief Implementação com Calibração Hard + Soft Iron
- * @version 2.0.0
+ * @brief Implementação com Calibração Segura (Heap Allocation)
+ * @version 2.1.0 (FIXED: Stack Overflow)
  */
 
 #include "MPU9250Manager.h"
+#include <math.h>
+#include <new> // Necessário para std::nothrow
 
 MPU9250Manager::MPU9250Manager(uint8_t addr)
     : _mpu(addr), _addr(addr), _online(false), _magOnline(false), _calibrated(false),
@@ -19,7 +21,7 @@ MPU9250Manager::MPU9250Manager(uint8_t addr)
     memset(_bufAY, 0, sizeof(_bufAY));
     memset(_bufAZ, 0, sizeof(_bufAZ));
     
-    // NOVO 4.7: Inicializar matriz de Soft Iron como identidade
+    // Inicializar matriz de Soft Iron como identidade
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
             _softIronMatrix[i][j] = (i == j) ? 1.0f : 0.0f;
@@ -86,7 +88,7 @@ void MPU9250Manager::update() {
             float my = mag.y - _magOffY;
             float mz = mag.z - _magOffZ;
             
-            // NOVO 4.7: Aplicar Soft Iron correction
+            // Aplicar Soft Iron correction
             _applySoftIronCorrection(mx, my, mz);
             
             _magX = mx;
@@ -106,7 +108,7 @@ void MPU9250Manager::reset() {
 }
 
 // ============================================================================
-// CORRIGIDO 4.7: Calibração Hard + Soft Iron
+// FIX CRÍTICO: Alocação Dinâmica para evitar Stack Overflow
 // ============================================================================
 bool MPU9250Manager::calibrateMagnetometer() {
     if (!_magOnline) return false;
@@ -115,7 +117,17 @@ bool MPU9250Manager::calibrateMagnetometer() {
     DEBUG_PRINTLN("  Gire o sensor lentamente em todas as direções (figura 8)");
     
     const int maxSamples = 500;
-    float samples[maxSamples][3];
+    
+    // FIX: Alocar no Heap ao invés da Stack (6KB é muito para stack do ESP32)
+    // Usando typedef para facilitar a sintaxe de array 2D dinâmico
+    using SampleArray = float[3];
+    SampleArray* samples = new (std::nothrow) SampleArray[maxSamples];
+
+    if (!samples) {
+        DEBUG_PRINTLN("[MPU9250Manager] ERRO FATAL: Memória insuficiente para calibração!");
+        return false;
+    }
+
     int numSamples = 0;
     
     float minX = 9999, minY = 9999, minZ = 9999;
@@ -127,7 +139,7 @@ bool MPU9250Manager::calibrateMagnetometer() {
         xyzFloat mag = _mpu.getMagValues();
         
         if (mag.x != 0 || mag.y != 0) {
-            // Armazenar amostra
+            // Armazenar amostra no heap
             samples[numSamples][0] = mag.x;
             samples[numSamples][1] = mag.y;
             samples[numSamples][2] = mag.z;
@@ -151,6 +163,7 @@ bool MPU9250Manager::calibrateMagnetometer() {
 
     if (numSamples < 200) {
         DEBUG_PRINTLN("[MPU9250Manager] Falha: Poucas amostras (<200).");
+        delete[] samples; // Limpar memória antes de retornar
         return false;
     }
 
@@ -162,9 +175,12 @@ bool MPU9250Manager::calibrateMagnetometer() {
     DEBUG_PRINTF("[MPU9250Manager] Hard Iron: X=%.1f, Y=%.1f, Z=%.1f\n", 
                  _magOffX, _magOffY, _magOffZ);
     
-    // NOVO 4.7: Calcular Soft Iron Matrix (elipsóide -> esfera)
+    // Calcular Soft Iron Matrix (elipsóide -> esfera)
     _calculateSoftIronMatrix(samples, numSamples);
     
+    // IMPORTANTE: Liberar memória do heap
+    delete[] samples;
+
     _saveOffsets();
     _calibrated = true;
     
@@ -172,11 +188,7 @@ bool MPU9250Manager::calibrateMagnetometer() {
     return true;
 }
 
-// ============================================================================
-// NOVO 4.7: Aplicar Correção de Soft Iron Distortion
-// ============================================================================
 void MPU9250Manager::_applySoftIronCorrection(float& mx, float& my, float& mz) {
-    // Multiplicar vetor magnético pela matriz de correção: M' = S * M
     float mx_corr = _softIronMatrix[0][0] * mx + 
                     _softIronMatrix[0][1] * my + 
                     _softIronMatrix[0][2] * mz;
@@ -194,22 +206,20 @@ void MPU9250Manager::_applySoftIronCorrection(float& mx, float& my, float& mz) {
     mz = mz_corr;
 }
 
-// ============================================================================
-// CORRIGIDO: Calcular Matriz de Soft Iron SEM overflow de stack
-// ============================================================================
 void MPU9250Manager::_calculateSoftIronMatrix(float samples[][3], int numSamples) {
-    // CRÍTICO: Alocar dinamicamente para evitar stack overflow
+    // Aqui também alocamos temporários no heap para segurança
     float* centeredX = (float*)malloc(numSamples * sizeof(float));
     float* centeredY = (float*)malloc(numSamples * sizeof(float));
     float* centeredZ = (float*)malloc(numSamples * sizeof(float));
     
     if (!centeredX || !centeredY || !centeredZ) {
-        DEBUG_PRINTLN("[MPU9250Manager] ERRO: Memória insuficiente para Soft Iron");
-        free(centeredX);
-        free(centeredY);
-        free(centeredZ);
+        DEBUG_PRINTLN("[MPU9250Manager] ERRO: Memória insuficiente para Soft Iron (Temp)");
+        // Libera o que foi alocado parcialmente
+        if(centeredX) free(centeredX);
+        if(centeredY) free(centeredY);
+        if(centeredZ) free(centeredZ);
         
-        // Usar matriz identidade (sem correção)
+        // Usar matriz identidade como fallback
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
                 _softIronMatrix[i][j] = (i == j) ? 1.0f : 0.0f;
@@ -240,47 +250,27 @@ void MPU9250Manager::_calculateSoftIronMatrix(float samples[][3], int numSamples
     // 3. Calcular fatores de escala (normalizar para esfera)
     float avgScale = (varX + varY + varZ) / 3.0f;
     
-    float scaleX = (varX > 0.1f) ? (avgScale / varX) : 1.0f;  // Evitar divisão por zero
+    float scaleX = (varX > 0.1f) ? (avgScale / varX) : 1.0f;
     float scaleY = (varY > 0.1f) ? (avgScale / varY) : 1.0f;
     float scaleZ = (varZ > 0.1f) ? (avgScale / varZ) : 1.0f;
     
     // 4. Criar matriz diagonal de correção
-    _softIronMatrix[0][0] = scaleX;
-    _softIronMatrix[0][1] = 0;
-    _softIronMatrix[0][2] = 0;
+    _softIronMatrix[0][0] = scaleX; _softIronMatrix[0][1] = 0;      _softIronMatrix[0][2] = 0;
+    _softIronMatrix[1][0] = 0;      _softIronMatrix[1][1] = scaleY; _softIronMatrix[1][2] = 0;
+    _softIronMatrix[2][0] = 0;      _softIronMatrix[2][1] = 0;      _softIronMatrix[2][2] = scaleZ;
     
-    _softIronMatrix[1][0] = 0;
-    _softIronMatrix[1][1] = scaleY;
-    _softIronMatrix[1][2] = 0;
+    DEBUG_PRINTLN("[MPU9250Manager] Soft Iron Matrix Calculada.");
     
-    _softIronMatrix[2][0] = 0;
-    _softIronMatrix[2][1] = 0;
-    _softIronMatrix[2][2] = scaleZ;
-    
-    DEBUG_PRINTLN("[MPU9250Manager] Soft Iron Matrix:");
-    DEBUG_PRINTF("  [%.3f, %.3f, %.3f]\n", 
-                 _softIronMatrix[0][0], _softIronMatrix[0][1], _softIronMatrix[0][2]);
-    DEBUG_PRINTF("  [%.3f, %.3f, %.3f]\n", 
-                 _softIronMatrix[1][0], _softIronMatrix[1][1], _softIronMatrix[1][2]);
-    DEBUG_PRINTF("  [%.3f, %.3f, %.3f]\n", 
-                 _softIronMatrix[2][0], _softIronMatrix[2][1], _softIronMatrix[2][2]);
-    
-    // Liberar memória alocada
     free(centeredX);
     free(centeredY);
     free(centeredZ);
 }
 
-
-// ============================================================================
-// Métodos Privados
-// ============================================================================
+// Métodos privados auxiliares
 float MPU9250Manager::_applyFilter(float val, float* buf) {
     buf[_filterIdx] = val;
-    
     float sum = 0;
     for (int i = 0; i < FILTER_SIZE; i++) sum += buf[i];
-    
     return sum / FILTER_SIZE;
 }
 
@@ -310,40 +300,29 @@ void MPU9250Manager::clearOffsetsFromMemory() {
     _prefs.end();
     
     _magOffX = _magOffY = _magOffZ = 0;
-    
-    // Resetar matriz para identidade
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
             _softIronMatrix[i][j] = (i == j) ? 1.0f : 0.0f;
         }
     }
-    
     _calibrated = false;
-    DEBUG_PRINTLN("[MPU9250Manager] Calibração apagada (Hard + Soft Iron).");
+    DEBUG_PRINTLN("[MPU9250Manager] Calibração apagada.");
 }
 
 bool MPU9250Manager::_loadOffsets() {
     if (!_prefs.begin(PREFS_NAME, true)) return false;
+    if (_prefs.getUInt("magic") != MAGIC_KEY) { _prefs.end(); return false; }
     
-    if (_prefs.getUInt("magic") != MAGIC_KEY) {
-        _prefs.end();
-        return false;
-    }
-    
-    // Carregar Hard Iron
     _magOffX = _prefs.getFloat("hx", 0);
     _magOffY = _prefs.getFloat("hy", 0);
     _magOffZ = _prefs.getFloat("hz", 0);
     
-    // NOVO 4.7: Carregar Soft Iron Matrix
     _softIronMatrix[0][0] = _prefs.getFloat("s00", 1.0f);
     _softIronMatrix[0][1] = _prefs.getFloat("s01", 0.0f);
     _softIronMatrix[0][2] = _prefs.getFloat("s02", 0.0f);
-    
     _softIronMatrix[1][0] = _prefs.getFloat("s10", 0.0f);
     _softIronMatrix[1][1] = _prefs.getFloat("s11", 1.0f);
     _softIronMatrix[1][2] = _prefs.getFloat("s12", 0.0f);
-    
     _softIronMatrix[2][0] = _prefs.getFloat("s20", 0.0f);
     _softIronMatrix[2][1] = _prefs.getFloat("s21", 0.0f);
     _softIronMatrix[2][2] = _prefs.getFloat("s22", 1.0f);
@@ -357,20 +336,16 @@ bool MPU9250Manager::_saveOffsets() {
     
     _prefs.putUInt("magic", MAGIC_KEY);
     
-    // Salvar Hard Iron
     _prefs.putFloat("hx", _magOffX);
     _prefs.putFloat("hy", _magOffY);
     _prefs.putFloat("hz", _magOffZ);
     
-    // NOVO 4.7: Salvar Soft Iron Matrix
     _prefs.putFloat("s00", _softIronMatrix[0][0]);
     _prefs.putFloat("s01", _softIronMatrix[0][1]);
     _prefs.putFloat("s02", _softIronMatrix[0][2]);
-    
     _prefs.putFloat("s10", _softIronMatrix[1][0]);
     _prefs.putFloat("s11", _softIronMatrix[1][1]);
     _prefs.putFloat("s12", _softIronMatrix[1][2]);
-    
     _prefs.putFloat("s20", _softIronMatrix[2][0]);
     _prefs.putFloat("s21", _softIronMatrix[2][1]);
     _prefs.putFloat("s22", _softIronMatrix[2][2]);

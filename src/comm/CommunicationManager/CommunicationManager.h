@@ -1,6 +1,6 @@
 /**
  * @file CommunicationManager.h
- * @brief Gerenciador de Comunicação (SF Estático)
+ * @brief Gerenciador de Comunicação (FIX: Removido acoplamento de prioridade)
  */
 
 #ifndef COMMUNICATION_MANAGER_H
@@ -14,9 +14,6 @@
 #include "comm/HttpService/HttpService.h"
 #include "comm/PayloadManager/PayloadManager.h"
 #include "comm/LoRaService/DutyCycleTracker.h"
-
-// NÃO inclua GroundNodeManager.h aqui. 
-// GroundNodeBuffer é definido em config.h, que já está incluído.
 
 class CommunicationManager {
 public:
@@ -37,13 +34,14 @@ public:
     // Missão
     bool processLoRaPacket(const String& packet, MissionData& data);
     
-    // Recebe GroundNodeBuffer (struct do config.h), não a classe GroundNodeManager
+    // REMOVIDO: uint8_t calculatePriority(const MissionData& node);
+    
+    // Telemetria
     bool sendTelemetry(const TelemetryData& tData, const GroundNodeBuffer& gBuffer);
     
     // Helpers
     void enableLoRa(bool enable);
     void enableHTTP(bool enable);
-    uint8_t calculatePriority(const MissionData& node);
     
     // Controle de Spreading Factor
     void setSpreadingFactor(int sf) { _lora.setSpreadingFactor(sf); }

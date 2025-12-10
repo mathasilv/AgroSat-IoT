@@ -4,15 +4,14 @@
 #include <Arduino.h>
 #include "config.h"
 
-// Forward Declaration para quebrar ciclo de dependência
-class CommunicationManager;
+// CommunicationManager removido daqui - não é mais necessário para prioridade
 
 class GroundNodeManager {
 public:
     GroundNodeManager();
 
-    // Apenas declaração da referência, não precisa do include aqui
-    void updateNode(const MissionData& data, CommunicationManager& comm);
+    // FIX: Removemos o argumento 'comm'
+    void updateNode(const MissionData& data);
     void cleanup(unsigned long now, unsigned long maxAgeMs);
     uint8_t resetForwardFlags();
 
@@ -21,7 +20,9 @@ public:
 
 private:
     GroundNodeBuffer _buffer;
-    void _replaceLowestPriorityNode(const MissionData& newData, CommunicationManager& comm);
+    
+    // FIX: Removemos o argumento 'comm'
+    void _replaceLowestPriorityNode(const MissionData& newData);
 };
 
 #endif
