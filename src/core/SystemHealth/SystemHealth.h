@@ -1,7 +1,7 @@
 /**
  * @file SystemHealth.h
- * @brief Monitoramento de Saúde em Tempo Real (Status Dinâmico)
- * @version 2.2.1 (FIX: Watchdog Dinâmico)
+ * @brief Monitoramento de Saúde em Tempo Real (Versão Refatorada)
+ * @details Removeu-se a lógica de missão para evitar duplicação com MissionController.
  */
 
 #ifndef SYSTEM_HEALTH_H
@@ -12,7 +12,6 @@
 #include <Preferences.h>
 #include "config.h"
 
-// (Struct HealthTelemetry mantida igual...)
 struct HealthTelemetry {
     uint32_t uptime;
     uint16_t resetCount;
@@ -40,7 +39,7 @@ public:
     void update();
     void feedWatchdog();
 
-    // === NOVO: Reconfiguração Dinâmica do Watchdog ===
+    // Reconfiguração Dinâmica do Watchdog
     void setWatchdogTimeout(uint32_t seconds);
 
     void reportError(uint8_t errorCode, const String& description);
@@ -49,32 +48,23 @@ public:
     uint32_t getFreeHeap();
     uint32_t getMinFreeHeap() const { return _minFreeHeap; }
     unsigned long getUptime();
-    unsigned long getMissionTime();
+    
+    // --- REMOVIDO: getMissionTime() e startMission() ---
+    // A única fonte da verdade agora é o MissionController
+    
     uint16_t getErrorCount() const { return _errorCount; }
     uint8_t getSystemStatus() const { return _systemStatus; }
     HeapStatus getHeapStatus() const { return _heapStatus; }
 
-    void startMission();
-    bool isMissionActive() const { return _missionActive; }
-    
     HealthTelemetry getHealthTelemetry();
     void incrementCRCError() { _crcErrors++; }
     void incrementI2CError() { _i2cErrors++; }
     
+    void setSystemError(uint8_t errorFlag, bool active);
+
     void setSDCardStatus(bool ok) { 
         _sdCardStatus = ok ? 0 : 1; 
         setSystemError(STATUS_SD_ERROR, !ok);
-    }
-
-    void setSystemError(uint8_t errorFlag, bool active) {
-        if (active) {
-            if (!(_systemStatus & errorFlag)) {
-                _errorCount++;
-            }
-            _systemStatus |= errorFlag;
-        } else {
-            _systemStatus &= ~errorFlag;
-        }
     }
 
     void setCurrentMode(uint8_t mode) { _currentMode = mode; }
@@ -90,12 +80,10 @@ private:
     uint32_t _lastHeapCheck;
 
     unsigned long _bootTime;
-    unsigned long _missionStartTime;
-    bool _missionActive;
+    // --- REMOVIDO: Variáveis de tempo de missão duplicadas ---
+
     uint32_t _lastWatchdogFeed;
     uint32_t _lastHealthCheck;
-    
-    // === NOVO: Variável para controle do feed ===
     uint32_t _currentWdtTimeout; 
     
     uint16_t _resetCount;

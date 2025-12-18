@@ -1,21 +1,16 @@
-/**
- * @file TelemetryCollector.h
- * @brief Coletor e validador de dados de telemetria
- */
-
 #ifndef TELEMETRY_COLLECTOR_H
 #define TELEMETRY_COLLECTOR_H
 
 #include <Arduino.h>
 #include "config.h"
 
-// Forward Declarations
 class SensorManager;
 class GPSManager;
 class PowerManager;
 class SystemHealth;
 class RTCManager;
 class GroundNodeManager;
+class MissionController; // <--- NOVO
 
 class TelemetryCollector {
 public:
@@ -25,7 +20,8 @@ public:
         PowerManager& power,
         SystemHealth& health,
         RTCManager& rtc,
-        GroundNodeManager& nodes
+        GroundNodeManager& nodes,
+        MissionController& mission // <--- NOVO
     );
     
     void collect(TelemetryData& data);
@@ -37,6 +33,7 @@ private:
     SystemHealth&  _health;
     RTCManager&    _rtc;
     GroundNodeManager& _nodes;
+    MissionController& _mission; // <--- NOVO
     
     void _collectTimestamp(TelemetryData& data);
     void _collectPowerAndSystem(TelemetryData& data);

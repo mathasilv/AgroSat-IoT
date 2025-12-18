@@ -22,13 +22,13 @@ TelemetryManager::TelemetryManager() :
     _comm(), 
     _groundNodes(),
     _mission(_rtc, _groundNodes),
-    _telemetryCollector(_sensors, _gps, _power, _systemHealth, _rtc, _groundNodes),
+    // INJEÇÃO ATUALIZADA: Passando _mission para o collector
+    _telemetryCollector(_sensors, _gps, _power, _systemHealth, _rtc, _groundNodes, _mission),
     _commandHandler(_sensors),
     _mode(MODE_INIT), 
-    // _missionActive removido
     _lastTelemetrySend(0), 
     _lastStorageSave(0),
-    _missionStartTime(0), 
+    // _missionStartTime removido
     _lastSensorReset(0),
     _lastBeaconTime(0)
 {
@@ -131,9 +131,15 @@ void TelemetryManager::feedWatchdog() {
 void TelemetryManager::loop() {
     uint32_t currentTime = millis();
 
-    _systemHealth.update();
-    SystemHealth::HeapStatus heapStatus = _systemHealth.getHeapStatus();
+    // ============================================================
+    // 1. SAÚDE DO SISTEMA & WATCHDOG
+    // ============================================================
+    // Centralização do Feed: O SystemHealth gerencia o feed internamente 
+    // (a cada 1/3 do timeout configurado) ao chamarmos update().
+    _systemHealth.update(); 
 
+    // Verificação de Heap e transição automática para SAFE MODE
+    SystemHealth::HeapStatus heapStatus = _systemHealth.getHeapStatus();
     switch (heapStatus) {
         case SystemHealth::HeapStatus::HEAP_CRITICAL:
             if (_mode != MODE_SAFE) {
@@ -152,27 +158,42 @@ void TelemetryManager::loop() {
         default: break;
     }
 
+    // ============================================================
+    // 2. ATUALIZAÇÃO DE SUBSISTEMAS
+    // ============================================================
     _power.update();
-    _power.adjustCpuFrequency();
+    _power.adjustCpuFrequency(); // Ajuste dinâmico de clock (Economia/Performance)
     _sensors.update(); 
     _gps.update();
     _comm.update();
     _rtc.update();
 
+    // ============================================================
+    // 3. INTERAÇÃO E REDE
+    // ============================================================
     _handleButtonEvents();
     _updateLEDIndicator(currentTime);
 
     _handleIncomingRadio();
     _maintainGroundNetwork();
 
+    // ============================================================
+    // 4. COLETA E PROCESSAMENTO
+    // ============================================================
+    // O coletor agora busca o tempo de missão diretamente do MissionController
     _telemetryCollector.collect(_telemetryData);
     
+    // Atualiza status do SystemHealth para monitoramento
     _systemHealth.setCurrentMode((uint8_t)_mode);
     _systemHealth.setBatteryVoltage(_power.getVoltage());
     _systemHealth.setSDCardStatus(_storage.isAvailable());
     
+    // Verifica condições operacionais (ex: Bateria Crítica)
     _checkOperationalConditions();
 
+    // ============================================================
+    // 5. TRANSMISSÃO E ARMAZENAMENTO (TIMERS)
+    // ============================================================
     if (currentTime - _lastTelemetrySend >= activeModeConfig->telemetrySendInterval) {
         _lastTelemetrySend = currentTime;
         _sendTelemetry();
@@ -183,6 +204,7 @@ void TelemetryManager::loop() {
         _saveToStorage();
     }
     
+    // Beacon exclusivo do Modo Seguro (para recuperação)
     if (_mode == MODE_SAFE) {
         uint32_t beaconInterval = activeModeConfig->beaconInterval;
         if (beaconInterval > 0 && (currentTime - _lastBeaconTime >= beaconInterval)) {
@@ -252,7 +274,7 @@ void TelemetryManager::_handleIncomingRadio() {
                          rxData.nodeId, rssi, snr);
         }
     }
-}W
+}
 
 void TelemetryManager::_maintainGroundNetwork() {
     static unsigned long lastMaint = 0;
@@ -298,20 +320,34 @@ void TelemetryManager::applyModeConfig(uint8_t modeIndex) {
 }
 
 void TelemetryManager::startMission() {
+    // Evita reiniciar se já estiver voando
     if (_mode == MODE_FLIGHT) return;
+    
+    // Apenas delega para o controller (Única Fonte da Verdade).
+    // Não gerenciamos mais _missionStartTime ou _missionActive aqui.
     if (_mission.start()) {
+        DEBUG_PRINTLN("[TelemetryManager] Transição para MODE_FLIGHT confirmada.");
+        
         _mode = MODE_FLIGHT;
-        // _missionActive = true; // REMOVIDO: Redundante
         applyModeConfig(MODE_FLIGHT);
+        
+        // SystemHealth não precisa mais ser notificado de "startMission",
+        // pois o TelemetryCollector consultará o MissionController diretamente.
     }
 }
 
 void TelemetryManager::stopMission() {
-    if (!_mission.isActive()) return; // CORRIGIDO: Checa direto no MissionController
+    // Verifica status real no Controller antes de tentar parar
+    if (!_mission.isActive()) return;
+    
     if (_mission.stop()) {
+        DEBUG_PRINTLN("[TelemetryManager] Missão finalizada. Retornando para PREFLIGHT.");
+        
         _mode = MODE_PREFLIGHT;
-        // _missionActive = false; // REMOVIDO: Redundante
         applyModeConfig(MODE_PREFLIGHT);
+        
+        // Nota: Limpeza de estado e persistência NVS são feitas 
+        // automaticamente dentro de _mission.stop()
     }
 }
 

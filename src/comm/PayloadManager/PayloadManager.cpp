@@ -38,9 +38,8 @@ int PayloadManager::createSatellitePayload(const TelemetryData& data, uint8_t* b
     return offset;
 }
 
-// ============================================================================
-// NOVO 5.3: Relay com Priorização QoS
-// ============================================================================
+// Método createRelayPayload otimizado
+
 int PayloadManager::createRelayPayload(const TelemetryData& data, 
                                        const GroundNodeBuffer& nodeBuffer,
                                        uint8_t* buffer,
@@ -60,33 +59,21 @@ int PayloadManager::createRelayPayload(const TelemetryData& data,
     
     includedNodes.clear();
     
-    // === NOVO 5.3: Ordenar nós por prioridade ===
+    // Copiar nós para buffer local para ordenação
     MissionData sortedNodes[MAX_GROUND_NODES];
     memcpy(sortedNodes, nodeBuffer.nodes, sizeof(sortedNodes));
     
-    // Atualizar prioridades antes de ordenar
-    for (int i = 0; i < nodeBuffer.activeNodes; i++) {
-        sortedNodes[i].priority = calculateNodePriority(sortedNodes[i]);
-    }
+    // === OTIMIZAÇÃO: REMOVIDO LOOP DE RECALCULO DE PRIORIDADE ===
+    // O GroundNodeManager já define a prioridade no momento do updateNode.
+    // Não precisamos gastar CPU recalculando aqui.
     
     sortNodesByPriority(sortedNodes, nodeBuffer.activeNodes);
-    
-    // Log de ordenação
-    DEBUG_PRINTLN("[PayloadManager] === Nós Ordenados por Prioridade (QoS) ===");
-    for (int i = 0; i < nodeBuffer.activeNodes; i++) {
-        const char* priName[] = {"CRITICAL", "HIGH_PRIORITY", "NORMAL", "LOW_PRIORITY"};
-        DEBUG_PRINTF("  %d. Node %u - %s (Pri=%d)\n", 
-                     i+1, sortedNodes[i].nodeId, 
-                     priName[sortedNodes[i].priority], 
-                     sortedNodes[i].priority);
-    }
     
     // Adicionar nós ao payload (ordem de prioridade)
     uint8_t nodesAdded = 0;
     for (int i = 0; i < nodeBuffer.activeNodes; i++) {
         // Envia apenas se não foi enviado e é válido
         if (!sortedNodes[i].forwarded && sortedNodes[i].nodeId > 0) {
-            // Verificar se há espaço no buffer
             if (offset + 10 > 250) {
                 DEBUG_PRINTLN("[PayloadManager] Buffer cheio! Nós restantes não incluídos.");
                 break;

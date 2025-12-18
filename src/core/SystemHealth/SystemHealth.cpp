@@ -1,7 +1,6 @@
 /**
  * @file SystemHealth.cpp
- * @brief Implementação do Monitoramento com Telemetria Detalhada
- * @version 2.2.1 (FIX: Watchdog Dinâmico)
+ * @brief Implementação Refatorada do SystemHealth (Corrigido)
  */
 
 #include "SystemHealth.h"
@@ -18,9 +17,9 @@ uint8_t temprature_sens_read();
 SystemHealth::SystemHealth() :
     _healthy(true), _systemStatus(STATUS_OK), _errorCount(0),
     _minFreeHeap(0xFFFFFFFF), _heapStatus(HeapStatus::HEAP_OK), _lastHeapCheck(0),
-    _bootTime(0), _missionStartTime(0), _missionActive(false),
+    _bootTime(0), // Removido _missionStartTime
     _lastWatchdogFeed(0), _lastHealthCheck(0),
-    _currentWdtTimeout(WATCHDOG_TIMEOUT_PREFLIGHT), // Default seguro
+    _currentWdtTimeout(WATCHDOG_TIMEOUT_PREFLIGHT),
     _resetCount(0), _resetReason(0), _crcErrors(0), _i2cErrors(0),
     _watchdogResets(0), _sdCardStatus(0), _currentMode(0), _batteryVoltage(0.0f)
 {}
@@ -41,7 +40,6 @@ bool SystemHealth::begin() {
     
     _incrementResetCount();
 
-    // CORRIGIDO: Usa a variável _currentWdtTimeout em vez de constante fixa
     esp_task_wdt_init(_currentWdtTimeout, true); 
     esp_task_wdt_add(NULL); 
     
@@ -54,10 +52,9 @@ bool SystemHealth::begin() {
 void SystemHealth::update() {
     uint32_t now = millis();
 
-    // CORRIGIDO: Usa o método centralizado feedWatchdog()
     // Feed a cada 1/3 do tempo configurado
     if (now - _lastWatchdogFeed > (_currentWdtTimeout * 1000 / 3)) {
-        feedWatchdog(); // <--- AQUI (era esp_task_wdt_reset() + atualização manual)
+        feedWatchdog();
     }
 
     if (now - _lastHealthCheck > SYSTEM_HEALTH_INTERVAL) {
@@ -66,21 +63,16 @@ void SystemHealth::update() {
         _savePersistentData();
     }
 }
-// === NOVO: Reconfigura o Hardware do Watchdog ===
-void SystemHealth::setWatchdogTimeout(uint32_t seconds) {
-    if (seconds == _currentWdtTimeout) return; // Evita reconfiguração desnecessária
 
-    // É necessário desinicializar antes de reconfigurar no ESP32
+void SystemHealth::setWatchdogTimeout(uint32_t seconds) {
+    if (seconds == _currentWdtTimeout) return;
+
     esp_task_wdt_deinit();
-    
     _currentWdtTimeout = seconds;
-    
     esp_task_wdt_init(_currentWdtTimeout, true);
-    esp_task_wdt_add(NULL); // Readiciona a task atual (loop)
+    esp_task_wdt_add(NULL);
     
     DEBUG_PRINTF("[SystemHealth] Watchdog reconfigurado para %d segundos\n", _currentWdtTimeout);
-    
-    // Força um feed imediato para sincronizar
     feedWatchdog();
 }
 
@@ -89,12 +81,26 @@ void SystemHealth::feedWatchdog() {
     _lastWatchdogFeed = millis();
 }
 
+void SystemHealth::setSystemError(uint8_t errorFlag, bool active) {
+    if (active) {
+        if (!(_systemStatus & errorFlag)) {
+            _errorCount++;
+        }
+        _systemStatus |= errorFlag;
+    } else {
+        _systemStatus &= ~errorFlag;
+    }
+    _healthy = (_systemStatus == STATUS_OK);
+}
+
 void SystemHealth::_checkResources() {
     uint32_t freeHeap = ESP.getFreeHeap();
     if (freeHeap < _minFreeHeap) _minFreeHeap = freeHeap;
 
+    // Lógica de Heap Crítico
     if (freeHeap < 5000) {
         _heapStatus = HeapStatus::HEAP_FATAL;
+        // Heap muito baixo é crítico, usamos flag de Watchdog pois pode causar reset iminente
         reportError(STATUS_WATCHDOG, "Heap FATAL (<5kB)");
     } else if (freeHeap < 10000) {
         _heapStatus = HeapStatus::HEAP_CRITICAL;
@@ -105,6 +111,12 @@ void SystemHealth::_checkResources() {
         _heapStatus = HeapStatus::HEAP_LOW;
     } else {
         _heapStatus = HeapStatus::HEAP_OK;
+        
+        // CORREÇÃO AQUI: Se a memória recuperou, limpamos o erro STATUS_WATCHDOG
+        // (Antes tentava limpar STATUS_MEMORY_ERROR que não existia)
+        if (_systemStatus & STATUS_WATCHDOG) {
+            setSystemError(STATUS_WATCHDOG, false);
+        }
     }
 
     float cpuTemp = _readInternalTemp();
@@ -119,25 +131,13 @@ float SystemHealth::_readInternalTemp() {
 }
 
 void SystemHealth::reportError(uint8_t errorCode, const String& description) {
-    _errorCount++;
-    _systemStatus |= errorCode;
+    setSystemError(errorCode, true);
     DEBUG_PRINTF("[SystemHealth] ERRO #%d (0x%02X): %s\n", 
                  _errorCount, errorCode, description.c_str());
 }
 
-void SystemHealth::startMission() {
-    _missionStartTime = millis();
-    _missionActive = true;
-    DEBUG_PRINTLN("[SystemHealth] Missão Iniciada!");
-}
-
-unsigned long SystemHealth::getMissionTime() {
-    if (!_missionActive) return 0;
-    return millis() - _missionStartTime;
-}
-
 unsigned long SystemHealth::getUptime() {
-    return millis() - _bootTime;
+    return (millis() - _bootTime) / 1000;
 }
 
 float SystemHealth::getCPUTemperature() {
@@ -150,7 +150,7 @@ uint32_t SystemHealth::getFreeHeap() {
 
 HealthTelemetry SystemHealth::getHealthTelemetry() {
     HealthTelemetry health;
-    health.uptime = getUptime() / 1000;
+    health.uptime = getUptime();
     health.resetCount = _resetCount;
     health.resetReason = _resetReason;
     health.minFreeHeap = _minFreeHeap;
@@ -166,8 +166,7 @@ HealthTelemetry SystemHealth::getHealthTelemetry() {
 }
 
 void SystemHealth::_loadPersistentData() {
-    if (!_prefs.begin("system_health", true)) {
-        DEBUG_PRINTLN("[SystemHealth] Falha ao abrir NVS (leitura)");
+    if (!_prefs.begin("sys_health", true)) {
         return;
     }
     _resetCount = _prefs.getUShort("reset_cnt", 0);
@@ -175,13 +174,10 @@ void SystemHealth::_loadPersistentData() {
     _crcErrors = _prefs.getUShort("crc_err", 0);
     _i2cErrors = _prefs.getUShort("i2c_err", 0);
     _prefs.end();
-    DEBUG_PRINTF("[SystemHealth] Dados carregados: Resets=%d, WDT=%d\n", 
-                 _resetCount, _watchdogResets);
 }
 
 void SystemHealth::_savePersistentData() {
-    if (!_prefs.begin("system_health", false)) {
-        DEBUG_PRINTLN("[SystemHealth] Falha ao abrir NVS (escrita)");
+    if (!_prefs.begin("sys_health", false)) {
         return;
     }
     _prefs.putUShort("reset_cnt", _resetCount);
@@ -193,7 +189,7 @@ void SystemHealth::_savePersistentData() {
 
 void SystemHealth::_incrementResetCount() {
     _resetCount++;
-    if (!_prefs.begin("system_health", false)) return;
+    if (!_prefs.begin("sys_health", false)) return;
     _prefs.putUShort("reset_cnt", _resetCount);
     _prefs.end();
 }

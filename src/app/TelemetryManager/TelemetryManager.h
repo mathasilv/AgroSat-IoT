@@ -33,17 +33,13 @@ public:
     bool begin();
     void loop();
     bool handleCommand(const String& cmd);
-
-    // Wrapper do Watchdog (Clean Code)
     void feedWatchdog();
 
-    // Controle de Missão
     void startMission();
     void stopMission();
     OperationMode getMode() { return _mode; }
     void applyModeConfig(uint8_t modeIndex);
 
-    // Compatibilidade legado
     void testLoRaTransmission();
     void sendCustomLoRa(const String& message);
     void printLoRaStats();
@@ -64,14 +60,14 @@ private:
     CommandHandler       _commandHandler;
     
     OperationMode  _mode;
-    // REMOVIDO: bool _missionActive; (Redundante, usar _mission.isActive())
     
     TelemetryData  _telemetryData;
 
-    // Timers
     unsigned long  _lastTelemetrySend;
     unsigned long  _lastStorageSave;
-    unsigned long  _missionStartTime;
+    
+    // REMOVIDO: unsigned long _missionStartTime; -> Redundante
+
     unsigned long  _lastSensorReset;
     unsigned long  _lastBeaconTime;
 
@@ -88,7 +84,6 @@ private:
     void _checkOperationalConditions();
     void _handleButtonEvents();
     void _updateLEDIndicator(unsigned long currentTime);
-    
     void _sendSafeBeacon();
 };
 

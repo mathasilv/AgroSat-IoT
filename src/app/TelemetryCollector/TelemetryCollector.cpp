@@ -12,6 +12,7 @@
 #include "core/SystemHealth/SystemHealth.h"
 #include "core/RTCManager/RTCManager.h"
 #include "app/GroundNodeManager/GroundNodeManager.h"
+#include "app/MissionController/MissionController.h"
 
 TelemetryCollector::TelemetryCollector(
     SensorManager& sensors,
@@ -19,14 +20,16 @@ TelemetryCollector::TelemetryCollector(
     PowerManager& power,
     SystemHealth& health,
     RTCManager& rtc,
-    GroundNodeManager& nodes
+    GroundNodeManager& nodes,
+    MissionController& mission // <--- Injeção
 ) :
     _sensors(sensors),
     _gps(gps),
     _power(power),
     _health(health),
     _rtc(rtc),
-    _nodes(nodes)
+    _nodes(nodes),
+    _mission(mission)
 {
 }
 
@@ -50,7 +53,9 @@ void TelemetryCollector::_collectTimestamp(TelemetryData& data) {
 }
 
 void TelemetryCollector::_collectPowerAndSystem(TelemetryData& data) {
-    data.missionTime = _health.getMissionTime();
+    // CORRIGIDO: Pega o tempo do MissionController, não do SystemHealth
+    data.missionTime = _mission.getDuration();
+    
     data.batteryVoltage = _power.getVoltage();
     data.batteryPercentage = _power.getPercentage();
     
