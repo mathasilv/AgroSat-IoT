@@ -438,8 +438,8 @@ Certifique-se de testar em hardware real antes de submeter PRs.
 
 - **Instituição**: Universidade Federal de Goiás (UFG)
 - **Desenvolvedores**:
-  - Matheus Aparecido Souza Silva - Firmware Lead
-  - Luana Sthephany Rodrigues Mamed - Hardware & Integration
+  - Matheus Aparecido Souza Silva
+  - Luana Sthephany Rodrigues Mamed
 - **Tutor**: Prof. Aldo Diaz
 - **Organização**: Ministério da Ciência, Tecnologia e Inovação (MCTI)
 
