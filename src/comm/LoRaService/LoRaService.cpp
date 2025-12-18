@@ -54,7 +54,7 @@ bool LoRaService::send(const uint8_t* data, size_t len, bool encrypt) {
     if (!_online) return false;
     
     // Buffer para dados (possivelmente criptografados)
-    uint8_t txBuffer[256];
+    uint8_t txBuffer[300];
     size_t txLen = len;
     
     if (encrypt && CryptoManager::isEnabled()) {

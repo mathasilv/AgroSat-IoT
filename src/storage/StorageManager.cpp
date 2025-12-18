@@ -207,7 +207,7 @@ bool StorageManager::_readWithRedundancy(const char* path, uint8_t* data, size_t
     File file = SD.open(path, FILE_READ);
     if (!file) return false;
     
-    uint8_t copy1[256], copy2[256], copy3[256];
+    static uint8_t copy1[256], copy2[256], copy3[256];
     uint16_t crc1, crc2, crc3;
     
     // Ler 3 cópias
