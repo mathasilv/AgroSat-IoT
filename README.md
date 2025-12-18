@@ -1,4 +1,3 @@
-
 # AgroSat-IoT: CubeSat 1U Store-and-Forward
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
@@ -13,8 +12,8 @@ Sistema de telemetria orbital para monitoramento remoto de cultivos em áreas se
 
 ## Sumário
 1. [Visão Geral](#visão-geral)
-2. [Arquitetura de Software](#arquitetura-de-software)
-3. [Máquina de Estados](#máquina-de-estados)
+2. [Arquitetura do Sistema](#arquitetura-do-sistema)
+3. [Modos de Operação](#modos-de-operação)
 4. [Especificações de Hardware](#especificações-de-hardware)
 5. [Instalação e Build](#instalação-e-build)
 6. [Interface de Comandos](#interface-de-comandos)
@@ -24,7 +23,7 @@ Sistema de telemetria orbital para monitoramento remoto de cultivos em áreas se
 
 ## Visão Geral
 
-O AgroSat-IoT é um sistema embarcado para CubeSat 1U que implementa um relay orbital operando no modelo **Store-and-Forward**. O satélite coleta dados de sensores agrícolas terrestres via LoRa (915 MHz) durante passagens orbitais e retransmite as informações para estações base.
+O AgroSat-IoT é um sistema embarcado para CubeSat 1U que implementa um relay orbital operando no modelo **Store-and-Forward**. O satélite coleta dados de sensores agrícolas terrestres via LoRa (915 MHz) durante passagens orbitais, armazena-os em memória não-volátil e retransmite as informações para estações base quando solicitado.
 
 ### Capacidades Técnicas
 * **Store-and-Forward Orbital:** Recepção, bufferização e retransmissão de dados de múltiplos nós.
@@ -35,69 +34,56 @@ O AgroSat-IoT é um sistema embarcado para CubeSat 1U que implementa um relay or
 
 ---
 
-## Arquitetura de Software
+## Arquitetura do Sistema
 
-O sistema utiliza uma arquitetura modular orientada a serviços sobre FreeRTOS.
+O software segue uma arquitetura em camadas (Layered Architecture) sobre FreeRTOS, garantindo desacoplamento entre hardware e regras de negócio.
 
-```mermaid
-graph TD
-    User[Hardware / Drivers] --> HAL[Hardware Abstraction Layer]
-    HAL --> Managers[Service Managers]
-    Managers --> App[Application Layer]
-    
-    subgraph "Application Layer"
-        MC[MissionController]
-        TM[TelemetryManager]
-        TC[TelemetryCollector]
-    end
+### 1. Camada de Aplicação (App Layer)
+Responsável pela lógica de missão e orquestração dos dados.
+* **MissionController:** Gerencia a máquina de estados global e transições de voo.
+* **TelemetryManager:** Agrega dados de subsistemas e formata pacotes JSON/Binários.
+* **GroundNodeManager:** Gerencia a fila de prioridade (QoS) dos nós terrestres.
 
-    subgraph "Service Managers"
-        SM[SensorManager]
-        CM[CommunicationManager]
-        PM[PowerManager]
-        SH[SystemHealth]
-    end
+### 2. Gerenciadores de Serviço (Service Managers)
+Abstraem funcionalidades complexas em interfaces simples para a aplicação.
+* **SensorManager:** Controla o barramento I2C, leituras e recuperação de falhas (bit-banging).
+* **CommunicationManager:** Unifica as interfaces LoRa, WiFi e Serial.
+* **SystemHealth:** Monitora bateria, memória livre e alimenta o Watchdog.
 
-    subgraph "HAL (Drivers)"
-        LORA[LoRa SX1276]
-        IMU[MPU9250]
-        ENV[BME280/SI7021]
-    end
-
-```
-
-### Estrutura de Diretórios
-
-* **src/app/**: Lógica de missão, regras de negócio e orquestração.
-* **src/comm/**: Drivers de comunicação (LoRa, WiFi, HTTP, Criptografia).
-* **src/core/**: Serviços vitais (RTC, Energia, Watchdog, Sistema de Arquivos).
-* **src/sensors/**: Gerenciadores de sensores com lógica de recuperação I2C.
-* **src/storage/**: Persistência de dados em cartão SD (CSV).
+### 3. Camada de Abstração de Hardware (HAL)
+Drivers de baixo nível isolados.
+* Drivers para SX1276 (LoRa), MPU9250, BME280, CCS811.
+* Acesso direto a registros SPI/I2C.
 
 ---
 
-## Máquina de Estados
+## Modos de Operação
 
-O sistema opera baseado em modos distintos para garantir a segurança da missão e economia de energia.
+O satélite opera com base em uma máquina de estados finita para garantir a segurança da missão.
 
-```mermaid
-stateDiagram-v2
-    [*] --> PREFLIGHT
-    PREFLIGHT --> FLIGHT: Comando START_MISSION
-    FLIGHT --> PREFLIGHT: Comando STOP_MISSION
-    FLIGHT --> SAFE: Bateria < 3.3V ou Heap < 20KB
-    SAFE --> PREFLIGHT: Reset Manual + Bateria > 3.5V
+* **PREFLIGHT (Solo):**
+    * Modo padrão na inicialização.
+    * Todos os periféricos ativos.
+    * Logs seriais habilitados para debug.
+    * CPU em performance máxima (240 MHz).
+    * Timeout do Watchdog: 60s.
 
-```
+* **FLIGHT (Orbital):**
+    * Ativado via comando `START_MISSION`.
+    * Operação silenciosa (Serial desativada).
+    * Ciclos de rádio otimizados.
+    * CPU ajustável (DFS).
+    * Timeout do Watchdog: 90s.
 
-| Modo | Serial Logs | LoRa TX | CPU Freq | WDT Timeout | Descrição |
-| --- | --- | --- | --- | --- | --- |
-| **PREFLIGHT** | Sim | Ativo | 240 MHz | 60s | Modo de depuração e testes em solo. |
-| **FLIGHT** | Não | Ativo | 240 MHz | 90s | Modo operacional nominal. Logs desativados. |
-| **SAFE** | Sim | Beacon (180s) | 80 MHz | 180s | Modo de recuperação. Consumo mínimo. |
+* **SAFE (Recuperação):**
+    * Ativado automaticamente se Bateria < 3.3V ou Heap < 20KB.
+    * Sensores e WiFi desligados.
+    * Apenas beacon LoRa ativo a cada 180s.
+    * CPU em modo econômico (80 MHz).
+    * Requer intervenção manual ou recarga de bateria para sair.
 
 > [!WARNING]
-> O modo SAFE é ativado automaticamente em condições críticas de hardware. A saída deste modo requer intervenção ou recuperação dos níveis de tensão.
+> A transição para o modo SAFE é uma medida de proteção crítica. O sistema prioriza a manutenção do link de comunicação em detrimento da coleta de dados.
 
 ---
 
@@ -108,7 +94,7 @@ stateDiagram-v2
 ### Pinagem Crítica
 
 | Periférico | Interface | Pinos (ESP32) |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | **LoRa SX1276** | SPI | SCK: 5, MISO: 19, MOSI: 27, CS: 18, RST: 23, DIO0: 26 |
 | **SD Card** | SPI | SCK: 14, MISO: 2, MOSI: 15, CS: 13 |
 | **Sensores** | I2C | SDA: 21, SCL: 22 (100 kHz) |
@@ -120,7 +106,6 @@ stateDiagram-v2
 ## Instalação e Build
 
 ### Pré-requisitos
-
 * VS Code com PlatformIO
 * Driver CP2104
 
@@ -171,7 +156,7 @@ Disponível via Serial (115200 baud) nos modos PREFLIGHT e SAFE.
 
 ### Armazenamento (SD Card)
 
-Os dados são persistidos em formato CSV com rotação de arquivos.
+Os dados são persistidos em formato CSV com rotação de arquivos para evitar corrupção de sistema de arquivos em grandes volumes de dados.
 
 **Exemplo de Log de Telemetria:**
 
