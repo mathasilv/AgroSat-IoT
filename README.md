@@ -1,3 +1,4 @@
+
 # AgroSat-IoT: CubeSat 1U Store-and-Forward (FreeRTOS Edition)
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
@@ -125,3 +126,22 @@ pio run -e ttgo-lora32-v21
 # 3. Upload e Monitor
 pio run -e ttgo-lora32-v21 -t upload
 pio device monitor
+
+```
+
+---
+
+## Interface de Comandos
+
+Comandos via Serial (115200 baud) processados na Task `Loop`:
+
+| Comando | Descrição |
+| --- | --- |
+| `STATUS` | Exibe estado das Tasks (Stack High Water Mark) e Sensores. |
+| `START_MISSION` | Transição para modo FLIGHT (Otimiza Tasks). |
+| `STOP_MISSION` | Retorna ao modo PREFLIGHT. |
+| `SAFE_MODE` | Força modo SAFE e suspende Tasks não essenciais. |
+
+---
+
+**Desenvolvido por Equipe Orbitalis - UFG**
