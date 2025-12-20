@@ -1,89 +1,92 @@
-# AgroSat-IoT: CubeSat 1U Store-and-Forward
+# AgroSat-IoT: CubeSat 1U Store-and-Forward (FreeRTOS Edition)
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-ESP32-blue)
 ![Framework](https://img.shields.io/badge/framework-Arduino%20%7C%20FreeRTOS-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-9.0.0-orange)
+![Version](https://img.shields.io/badge/version-10.8.0-orange)
 
-Sistema de telemetria orbital para monitoramento remoto de cultivos em áreas sem conectividade terrestre. Desenvolvido pela equipe Orbitalis (UFG) para a 3ª Olimpíada Brasileira de Satélites (OBSAT MCTI).
+Sistema de telemetria orbital para monitoramento remoto de cultivos em áreas sem conectividade terrestre. Versão migrada para **FreeRTOS** para maximizar a eficiência multitarefa e o uso do dual-core do ESP32.
 
 ---
 
 ## Sumário
 1. [Visão Geral](#visão-geral)
-2. [Arquitetura do Sistema](#arquitetura-do-sistema)
+2. [Arquitetura do Sistema (FreeRTOS)](#arquitetura-do-sistema-freertos)
 3. [Modos de Operação](#modos-de-operação)
 4. [Especificações de Hardware](#especificações-de-hardware)
 5. [Instalação e Build](#instalação-e-build)
 6. [Interface de Comandos](#interface-de-comandos)
-7. [Protocolos de Comunicação](#protocolos-de-comunicação)
 
 ---
 
 ## Visão Geral
 
-O AgroSat-IoT é um sistema embarcado para CubeSat 1U que implementa um relay orbital operando no modelo **Store-and-Forward**. O satélite coleta dados de sensores agrícolas terrestres via LoRa (915 MHz) durante passagens orbitais, armazena-os em memória não-volátil e retransmite as informações para estações base quando solicitado.
+O AgroSat-IoT é um sistema embarcado para CubeSat 1U que implementa um relay orbital operando no modelo **Store-and-Forward**. O satélite coleta dados de sensores agrícolas terrestres via LoRa (915 MHz), processa em tempo real utilizando RTOS e retransmite para estações base.
 
 ### Capacidades Técnicas
-* **Store-and-Forward Orbital:** Recepção, bufferização e retransmissão de dados de múltiplos nós.
-* **Telemetria Multi-Sensor:** IMU 9-DOF, Barômetro, Higrômetro e Qualidade do Ar (eCO2/TVOC).
-* **Gestão de Energia:** Dynamic Frequency Scaling (DFS) com ajuste de clock (80/240 MHz).
-* **Robustez:** Watchdog Timer adaptativo, monitoramento de Heap e persistência NVS.
-* **Segurança:** Criptografia AES-128 nos links de dados críticos.
+* **Multitarefa Preemptiva:** Execução concorrente de leitura de sensores, rádio e armazenamento.
+* **Dual-Core Processing:** Separação física entre lógica de sensores (Core 1) e I/O pesado (Core 0).
+* **Store-and-Forward:** Bufferização segura com filas do FreeRTOS.
+* **Gestão de Energia:** Dynamic Frequency Scaling (DFS) e Tasks suspensas (Blocked state).
+* **Segurança de Dados:** Uso de Mutexes para proteção de barramentos (I2C/SPI) e regiões de memória crítica.
 
 ---
 
-## Arquitetura do Sistema
+## Arquitetura do Sistema (FreeRTOS)
 
-O software segue uma arquitetura em camadas (Layered Architecture) sobre FreeRTOS, garantindo desacoplamento entre hardware e regras de negócio.
+O software adota uma arquitetura híbrida, combinando camadas lógicas de aplicação com o gerenciamento de tarefas em tempo real do FreeRTOS.
 
-### 1. Camada de Aplicação (App Layer)
-Responsável pela lógica de missão e orquestração dos dados.
-* **MissionController:** Gerencia a máquina de estados global e transições de voo.
-* **TelemetryManager:** Agrega dados de subsistemas e formata pacotes JSON/Binários.
-* **GroundNodeManager:** Gerencia a fila de prioridade (QoS) dos nós terrestres.
+### 1. Organização de Tarefas (Tasks)
+O sistema distribui a carga de trabalho em tarefas dedicadas para garantir determinismo temporal na coleta de dados.
 
-### 2. Gerenciadores de Serviço (Service Managers)
-Abstraem funcionalidades complexas em interfaces simples para a aplicação.
-* **SensorManager:** Controla o barramento I2C, leituras e recuperação de falhas (bit-banging).
-* **CommunicationManager:** Unifica as interfaces LoRa, WiFi e Serial.
-* **SystemHealth:** Monitora bateria, memória livre e alimenta o Watchdog.
+| Tarefa | Prioridade | Core | Stack | Frequência | Descrição |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **SensorsTask** | 2 (Alta) | 1 (App) | 4096 B | 10 Hz | Leitura de sensores I2C, fusão de dados e gestão de energia. |
+| **HttpTask** | 1 (Baixa) | 0 (Pro) | 8192 B | Evento | Envio assíncrono de telemetria via WiFi (quando disponível). |
+| **StorageTask** | 1 (Baixa) | 0 (Pro) | 4096 B | Evento | Persistência de dados no Cartão SD sem bloquear o fluxo principal. |
+| **Loop (Main)** | 1 (Baixa) | 1 (App) | Auto | Loop | Gerenciamento da pilha de rádio LoRa, Watchdog e Serial. |
 
-### 3. Camada de Abstração de Hardware (HAL)
-Drivers de baixo nível isolados.
-* Drivers para SX1276 (LoRa), MPU9250, BME280, CCS811.
-* Acesso direto a registros SPI/I2C.
+### 2. Sincronização e IPC (Inter-Process Communication)
+Para garantir a integridade dos dados e acesso seguro aos periféricos:
+
+* **Filas (Queues):** Desacoplam a produção de dados do consumo (armazenamento/envio).
+    * `xHttpQueue`: Bufferiza pacotes JSON para envio WiFi.
+    * `xStorageQueue`: Fila para gravação de logs CSV no SD.
+* **Semáforos (Mutexes):**
+    * `xI2CMutex`: Garante acesso exclusivo ao barramento I2C (Sensores vs Power Manager).
+    * `xSerialMutex`: Previne corrupção de saída no debug serial.
+    * `xDataMutex`: Protege o acesso às estruturas globais de telemetria.
+* **Semáforos Binários:**
+    * `xLoRaRxSemaphore`: Sinaliza interrupção de recebimento de pacote LoRa.
+
+### 3. Camadas de Software
+* **App Layer:** `MissionController`, `TelemetryManager` (Orquestração).
+* **Service Layer:** `SensorManager`, `CommunicationManager` (Abstração).
+* **HAL:** Drivers nativos ESP-IDF e Arduino Core.
 
 ---
 
 ## Modos de Operação
 
-O satélite opera com base em uma máquina de estados finita para garantir a segurança da missão.
+A máquina de estados controla o comportamento das Tasks e o consumo de energia.
 
 * **PREFLIGHT (Solo):**
-    * Modo padrão na inicialização.
-    * Todos os periféricos ativos.
-    * Logs seriais habilitados para debug.
-    * CPU em performance máxima (240 MHz).
-    * Timeout do Watchdog: 60s.
+    * Todas as Tasks ativas.
+    * CPU: 240 MHz.
+    * Serial Debug: Habilitado.
+    * Watchdog: 60s.
 
 * **FLIGHT (Orbital):**
-    * Ativado via comando `START_MISSION`.
-    * Operação silenciosa (Serial desativada).
-    * Ciclos de rádio otimizados.
-    * CPU ajustável (DFS).
-    * Timeout do Watchdog: 90s.
+    * `HttpTask` suspensa (Rádio WiFi desligado).
+    * Foco total em `SensorsTask` e LoRa.
+    * CPU: Ajuste dinâmico (80-240 MHz).
+    * Watchdog: 90s.
 
 * **SAFE (Recuperação):**
-    * Ativado automaticamente se Bateria < 3.3V ou Heap < 20KB.
-    * Sensores e WiFi desligados.
-    * Apenas beacon LoRa ativo a cada 180s.
-    * CPU em modo econômico (80 MHz).
-    * Requer intervenção manual ou recarga de bateria para sair.
-
-> [!WARNING]
-> A transição para o modo SAFE é uma medida de proteção crítica. O sistema prioriza a manutenção do link de comunicação em detrimento da coleta de dados.
+    * Ativado se Bateria < 3.3V ou Heap Crítico.
+    * Apenas LoRa Beacon ativo.
+    * Sensores e Armazenamento suspensos.
 
 ---
 
@@ -91,15 +94,14 @@ O satélite opera com base em uma máquina de estados finita para garantir a seg
 
 **Plataforma:** ESP32 (TTGO LoRa32 V2.1)
 
-### Pinagem Crítica
+### Pinagem e Recursos (FreeRTOS Safe)
 
-| Periférico | Interface | Pinos (ESP32) |
-| :--- | :--- | :--- |
-| **LoRa SX1276** | SPI | SCK: 5, MISO: 19, MOSI: 27, CS: 18, RST: 23, DIO0: 26 |
-| **SD Card** | SPI | SCK: 14, MISO: 2, MOSI: 15, CS: 13 |
-| **Sensores** | I2C | SDA: 21, SCL: 22 (100 kHz) |
-| **Bateria** | ADC | GPIO 35 (Divisor 1/2) |
-| **GPS UART** | Serial | TX: 12, RX: 34 |
+| Recurso | Hardware | Pinos / Config | Proteção |
+| :--- | :--- | :--- | :--- |
+| **I2C Bus** | Sensores | SDA: 21, SCL: 22 (100 kHz) | `xI2CMutex` |
+| **SPI Bus** | LoRa / SD | SCK: 5/14, MISO: 19/2, MOSI: 27/15 | `xSPIMutex` |
+| **Serial** | Debug / GPS | UART0 / UART1 | `xSerialMutex` |
+| **Watchdog** | SW Timer | Group 0, Stage 0 | `esp_task_wdt` |
 
 ---
 
@@ -107,65 +109,19 @@ O satélite opera com base em uma máquina de estados finita para garantir a seg
 
 ### Pré-requisitos
 * VS Code com PlatformIO
-* Driver CP2104
+* Suporte a C++11/C++17
 
-### Compilação e Upload
+### Compilação
+
+O projeto está configurado para o ambiente `ttgo-lora32-v21` com flags de debug do FreeRTOS ativadas.
 
 ```bash
 # 1. Clonar repositório
 git clone [https://github.com/mathasilv/AgroSat-IoT.git](https://github.com/mathasilv/AgroSat-IoT.git)
 
-# 2. Compilar
+# 2. Compilar (Release)
 pio run -e ttgo-lora32-v21
 
 # 3. Upload e Monitor
 pio run -e ttgo-lora32-v21 -t upload
 pio device monitor
-
-```
-
----
-
-## Interface de Comandos
-
-Disponível via Serial (115200 baud) nos modos PREFLIGHT e SAFE.
-
-| Comando | Descrição |
-| --- | --- |
-| `STATUS` | Exibe telemetria instantânea e status online/offline dos sensores. |
-| `CALIB_MAG` | Inicia rotina de calibração do magnetômetro (requer rotação física). |
-| `SAVE_BASELINE` | Salva a linha de base do sensor de qualidade do ar (CCS811). |
-| `START_MISSION` | Transição manual para modo FLIGHT. |
-| `STOP_MISSION` | Retorna ao modo PREFLIGHT. |
-| `LINK_BUDGET` | Exibe análise teórica do link de rádio LoRa. |
-
----
-
-## Protocolos de Comunicação
-
-### LoRa (Uplink/Downlink)
-
-* **Frequência:** 915 MHz
-* **Largura de Banda:** 125 kHz
-* **Spreading Factor:** SF7 a SF12 (Adaptativo)
-* **Coding Rate:** 4/5
-* **Potência:** 20 dBm
-
-**Estrutura do Pacote Binário:**
-`[Header: 2B] [Team ID: 2B] [Timestamp: 4B] [Payload: N bytes] [CRC: 2B]`
-
-### Armazenamento (SD Card)
-
-Os dados são persistidos em formato CSV com rotação de arquivos para evitar corrupção de sistema de arquivos em grandes volumes de dados.
-
-**Exemplo de Log de Telemetria:**
-
-```csv
-timestamp,mission_time,battery_v,temp_mpu,pressure,lat,lon,satellites,system_status
-1703450000,1200,3.85,25.4,980.5,-16.68,-49.26,8,0x00
-
-```
-
----
-
-**Desenvolvido por Equipe Orbitalis - UFG**
