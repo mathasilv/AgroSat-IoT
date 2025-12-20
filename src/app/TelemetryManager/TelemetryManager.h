@@ -1,7 +1,6 @@
 /**
  * @file TelemetryManager.h
- * @brief Gerenciador Central (FIX: Redundâncias Removidas)
- * @version 10.5.0
+ * @brief TelemetryManager Limpo
  */
 
 #ifndef TELEMETRYMANAGER_H
@@ -9,8 +8,6 @@
 
 #include <Arduino.h>
 #include "config.h"
-
-// Subsystems
 #include "sensors/SensorManager/SensorManager.h"
 #include "sensors/GPSManager/GPSManager.h"
 #include "core/PowerManager/PowerManager.h"
@@ -19,8 +16,6 @@
 #include "core/ButtonHandler/ButtonHandler.h"
 #include "storage/StorageManager.h"
 #include "comm/CommunicationManager/CommunicationManager.h"
-
-// Controllers
 #include "app/GroundNodeManager/GroundNodeManager.h"
 #include "app/MissionController/MissionController.h"
 #include "app/TelemetryCollector/TelemetryCollector.h"
@@ -29,9 +24,9 @@
 class TelemetryManager {
 public:
     TelemetryManager();
-
     bool begin();
     void loop();
+    void updatePhySensors();
     bool handleCommand(const String& cmd);
     void feedWatchdog();
 
@@ -40,9 +35,11 @@ public:
     OperationMode getMode() { return _mode; }
     void applyModeConfig(uint8_t modeIndex);
 
-    void testLoRaTransmission();
-    void sendCustomLoRa(const String& message);
-    void printLoRaStats();
+    // Métodos de Debug (testLoRaTransmission, printLoRaStats) REMOVIDOS por falta de uso.
+    // Se precisar debugar, adicione logs diretos.
+
+    void processHttpPacket(const HttpQueueMessage& msg) { _comm.processHttpQueuePacket(msg); }
+    void processStoragePacket(const StorageQueueMessage& msg);
 
 private:
     SensorManager        _sensors;
@@ -54,33 +51,26 @@ private:
     StorageManager       _storage;
     CommunicationManager _comm;
     GroundNodeManager    _groundNodes;
-
     MissionController    _mission;
     TelemetryCollector   _telemetryCollector;
     CommandHandler       _commandHandler;
     
     OperationMode  _mode;
-    
     TelemetryData  _telemetryData;
 
     unsigned long  _lastTelemetrySend;
     unsigned long  _lastStorageSave;
-    
-    // REMOVIDO: unsigned long _missionStartTime; -> Redundante
-
     unsigned long  _lastSensorReset;
     unsigned long  _lastBeaconTime;
 
-    // Helpers
     void _initModeDefaults();
     void _initSubsystems(uint8_t& subsystemsOk, bool& success);
     void _syncNTPIfAvailable();
     void _logInitSummary(bool success, uint8_t subsystemsOk, uint32_t initialHeap);
-
     void _handleIncomingRadio();   
     void _maintainGroundNetwork(); 
     void _sendTelemetry();
-    void _saveToStorage();
+    void _saveToStorage(); 
     void _checkOperationalConditions();
     void _handleButtonEvents();
     void _updateLEDIndicator(unsigned long currentTime);

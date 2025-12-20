@@ -1,6 +1,6 @@
 /**
  * @file CommunicationManager.h
- * @brief Gerenciador de Comunicação (FIX: Removido acoplamento de prioridade)
+ * @brief Gerenciador de Comunicação (FASE 2: Suporte a HTTP Async)
  */
 
 #ifndef COMMUNICATION_MANAGER_H
@@ -34,10 +34,11 @@ public:
     // Missão
     bool processLoRaPacket(const String& packet, MissionData& data);
     
-    // REMOVIDO: uint8_t calculatePriority(const MissionData& node);
-    
-    // Telemetria
+    // Telemetria (Agora coloca na fila se HTTP estiver ativo)
     bool sendTelemetry(const TelemetryData& tData, const GroundNodeBuffer& gBuffer);
+
+    // NOVO (Fase 2): Processa o pacote da fila (Chamado pela Task)
+    void processHttpQueuePacket(const HttpQueueMessage& packet);
     
     // Helpers
     void enableLoRa(bool enable);

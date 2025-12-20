@@ -1,95 +1,46 @@
 /**
  * @file LoRaService.h
- * @brief Serviço LoRa com SF Estático, Duty Cycle e Criptografia
- * @version 3.1.0 (SF Dinâmico Removido)
+ * @brief Serviço LoRa Limpo (Apenas Binary Mode)
  */
 
-#ifndef LORA_SERVICE_H
-#define LORA_SERVICE_H
+#ifndef LORASERVICE_H
+#define LORASERVICE_H
 
 #include <Arduino.h>
-#include "LoRaReceiver.h"
-#include "LoRaTransmitter.h"
-#include "DutyCycleTracker.h"
+#include <LoRa.h>
 #include "config.h"
+#include "DutyCycleTracker.h"
 
 class LoRaService {
 public:
     LoRaService();
-    
     bool begin();
     
-    // --- MÉTODOS DE ENVIO ---
-    /**
-     * @brief Envia dados binários com verificação de duty cycle
-     * @param data Ponteiro para os dados
-     * @param len Tamanho dos dados
-     * @param encrypt Se true, criptografa antes de enviar (padrão: false)
-     * @return true se enviou com sucesso
-     */
-    bool send(const uint8_t* data, size_t len, bool encrypt = false);
+    // Envio: Mantido apenas o método binário (mais eficiente e seguro)
+    // Se precisar enviar texto, converta para (uint8_t*)
+    bool send(const uint8_t* data, size_t len, bool isAsync = false);
     
-    /**
-     * @brief Envia string (legado - compatibilidade)
-     */
-    bool send(const String& data);
-    
-    // --- RECEPÇÃO ---
-    /**
-     * @brief Recebe pacote LoRa
-     * @param packet String de saída com dados
-     * @param rssi RSSI do pacote recebido
-     * @param snr SNR do pacote recebido
-     * @return true se recebeu pacote
-     */
+    // Recepção
     bool receive(String& packet, int& rssi, float& snr);
-    
-    // --- CONTROLE DE PARÂMETROS ---
-    bool isOnline() const { return _online; }
-    
-    /**
-     * @brief Define Spreading Factor manualmente
-     */
+
+    void setTxPower(int level);
     void setSpreadingFactor(int sf);
     
-    /**
-     * @brief Define potência de transmissão (2-20 dBm)
-     */
-    void setTxPower(int level);
-    
-    // --- DUTY CYCLE ---
-    /**
-     * @brief Verifica se pode transmitir agora (sem violar duty cycle)
-     * @param payloadSize Tamanho do payload em bytes
-     * @return true se pode transmitir
-     */
-    bool canTransmitNow(uint32_t payloadSize);
-    
-    /**
-     * @brief Retorna referência ao rastreador de duty cycle
-     */
-    DutyCycleTracker& getDutyCycleTracker() { return _dutyCycleTracker; }
-    
-    /**
-     * @brief Retorna tempo estimado de transmissão (Time on Air)
-     * @param payloadSize Tamanho do payload em bytes
-     * @param sf Spreading Factor (usa atual se não especificado)
-     * @return ToA em milissegundos
-     */
-    uint32_t calculateToA(uint32_t payloadSize, int sf = -1);
-    
-    // --- ESTATÍSTICAS ---
     int getCurrentSF() const { return _currentSF; }
-    int getLastRSSI() const { return _receiver.getLastRSSI(); }
-    float getLastSNR() const { return _receiver.getLastSNR(); }
+    int getLastRSSI() const { return _lastRSSI; }
+    float getLastSNR() const { return _lastSNR; }
+    
+    DutyCycleTracker& getDutyCycleTracker() { return _dutyCycle; }
+    bool canTransmitNow(uint32_t payloadSize);
+
+    static void onDio0Rise(int packetSize);
 
 private:
-    LoRaReceiver _receiver;
-    LoRaTransmitter _transmitter;
-    DutyCycleTracker _dutyCycleTracker;
-    
-    bool _online;
-    int _currentSF;  // SF atual em uso
+    int _currentSF;
+    int _lastRSSI;
+    float _lastSNR;
+    DutyCycleTracker _dutyCycle;
+    static volatile int _rxPacketSize;
 };
 
 #endif

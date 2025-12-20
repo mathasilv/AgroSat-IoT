@@ -1,158 +1,89 @@
-// ARQUIVO: src/comm/LoRaService/LoRaService.cpp
-
 /**
  * @file LoRaService.cpp
- * @brief Implementação LoRa com SF Estático e Duty Cycle
+ * @brief Implementação LoRa Limpa
  */
 
 #include "LoRaService.h"
-#include "comm/CryptoManager.h"
-#include <SPI.h>
+#include "Globals.h" 
 
-LoRaService::LoRaService() : 
-    _online(false), 
-    _currentSF(LORA_SPREADING_FACTOR) 
-{}
+volatile int LoRaService::_rxPacketSize = 0;
+
+// Função auxiliar Time-on-Air (Mantida, pois é crítica para o Duty Cycle)
+uint32_t calculateTimeOnAir(int bytes, int sf) {
+    float ts = pow(2, sf) / (LORA_SIGNAL_BANDWIDTH); 
+    float tPreamble = (LORA_PREAMBLE_LENGTH + 4.25f) * ts;
+    float payloadSymb = 8 + max(ceil((8.0f*bytes - 4.0f*sf + 28.0f + 16.0f)/(4.0f*sf)) * (LORA_CODING_RATE), 0.0f);
+    float tPayload = payloadSymb * ts;
+    return (uint32_t)((tPreamble + tPayload) * 1000);
+}
+
+LoRaService::LoRaService() : _currentSF(LORA_SPREADING_FACTOR), _lastRSSI(0), _lastSNR(0) {}
 
 bool LoRaService::begin() {
-    DEBUG_PRINTLN("[LoRa] Inicializando...");
-    
-    SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
+    DEBUG_PRINTLN("[LoRa] Inicializando Hardware (Interrupt Mode)...");
     LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
-
+    
     if (!LoRa.begin(LORA_FREQUENCY)) {
-        DEBUG_PRINTLN("[LoRa] ERRO: Falha ao iniciar hardware.");
-        _online = false;
+        DEBUG_PRINTLN("[LoRa] ERRO: Falha ao iniciar SX1276!");
         return false;
     }
-
-    // Configurações Padrão
-    LoRa.setSignalBandwidth(LORA_SIGNAL_BANDWIDTH);
+    
     LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR);
+    LoRa.setSignalBandwidth(LORA_SIGNAL_BANDWIDTH);
     LoRa.setCodingRate4(LORA_CODING_RATE);
     LoRa.setTxPower(LORA_TX_POWER);
+    LoRa.setPreambleLength(LORA_PREAMBLE_LENGTH);
     LoRa.setSyncWord(LORA_SYNC_WORD);
     if (LORA_CRC_ENABLED) LoRa.enableCrc();
     
-    DEBUG_PRINTF("[LoRa] Online! Freq=%.1f MHz, SF=%d, BW=%.1f kHz, PWR=%d dBm\n",
-                 LORA_FREQUENCY/1e6, LORA_SPREADING_FACTOR, 
-                 LORA_SIGNAL_BANDWIDTH/1e3, LORA_TX_POWER);
-    
-    _online = true;
-    _currentSF = LORA_SPREADING_FACTOR;
-    
-    // Inicia escuta
+    LoRa.onReceive(LoRaService::onDio0Rise);
     LoRa.receive();
     
+    DEBUG_PRINTF("[LoRa] Online! Freq=%.1f MHz, SF=%d\n", LORA_FREQUENCY/1E6, _currentSF);
     return true;
 }
 
-// ============================================================================
-// ENVIO COM DUTY CYCLE CHECK E CRIPTOGRAFIA
-// ============================================================================
-bool LoRaService::send(const uint8_t* data, size_t len, bool encrypt) {
-    if (!_online) return false;
-    
-    // Buffer para dados (possivelmente criptografados)
-    uint8_t txBuffer[300];
-    size_t txLen = len;
-    
-    if (encrypt && CryptoManager::isEnabled()) {
-        // Adicionar padding para completar blocos de 16 bytes
-        uint8_t paddedData[272];  // len + até 16 bytes de padding
-        txLen = CryptoManager::addPadding(data, len, paddedData);
-        
-        // Criptografar
-        if (!CryptoManager::encrypt(paddedData, txLen, txBuffer)) {
-            DEBUG_PRINTLN("[LoRa] ERRO: Falha na criptografia.");
-            return false;
-        }
-        
-        DEBUG_PRINTF("[LoRa] Dados criptografados: %d -> %d bytes\n", len, txLen);
-    } else {
-        // Sem criptografia, copiar dados direto
-        memcpy(txBuffer, data, len);
-    }
-    
-    // Calcular ToA e verificar duty cycle
-    uint32_t toaMs = calculateToA(txLen, _currentSF);
-    
-    if (!_dutyCycleTracker.canTransmit(toaMs)) {
-        uint32_t waitTime = _dutyCycleTracker.getTimeUntilAvailable(toaMs);
-        DEBUG_PRINTF("[LoRa] Duty cycle excedido. Aguardar %lu ms (%.1f min)\n", 
-                     waitTime, waitTime / 60000.0f);
-        return false;
-    }
-    
-    // Transmitir
-    bool success = _transmitter.send(txBuffer, txLen);
-    
-    if (success) {
-        _dutyCycleTracker.recordTransmission(toaMs);
-        DEBUG_PRINTF("[LoRa] TX OK: %d bytes, ToA=%lu ms, DC=%.1f%%\n", 
-                     txLen, toaMs, _dutyCycleTracker.getDutyCyclePercent());
-    }
-    
-    return success;
-}
-
-// Envio String (legado)
-bool LoRaService::send(const String& data) {
-    return send((const uint8_t*)data.c_str(), data.length(), false);
+void IRAM_ATTR LoRaService::onDio0Rise(int packetSize) {
+    _rxPacketSize = packetSize;
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xSemaphoreGiveFromISR(xLoRaRxSemaphore, &xHigherPriorityTaskWoken);
+    if (xHigherPriorityTaskWoken) portYIELD_FROM_ISR();
 }
 
 bool LoRaService::receive(String& packet, int& rssi, float& snr) {
-    if (!_online) return false;
-    return _receiver.receive(packet, rssi, snr);
+    if (xSemaphoreTake(xLoRaRxSemaphore, 0) == pdTRUE) {
+        if (_rxPacketSize == 0) return false; 
+        packet = "";
+        while (LoRa.available()) packet += (char)LoRa.read();
+        rssi = LoRa.packetRssi();
+        snr = LoRa.packetSnr();
+        _lastRSSI = rssi;
+        _lastSNR = snr;
+        _rxPacketSize = 0;
+        return true;
+    }
+    return false;
 }
 
+// Implementação apenas do método Binário
+bool LoRaService::send(const uint8_t* data, size_t len, bool isAsync) {
+    LoRa.beginPacket();
+    LoRa.write(data, len);
+    LoRa.endPacket(isAsync); 
+    
+    uint32_t airTime = calculateTimeOnAir(len, _currentSF);
+    _dutyCycle.recordTransmission(airTime);
+    
+    if (!isAsync) LoRa.receive();
+    return true;
+}
+
+void LoRaService::setTxPower(int level) { LoRa.setTxPower(level); }
 void LoRaService::setSpreadingFactor(int sf) {
-    if (_online && sf >= 7 && sf <= 12) {
-        _transmitter.setSpreadingFactor(sf);
-        _currentSF = sf;
-        
-        DEBUG_PRINTF("[LoRa] SF alterado para %d", sf);
-        if (sf >= 11) {
-            DEBUG_PRINTF(" (LDRO auto-habilitado)");
-        }
-        DEBUG_PRINTLN("");
-    }
+    _currentSF = sf;
+    LoRa.setSpreadingFactor(sf);
 }
-
-void LoRaService::setTxPower(int level) {
-    if (_online) {
-        int pwr = constrain(level, 2, 20);
-        LoRa.setTxPower(pwr);
-        DEBUG_PRINTF("[LoRa] Potência: %d dBm\n", pwr);
-    }
-}
-
-// ============================================================================
-// DUTY CYCLE HELPERS
-// ============================================================================
 bool LoRaService::canTransmitNow(uint32_t payloadSize) {
-    uint32_t toaMs = calculateToA(payloadSize, _currentSF);
-    return _dutyCycleTracker.canTransmit(toaMs);
-}
-
-uint32_t LoRaService::calculateToA(uint32_t payloadSize, int sf) {
-    // Usar SF atual se não especificado
-    if (sf < 0) sf = _currentSF;
-    
-    // Fórmula simplificada de Time on Air (ToA)
-    uint32_t symbolDuration = (1 << sf);  // 2^SF
-    uint32_t bwKhz = LORA_SIGNAL_BANDWIDTH / 1000;
-    
-    // ToA básico (ms)
-    uint32_t toaMs = (payloadSize * 8 * symbolDuration) / bwKhz;
-    
-    // Adicionar overhead de preamble (~8 símbolos)
-    uint32_t preambleMs = (LORA_PREAMBLE_LENGTH * symbolDuration * 1000) / LORA_SIGNAL_BANDWIDTH;
-    
-    uint32_t totalToA = toaMs + preambleMs;
-    
-    // Margem de segurança de 10%
-    totalToA = (totalToA * 110) / 100;
-    
-    return totalToA;
+    uint32_t airTime = calculateTimeOnAir(payloadSize, _currentSF);
+    return _dutyCycle.canTransmit(airTime);
 }

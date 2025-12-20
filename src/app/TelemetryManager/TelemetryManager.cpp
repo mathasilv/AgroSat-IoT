@@ -1,57 +1,34 @@
 /**
  * @file TelemetryManager.cpp
- * @brief Gerenciador Central (FIX: Lógica Unificada de Missão)
- * @version 10.5.0
+ * @brief Gerenciador Central (Versão Limpa v11.0)
  */
 
 #include "TelemetryManager.h"
 #include "config.h"
+#include "Globals.h" 
 
-// Variáveis Globais de Configuração
 bool currentSerialLogsEnabled = PREFLIGHT_CONFIG.serialLogsEnabled;
 const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
 
 TelemetryManager::TelemetryManager() :
-    _sensors(), 
-    _gps(),
-    _power(), 
-    _systemHealth(), 
-    _rtc(), 
-    _button(),
-    _storage(), 
-    _comm(), 
-    _groundNodes(),
+    _sensors(), _gps(), _power(), _systemHealth(), _rtc(), 
+    _button(), _storage(), _comm(), _groundNodes(),
     _mission(_rtc, _groundNodes),
-    // INJEÇÃO ATUALIZADA: Passando _mission para o collector
     _telemetryCollector(_sensors, _gps, _power, _systemHealth, _rtc, _groundNodes, _mission),
     _commandHandler(_sensors),
     _mode(MODE_INIT), 
-    _lastTelemetrySend(0), 
-    _lastStorageSave(0),
-    // _missionStartTime removido
-    _lastSensorReset(0),
-    _lastBeaconTime(0)
+    _lastTelemetrySend(0), _lastStorageSave(0),
+    _lastSensorReset(0), _lastBeaconTime(0)
 {
     memset(&_telemetryData, 0, sizeof(TelemetryData));
-    
-    _telemetryData.humidity = NAN;
-    _telemetryData.co2 = NAN;
-    _telemetryData.tvoc = NAN;
-    _telemetryData.magX = NAN; 
-    _telemetryData.magY = NAN; 
-    _telemetryData.magZ = NAN;
-    
-    _telemetryData.latitude = 0.0;
-    _telemetryData.longitude = 0.0;
-    _telemetryData.gpsAltitude = 0.0;
-    _telemetryData.satellites = 0;
-    _telemetryData.gpsFix = false;
+    _telemetryData.humidity = NAN; _telemetryData.co2 = NAN; _telemetryData.tvoc = NAN;
+    _telemetryData.magX = NAN; _telemetryData.magY = NAN; _telemetryData.magZ = NAN;
+    _telemetryData.latitude = 0.0; _telemetryData.longitude = 0.0;
+    _telemetryData.gpsAltitude = 0.0; _telemetryData.satellites = 0; _telemetryData.gpsFix = false;
 }
 
 bool TelemetryManager::begin() {
     uint32_t initialHeap = ESP.getFreeHeap();
-    DEBUG_PRINTF("[TelemetryManager] Heap inicial: %lu bytes\n", initialHeap);
-
     _initModeDefaults();
 
     bool success = true;
@@ -63,7 +40,6 @@ bool TelemetryManager::begin() {
     if (_mission.begin()) { 
         DEBUG_PRINTLN("[TelemetryManager] Restaurando modo FLIGHT...");
         _mode = MODE_FLIGHT;
-        // _missionActive = true; // REMOVIDO: Redundante
         applyModeConfig(MODE_FLIGHT);
     }
 
@@ -102,7 +78,7 @@ void TelemetryManager::_initSubsystems(uint8_t& subsystemsOk, bool& success) {
     DEBUG_PRINTLN("[TelemetryManager] Init Storage");
     if (_storage.begin()) {
         _storage.setRTCManager(&_rtc); 
-        _storage.setSystemHealth(&_systemHealth); // <--- LINHA ADICIONADA
+        _storage.setSystemHealth(&_systemHealth); 
         subsystemsOk++;
     } else success = false;
 
@@ -128,17 +104,25 @@ void TelemetryManager::feedWatchdog() {
     _systemHealth.feedWatchdog();
 }
 
+// === Atualização Física (Task Sensores) ===
+void TelemetryManager::updatePhySensors() {
+    if (xSemaphoreTake(xDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (xSemaphoreTake(xI2CMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            _sensors.update(); 
+            _rtc.update();
+            xSemaphoreGive(xI2CMutex);
+        }
+        _gps.update();
+        _power.update();
+        _power.adjustCpuFrequency();
+        xSemaphoreGive(xDataMutex);
+    }
+}
+
 void TelemetryManager::loop() {
     uint32_t currentTime = millis();
 
-    // ============================================================
-    // 1. SAÚDE DO SISTEMA & WATCHDOG
-    // ============================================================
-    // Centralização do Feed: O SystemHealth gerencia o feed internamente 
-    // (a cada 1/3 do timeout configurado) ao chamarmos update().
     _systemHealth.update(); 
-
-    // Verificação de Heap e transição automática para SAFE MODE
     SystemHealth::HeapStatus heapStatus = _systemHealth.getHeapStatus();
     switch (heapStatus) {
         case SystemHealth::HeapStatus::HEAP_CRITICAL:
@@ -149,51 +133,32 @@ void TelemetryManager::loop() {
             }
             break;
         case SystemHealth::HeapStatus::HEAP_FATAL:
-            if (activeModeConfig->serialLogsEnabled) {
-                DEBUG_PRINTLN("[TelemetryManager] MEMÓRIA FATAL. Reiniciando...");
-            }
+            DEBUG_PRINTLN("[TelemetryManager] MEMÓRIA FATAL. Reiniciando...");
             delay(1000);
             ESP.restart();
             break;
         default: break;
     }
 
-    // ============================================================
-    // 2. ATUALIZAÇÃO DE SUBSISTEMAS
-    // ============================================================
-    _power.update();
-    _power.adjustCpuFrequency(); // Ajuste dinâmico de clock (Economia/Performance)
-    _sensors.update(); 
-    _gps.update();
     _comm.update();
-    _rtc.update();
 
-    // ============================================================
-    // 3. INTERAÇÃO E REDE
-    // ============================================================
     _handleButtonEvents();
     _updateLEDIndicator(currentTime);
 
     _handleIncomingRadio();
     _maintainGroundNetwork();
 
-    // ============================================================
-    // 4. COLETA E PROCESSAMENTO
-    // ============================================================
-    // O coletor agora busca o tempo de missão diretamente do MissionController
-    _telemetryCollector.collect(_telemetryData);
-    
-    // Atualiza status do SystemHealth para monitoramento
+    if (xSemaphoreTake(xDataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        _telemetryCollector.collect(_telemetryData);
+        xSemaphoreGive(xDataMutex);
+    }
+
     _systemHealth.setCurrentMode((uint8_t)_mode);
     _systemHealth.setBatteryVoltage(_power.getVoltage());
     _systemHealth.setSDCardStatus(_storage.isAvailable());
     
-    // Verifica condições operacionais (ex: Bateria Crítica)
     _checkOperationalConditions();
 
-    // ============================================================
-    // 5. TRANSMISSÃO E ARMAZENAMENTO (TIMERS)
-    // ============================================================
     if (currentTime - _lastTelemetrySend >= activeModeConfig->telemetrySendInterval) {
         _lastTelemetrySend = currentTime;
         _sendTelemetry();
@@ -204,17 +169,14 @@ void TelemetryManager::loop() {
         _saveToStorage();
     }
     
-    // Beacon exclusivo do Modo Seguro (para recuperação)
     if (_mode == MODE_SAFE) {
-        uint32_t beaconInterval = activeModeConfig->beaconInterval;
-        if (beaconInterval > 0 && (currentTime - _lastBeaconTime >= beaconInterval)) {
+        if (activeModeConfig->beaconInterval > 0 && (currentTime - _lastBeaconTime >= activeModeConfig->beaconInterval)) {
             _sendSafeBeacon();
             _lastBeaconTime = currentTime;
         }
     }
 }
 
-// ... (Método _checkOperationalConditions mantido igual ao anterior) ...
 void TelemetryManager::_checkOperationalConditions() {
     bool batCritical = _power.isCritical();
     bool batLow = (_power.getVoltage() <= BATTERY_LOW); 
@@ -225,12 +187,14 @@ void TelemetryManager::_checkOperationalConditions() {
     _systemHealth.setSystemError(STATUS_BATTERY_LOW, batLow);
     
     bool sensorFail = !_sensors.isMPU9250Online() || !_sensors.isBMP280Online(); 
-    
     if (sensorFail) {
         static unsigned long lastSensorReset = 0;
         if (millis() - lastSensorReset > 10000) {
             DEBUG_PRINTLN("[TM] Sensores instáveis. Tentando reset...");
-            _sensors.resetAll();
+            if (xSemaphoreTake(xI2CMutex, 100)) {
+                _sensors.resetAll();
+                xSemaphoreGive(xI2CMutex);
+            }
             lastSensorReset = millis();
         }
     }
@@ -241,7 +205,6 @@ void TelemetryManager::_checkOperationalConditions() {
         if (wifiDown) {
             static unsigned long lastWifiRetry = 0;
             if (millis() - lastWifiRetry > 30000) {
-                DEBUG_PRINTLN("[TM] WiFi caiu. Reconectando...");
                 _comm.connectWiFi();
                 lastWifiRetry = millis();
             }
@@ -265,10 +228,8 @@ void TelemetryManager::_handleIncomingRadio() {
             rxData.lastLoraRx = millis();
             rxData.collectionTime = _rtc.isInitialized() ? _rtc.getUnixTime() : (millis()/1000);
             
-            // FIX: Chamada simplificada (GroundNodeManager já sabe calcular prioridade)
             _groundNodes.updateNode(rxData);
-            
-            _storage.saveMissionData(rxData);
+            _storage.saveMissionData(rxData); 
             
             DEBUG_PRINTF("[TM] Node %u RX: RSSI=%d dBm, SNR=%.1f dB\n", 
                          rxData.nodeId, rssi, snr);
@@ -291,27 +252,18 @@ void TelemetryManager::applyModeConfig(uint8_t modeIndex) {
 
     switch (mode) {
         case MODE_PREFLIGHT: 
-            activeModeConfig = &PREFLIGHT_CONFIG; 
-            wdtTimeout = WATCHDOG_TIMEOUT_PREFLIGHT;
-            break;
+            activeModeConfig = &PREFLIGHT_CONFIG; wdtTimeout = WATCHDOG_TIMEOUT_PREFLIGHT; break;
         case MODE_FLIGHT:    
-            activeModeConfig = &FLIGHT_CONFIG; 
-            wdtTimeout = WATCHDOG_TIMEOUT_FLIGHT;
-            break;
+            activeModeConfig = &FLIGHT_CONFIG; wdtTimeout = WATCHDOG_TIMEOUT_FLIGHT; break;
         case MODE_SAFE:      
-            activeModeConfig = &SAFE_CONFIG; 
-            wdtTimeout = WATCHDOG_TIMEOUT_SAFE;
-            break;
+            activeModeConfig = &SAFE_CONFIG; wdtTimeout = WATCHDOG_TIMEOUT_SAFE; break;
         default:             
-            activeModeConfig = &PREFLIGHT_CONFIG; 
-            wdtTimeout = WATCHDOG_TIMEOUT_PREFLIGHT;
-            break;
+            activeModeConfig = &PREFLIGHT_CONFIG; wdtTimeout = WATCHDOG_TIMEOUT_PREFLIGHT; break;
     }
     
     currentSerialLogsEnabled = activeModeConfig->serialLogsEnabled;
     _comm.enableLoRa(activeModeConfig->loraEnabled);
     _comm.enableHTTP(activeModeConfig->httpEnabled);
-    
     _systemHealth.setWatchdogTimeout(wdtTimeout);
     
     DEBUG_PRINTF("[TelemetryManager] Modo: %d (LoRa=%d HTTP=%d Beacon=%d WDT=%ds)\n", 
@@ -320,34 +272,20 @@ void TelemetryManager::applyModeConfig(uint8_t modeIndex) {
 }
 
 void TelemetryManager::startMission() {
-    // Evita reiniciar se já estiver voando
     if (_mode == MODE_FLIGHT) return;
-    
-    // Apenas delega para o controller (Única Fonte da Verdade).
-    // Não gerenciamos mais _missionStartTime ou _missionActive aqui.
     if (_mission.start()) {
         DEBUG_PRINTLN("[TelemetryManager] Transição para MODE_FLIGHT confirmada.");
-        
         _mode = MODE_FLIGHT;
         applyModeConfig(MODE_FLIGHT);
-        
-        // SystemHealth não precisa mais ser notificado de "startMission",
-        // pois o TelemetryCollector consultará o MissionController diretamente.
     }
 }
 
 void TelemetryManager::stopMission() {
-    // Verifica status real no Controller antes de tentar parar
     if (!_mission.isActive()) return;
-    
     if (_mission.stop()) {
         DEBUG_PRINTLN("[TelemetryManager] Missão finalizada. Retornando para PREFLIGHT.");
-        
         _mode = MODE_PREFLIGHT;
         applyModeConfig(MODE_PREFLIGHT);
-        
-        // Nota: Limpeza de estado e persistência NVS são feitas 
-        // automaticamente dentro de _mission.stop()
     }
 }
 
@@ -355,25 +293,35 @@ void TelemetryManager::_sendTelemetry() {
     const GroundNodeBuffer& buf = _groundNodes.buffer();
     
     if (activeModeConfig->serialLogsEnabled) {
+        String ts = _rtc.getUTCDateTime(); 
         DEBUG_PRINTF("[TM] TX: UTC=%s | T=%.1f C | Bat=%.1f%% | Fix=%d | Nodes=%d\n",
-                     _rtc.getUTCDateTime().c_str(), 
+                     ts.c_str(), 
                      _telemetryData.temperature, 
                      _telemetryData.batteryPercentage,
                      _telemetryData.gpsFix,
                      buf.activeNodes);
     }
-    
     _comm.sendTelemetry(_telemetryData, buf);
 }
 
 void TelemetryManager::_saveToStorage() {
-    bool success = _storage.saveTelemetry(_telemetryData);
-    
-    if (success) {
-        const GroundNodeBuffer& buf = _groundNodes.buffer();
-        for(int i=0; i<buf.activeNodes; i++) {
-            _storage.saveMissionData(buf.nodes[i]);
+    if (xStorageQueue != NULL) {
+        StorageQueueMessage msg;
+        msg.data = _telemetryData;
+        msg.nodes = _groundNodes.buffer();
+        if (xQueueSend(xStorageQueue, &msg, 0) == pdTRUE) { } 
+        else { DEBUG_PRINTLN("[TM] AVISO: Fila SD cheia. Dados perdidos."); }
+    }
+}
+
+void TelemetryManager::processStoragePacket(const StorageQueueMessage& msg) {
+    bool saved = _storage.saveTelemetry(msg.data);
+    if (saved) {
+        for(int i=0; i<msg.nodes.activeNodes; i++) {
+            _storage.saveMissionData(msg.nodes.nodes[i]);
         }
+    } else {
+        DEBUG_PRINTLN("[TM] Falha ao salvar no SD.");
     }
 }
 
@@ -401,37 +349,28 @@ void TelemetryManager::_sendSafeBeacon() {
     uint8_t beacon[32];
     int offset = 0;
     
-    beacon[offset++] = 0xBE;
-    beacon[offset++] = 0xAC;
-    beacon[offset++] = (TEAM_ID >> 8) & 0xFF;
-    beacon[offset++] = TEAM_ID & 0xFF;
+    beacon[offset++] = 0xBE; beacon[offset++] = 0xAC;
+    beacon[offset++] = (TEAM_ID >> 8) & 0xFF; beacon[offset++] = TEAM_ID & 0xFF;
     beacon[offset++] = (uint8_t)_mode;
     
     uint16_t batVoltageInt = (uint16_t)(_power.getVoltage() * 100);
-    beacon[offset++] = (batVoltageInt >> 8) & 0xFF;
-    beacon[offset++] = batVoltageInt & 0xFF;
+    beacon[offset++] = (batVoltageInt >> 8) & 0xFF; beacon[offset++] = batVoltageInt & 0xFF;
     
     uint32_t uptime = _systemHealth.getUptime() / 1000;
-    beacon[offset++] = (uptime >> 24) & 0xFF;
-    beacon[offset++] = (uptime >> 16) & 0xFF;
-    beacon[offset++] = (uptime >> 8) & 0xFF;
-    beacon[offset++] = uptime & 0xFF;
+    beacon[offset++] = (uptime >> 24) & 0xFF; beacon[offset++] = (uptime >> 16) & 0xFF;
+    beacon[offset++] = (uptime >> 8) & 0xFF; beacon[offset++] = uptime & 0xFF;
     
     beacon[offset++] = _systemHealth.getSystemStatus();
     
     uint16_t errors = _systemHealth.getErrorCount();
-    beacon[offset++] = (errors >> 8) & 0xFF;
-    beacon[offset++] = errors & 0xFF;
+    beacon[offset++] = (errors >> 8) & 0xFF; beacon[offset++] = errors & 0xFF;
     
     uint32_t freeHeap = _systemHealth.getFreeHeap();
-    beacon[offset++] = (freeHeap >> 24) & 0xFF;
-    beacon[offset++] = (freeHeap >> 16) & 0xFF;
-    beacon[offset++] = (freeHeap >> 8) & 0xFF;
-    beacon[offset++] = freeHeap & 0xFF;
+    beacon[offset++] = (freeHeap >> 24) & 0xFF; beacon[offset++] = (freeHeap >> 16) & 0xFF;
+    beacon[offset++] = (freeHeap >> 8) & 0xFF; beacon[offset++] = freeHeap & 0xFF;
     
     HealthTelemetry health = _systemHealth.getHealthTelemetry();
-    beacon[offset++] = (health.resetCount >> 8) & 0xFF;
-    beacon[offset++] = health.resetCount & 0xFF;
+    beacon[offset++] = (health.resetCount >> 8) & 0xFF; beacon[offset++] = health.resetCount & 0xFF;
     beacon[offset++] = health.resetReason;
     beacon[offset++] = _gps.hasFix() ? 1 : 0;
     
@@ -445,21 +384,13 @@ bool TelemetryManager::handleCommand(const String& cmd) {
     String cmdUpper = cmd;
     cmdUpper.toUpperCase();
     cmdUpper.trim();
+
+    // Proteção contra buffer overflow
+    if (cmdUpper.length() > 32) return false;
     
-    if (cmdUpper == "START_MISSION") {
-        startMission();
-        return true;
-    }
-    if (cmdUpper == "STOP_MISSION") {
-        stopMission();
-        return true;
-    }
-    if (cmdUpper == "SAFE_MODE") {
-        applyModeConfig(MODE_SAFE);
-        _mode = MODE_SAFE;
-        DEBUG_PRINTLN("[TM] SAFE MODE ATIVADO (Comando)");
-        return true;
-    }
+    if (cmdUpper == "START_MISSION") { startMission(); return true; }
+    if (cmdUpper == "STOP_MISSION") { stopMission(); return true; }
+    if (cmdUpper == "SAFE_MODE") { applyModeConfig(MODE_SAFE); _mode = MODE_SAFE; return true; }
     if (cmdUpper == "DUTY_CYCLE") {
         auto& dc = _comm.getDutyCycleTracker();
         DEBUG_PRINTLN("=== DUTY CYCLE ===");
@@ -469,14 +400,4 @@ bool TelemetryManager::handleCommand(const String& cmd) {
         return true;
     }
     return _commandHandler.handle(cmdUpper);
-}
-
-void TelemetryManager::testLoRaTransmission() { _comm.sendLoRa("TEST"); }
-void TelemetryManager::sendCustomLoRa(const String& msg) { _comm.sendLoRa(msg); }
-void TelemetryManager::printLoRaStats() {
-    DEBUG_PRINTLN("=== LoRa Stats ===");
-    DEBUG_PRINTF("SF Atual: %d\n", _comm.getCurrentSF());
-    DEBUG_PRINTF("Último RSSI: %d dBm\n", _comm.getLastRSSI());
-    DEBUG_PRINTF("Último SNR: %.1f dB\n", _comm.getLastSNR());
-    DEBUG_PRINTLN("==================");
 }

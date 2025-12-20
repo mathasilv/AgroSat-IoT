@@ -1,9 +1,10 @@
 /**
  * @file CommunicationManager.cpp
- * @brief Implementação Completa do Gerenciador de Comunicação
+ * @brief Implementação Limpa (Versão Final v11.0)
  */
 
 #include "CommunicationManager.h"
+#include "Globals.h" 
 
 CommunicationManager::CommunicationManager() : 
     _loraEnabled(true), 
@@ -16,8 +17,10 @@ bool CommunicationManager::begin() {
         DEBUG_PRINTLN("[CommManager] ERRO: LoRa falhou.");
         ok = false;
     }
-    if (!_wifi.begin()) {
-        DEBUG_PRINTLN("[CommManager] AVISO: WiFi falhou (não crítico).");
+    if (_httpEnabled) {
+        _wifi.begin();
+    } else {
+        DEBUG_PRINTLN("[CommManager] HTTP desabilitado por configuração.");
     }
     return ok;
 }
@@ -35,13 +38,12 @@ void CommunicationManager::connectWiFi() {
     _wifi.begin(); 
 }
 
-bool CommunicationManager::sendLoRa(const String& data) {
-    if (!_loraEnabled) return false;
-    return _lora.send(data);
-}
+// REMOVIDO: sendLoRa(String)
+// Apenas envio binário é permitido agora.
 
 bool CommunicationManager::sendLoRa(const uint8_t* data, size_t len) {
     if (!_loraEnabled) return false;
+    // Usa envio síncrono por padrão (falso no terceiro parametro)
     return _lora.send(data, len, false);
 }
 
@@ -54,38 +56,41 @@ bool CommunicationManager::processLoRaPacket(const String& packet, MissionData& 
     return _payload.processLoRaPacket(packet, data);
 }
 
-// REMOVIDO: calculatePriority (lógica movida para uso direto no GroundNodeManager)
-
 bool CommunicationManager::sendTelemetry(const TelemetryData& tData, 
                                          const GroundNodeBuffer& gBuffer) {
     bool success = false;
     uint8_t txBuffer[256]; 
 
+    // 1. Processamento LoRa
     if (_loraEnabled) {
         if (tData.batteryPercentage < 20.0 || (tData.systemStatus & STATUS_BATTERY_CRIT)) {
             _lora.setTxPower(10);
-            DEBUG_PRINTLN("[CommManager] Bateria baixa: Potência reduzida (10 dBm)");
         } else {
             _lora.setTxPower(LORA_TX_POWER);
         }
 
+        // Payload Satélite
         int satLen = _payload.createSatellitePayload(tData, txBuffer);
         if (satLen > 0) {
+            // Nota: canTransmitNow agora usa tempo de ar, não bytes
             if (_lora.canTransmitNow(satLen)) {
                 if (_lora.send(txBuffer, satLen, false)) {
                     success = true;
-                    DEBUG_PRINTF("[CommManager] Telemetria satélite enviada: %d bytes\n", satLen);
+                    // Debug simplificado para economizar serial
+                    // DEBUG_PRINTF("[Comm] TX Sat: %d B\n", satLen);
                 }
             } else {
-                DEBUG_PRINTLN("[CommManager] Duty cycle: Telemetria satélite adiada.");
+                DEBUG_PRINTLN("[Comm] Duty Cycle cheio. TX adiado.");
             }
         }
 
+        // Payload Relay
         std::vector<uint16_t> relayedNodes;
         int relayLen = _payload.createRelayPayload(tData, gBuffer, txBuffer, relayedNodes);
         
         if (relayLen > 0 && relayedNodes.size() > 0) {
-            delay(200);
+            delay(200); // Pequeno delay entre pacotes
+            
             if (_lora.canTransmitNow(relayLen)) {
                 if (_lora.send(txBuffer, relayLen, false)) {
                     _payload.markNodesAsForwarded(
@@ -93,39 +98,45 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& tData,
                         relayedNodes, 
                         tData.timestamp
                     );
-                    
-                    DEBUG_PRINTF("[CommManager] Relay enviado: %d nós, %d bytes\n", 
-                                 relayedNodes.size(), relayLen);
-                    
-                    uint8_t crit, high, norm, low;
-                    _payload.getPriorityStats(gBuffer, crit, high, norm, low);
-                    DEBUG_PRINTF("[CommManager] QoS: CRIT=%d HIGH=%d NORM=%d LOW=%d\n",
-                                 crit, high, norm, low);
+                    DEBUG_PRINTF("[Comm] Relay: %d nodes\n", relayedNodes.size());
                 }
-            } else {
-                DEBUG_PRINTLN("[CommManager] Duty cycle: Relay adiado.");
             }
         }
     }
     
-    if (_httpEnabled && _wifi.isConnected()) {
-        String json = _payload.createTelemetryJSON(tData, gBuffer);
-        if (_http.postJson(json)) {
-            DEBUG_PRINTLN("[CommManager] Backup HTTP enviado com sucesso.");
-        } else {
-            DEBUG_PRINTLN("[CommManager] ERRO ao enviar backup HTTP.");
+    // 2. Processamento HTTP (Async)
+    if (_httpEnabled) {
+        if (xHttpQueue != NULL) {
+            HttpQueueMessage msg;
+            msg.data = tData;       
+            msg.nodes = gBuffer;    
+            
+            if (xQueueSend(xHttpQueue, &msg, 0) == pdTRUE) {
+                // Sucesso
+            } else {
+                DEBUG_PRINTLN("[CommManager] Fila HTTP cheia.");
+            }
         }
     }
 
     return success;
 }
 
+void CommunicationManager::processHttpQueuePacket(const HttpQueueMessage& packet) {
+    if (_wifi.isConnected()) {
+        String json = _payload.createTelemetryJSON(packet.data, packet.nodes);
+        if (_http.postJson(json)) {
+            DEBUG_PRINTLN("[CommManager] Backup HTTP enviado com sucesso (Async).");
+        } else {
+            DEBUG_PRINTLN("[CommManager] ERRO envio HTTP.");
+        }
+    }
+}
+
 void CommunicationManager::enableLoRa(bool enable) { 
     _loraEnabled = enable; 
-    DEBUG_PRINTF("[CommManager] LoRa: %s\n", enable ? "HABILITADO" : "DESABILITADO");
 }
 
 void CommunicationManager::enableHTTP(bool enable) { 
     _httpEnabled = enable; 
-    DEBUG_PRINTF("[CommManager] HTTP: %s\n", enable ? "HABILITADO" : "DESABILITADO");
 }
