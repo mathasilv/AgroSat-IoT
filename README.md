@@ -15,9 +15,10 @@ Sistema embarcado para CubeSat 1U desenvolvido para monitoramento remoto de cult
 7. [Comunicação](#comunicação)
 8. [Segurança e Confiabilidade](#segurança-e-confiabilidade)
 9. [Hardware Utilizado](#hardware-utilizado)
-10. [Instalação](#instalação)
-11. [Comandos Disponíveis](#comandos-disponíveis)
-12. [Equipe](#equipe)
+10. [Modelo 3D do Satélite](#modelo-3d-do-satélite)
+11. [Instalação](#instalação)
+12. [Comandos Disponíveis](#comandos-disponíveis)
+13. [Equipe](#equipe)
 
 ---
 
@@ -267,6 +268,36 @@ O sistema utiliza mecanismos de sincronizacao (mutexes) para garantir que multip
 
 - Bateria Li-ion 18650
 - Monitoramento de tensao integrado
+
+---
+
+## Modelo 3D do Satélite
+
+O modelo 3D do AgroSat-IoT foi desenvolvido no FreeCAD, permitindo visualizar a estrutura completa do CubeSat 1U e seus componentes internos.
+
+### Vista Explodida
+
+![Vista explodida do AgroSat-IoT](docs/images/vista-explodida.png)
+
+*Vista explodida mostrando todos os componentes e sua disposição interna no CubeSat 1U.*
+
+### Placa Principal
+
+![Placa principal](docs/images/placa-principal.png)
+
+*Placa principal com o microcontrolador, rádio LoRa, RTC, GPS e Botão.*
+
+### Placa de Sensores
+
+![Placa de sensores](docs/images/placa-sensores.png)
+
+*Placa dedicada aos sensores ambientais e de navegação.*
+
+### PCB da Bateria
+
+![PCB da bateria](docs/images/pcb-bateria.png)
+
+*PCB com o compartimento da bateria Li-ion 18650.*
 
 ---
 
