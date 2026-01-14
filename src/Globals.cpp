@@ -1,59 +1,127 @@
-#include "Globals.h"
-#include "config.h" 
-#include <stdarg.h> 
-#include <stdio.h>  
+/**
+ * @file Globals.cpp
+ * @brief Implementação do gerenciador de recursos globais
+ * @version 2.0.0
+ */
 
+#include "Globals.h"
+#include "types/TelemetryTypes.h"
+#include <stdarg.h>
+
+// ========== VARIÁVEIS GLOBAIS (compatibilidade) ==========
 SemaphoreHandle_t xSerialMutex = NULL;
 SemaphoreHandle_t xI2CMutex = NULL;
 SemaphoreHandle_t xSPIMutex = NULL;
 SemaphoreHandle_t xDataMutex = NULL;
-
-// NOVO FASE 5: Semáforo para sinalizar chegada de pacote LoRa (ISR -> Task)
 SemaphoreHandle_t xLoRaRxSemaphore = NULL;
-
 QueueHandle_t xHttpQueue = NULL;
 QueueHandle_t xStorageQueue = NULL;
 
+bool currentSerialLogsEnabled = true;
+
+// ========== FUNÇÃO DE INICIALIZAÇÃO (compatibilidade) ==========
 void initGlobalResources() {
-    // Cria Mutexes
-    xSerialMutex = xSemaphoreCreateMutex();
-    xI2CMutex = xSemaphoreCreateMutex();
-    xSPIMutex = xSemaphoreCreateMutex();
-    xDataMutex = xSemaphoreCreateMutex();
-
-    // Cria Semáforo Binário para Interrupção
-    xLoRaRxSemaphore = xSemaphoreCreateBinary();
-
-    // Filas
-    xHttpQueue = xQueueCreate(5, sizeof(HttpQueueMessage));
-    xStorageQueue = xQueueCreate(10, sizeof(StorageQueueMessage));
-
-    if (xSerialMutex == NULL || xI2CMutex == NULL || xDataMutex == NULL ||
-        xHttpQueue == NULL || xStorageQueue == NULL || xLoRaRxSemaphore == NULL) {
-        
-        // Falha crítica
-        Serial.println("ERRO CRITICO: Falha ao criar recursos RTOS");
-        ESP.restart();
-    }
+    ResourceManager::instance().begin();
+    
+    // Copiar referências para variáveis globais (compatibilidade)
+    xSerialMutex = ResourceManager::instance().getSerialMutex();
+    xI2CMutex = ResourceManager::instance().getI2CMutex();
+    xSPIMutex = ResourceManager::instance().getSPIMutex();
+    xDataMutex = ResourceManager::instance().getDataMutex();
+    xLoRaRxSemaphore = ResourceManager::instance().getLoRaRxSemaphore();
+    xHttpQueue = ResourceManager::instance().getHttpQueue();
+    xStorageQueue = ResourceManager::instance().getStorageQueue();
 }
 
-void safePrintln(const char* msg) {
-    if (xSemaphoreTake(xSerialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        Serial.println(msg);
-        xSemaphoreGive(xSerialMutex);
-    }
-}
-
+// ========== PRINTF THREAD-SAFE ==========
 void safePrintf(const char* format, ...) {
+    if (xSerialMutex == NULL) return;
+    
     if (xSemaphoreTake(xSerialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        char loc_buf[256]; 
-        
         va_list args;
         va_start(args, format);
-        vsnprintf(loc_buf, sizeof(loc_buf), format, args);
-        va_end(args);
         
-        Serial.print(loc_buf);
+        char buffer[256];
+        vsnprintf(buffer, sizeof(buffer), format, args);
+        Serial.print(buffer);
+        
+        va_end(args);
         xSemaphoreGive(xSerialMutex);
+    }
+}
+
+// ========== IMPLEMENTAÇÃO DO RESOURCE MANAGER ==========
+bool ResourceManager::begin() {
+    if (_initialized) return true;
+    
+    // Criar mutexes
+    _serialMutex = xSemaphoreCreateMutex();
+    _i2cMutex = xSemaphoreCreateMutex();
+    _spiMutex = xSemaphoreCreateMutex();
+    _dataMutex = xSemaphoreCreateMutex();
+    
+    // Criar semáforo binário para LoRa RX
+    _loraRxSemaphore = xSemaphoreCreateBinary();
+    
+    // Criar filas
+    _httpQueue = xQueueCreate(5, sizeof(HttpQueueMessage));
+    _storageQueue = xQueueCreate(10, sizeof(uint8_t));  // Apenas sinal
+    
+    // Verificar se todos foram criados
+    if (_serialMutex == NULL || _i2cMutex == NULL || _spiMutex == NULL ||
+        _dataMutex == NULL || _loraRxSemaphore == NULL ||
+        _httpQueue == NULL || _storageQueue == NULL) {
+        
+        Serial.println("[ResourceManager] ERRO CRITICO: Falha ao criar recursos!");
+        delay(1000);
+        ESP.restart();
+        return false;
+    }
+    
+    _initialized = true;
+    return true;
+}
+
+bool ResourceManager::lockI2C(uint32_t timeoutMs) {
+    if (_i2cMutex == NULL) return false;
+    return xSemaphoreTake(_i2cMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
+void ResourceManager::unlockI2C() {
+    if (_i2cMutex != NULL) {
+        xSemaphoreGive(_i2cMutex);
+    }
+}
+
+bool ResourceManager::lockSPI(uint32_t timeoutMs) {
+    if (_spiMutex == NULL) return false;
+    return xSemaphoreTake(_spiMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
+void ResourceManager::unlockSPI() {
+    if (_spiMutex != NULL) {
+        xSemaphoreGive(_spiMutex);
+    }
+}
+
+bool ResourceManager::lockData(uint32_t timeoutMs) {
+    if (_dataMutex == NULL) return false;
+    return xSemaphoreTake(_dataMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
+void ResourceManager::unlockData() {
+    if (_dataMutex != NULL) {
+        xSemaphoreGive(_dataMutex);
+    }
+}
+
+bool ResourceManager::lockSerial(uint32_t timeoutMs) {
+    if (_serialMutex == NULL) return false;
+    return xSemaphoreTake(_serialMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
+void ResourceManager::unlockSerial() {
+    if (_serialMutex != NULL) {
+        xSemaphoreGive(_serialMutex);
     }
 }

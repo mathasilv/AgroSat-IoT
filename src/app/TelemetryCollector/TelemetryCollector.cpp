@@ -4,8 +4,6 @@
  */
 
 #include "TelemetryCollector.h"
-
-// Includes Reais
 #include "sensors/SensorManager/SensorManager.h"
 #include "sensors/GPSManager/GPSManager.h"
 #include "core/PowerManager/PowerManager.h"
@@ -21,7 +19,7 @@ TelemetryCollector::TelemetryCollector(
     SystemHealth& health,
     RTCManager& rtc,
     GroundNodeManager& nodes,
-    MissionController& mission // <--- Injeção
+    MissionController& mission
 ) :
     _sensors(sensors),
     _gps(gps),
@@ -53,7 +51,6 @@ void TelemetryCollector::_collectTimestamp(TelemetryData& data) {
 }
 
 void TelemetryCollector::_collectPowerAndSystem(TelemetryData& data) {
-    // CORRIGIDO: Pega o tempo do MissionController, não do SystemHealth
     data.missionTime = _mission.getDuration();
     
     data.batteryVoltage = _power.getVoltage();

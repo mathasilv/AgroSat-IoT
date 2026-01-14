@@ -1,11 +1,11 @@
 /**
  * @file MissionController.cpp
- * @brief Implementação com recuperação de falhas (NVS)
+ * @brief Implementação do controlador de missão com persistência NVS
  */
 
 #include "MissionController.h"
-#include "core/RTCManager/RTCManager.h" // Include real
-#include "app/GroundNodeManager/GroundNodeManager.h" // Include real
+#include "core/RTCManager/RTCManager.h"
+#include "app/GroundNodeManager/GroundNodeManager.h"
 
 MissionController::MissionController(RTCManager& rtc, GroundNodeManager& nodes) 
     : _rtc(rtc), _nodes(nodes), _active(false), _startTime(0), _startTimestampUTC(0)
@@ -29,7 +29,7 @@ bool MissionController::begin() {
             _startTime = millis(); 
         }
 
-        DEBUG_PRINTLN("[Mission] ⚠ MISSÃO RECUPERADA DE REINICIALIZAÇÃO!");
+        DEBUG_PRINTLN("[Mission] Missao recuperada apos reinicializacao.");
         return true;
     }
     
@@ -39,7 +39,7 @@ bool MissionController::begin() {
 bool MissionController::start() {
     if (_active) return false;
     
-    DEBUG_PRINTLN("[Mission] === INICIANDO MISSÃO ===");
+    DEBUG_PRINTLN("[Mission] Iniciando missao...");
     
     if (_rtc.isInitialized()) {
         _startTimestampUTC = _rtc.getUnixTime();
@@ -57,7 +57,7 @@ bool MissionController::start() {
 bool MissionController::stop() {
     if (!_active) return false;
     
-    DEBUG_PRINTLN("[Mission] === ENCERRANDO MISSÃO ===");
+    DEBUG_PRINTLN("[Mission] Encerrando missao...");
     _printStatistics();
     
     _active = false;

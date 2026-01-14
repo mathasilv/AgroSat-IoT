@@ -1,5 +1,10 @@
+/**
+ * @file GroundNodeManager.cpp
+ * @brief Implementação do gerenciador de ground nodes
+ */
+
 #include "GroundNodeManager.h"
-#include "comm/PayloadManager/PayloadManager.h" // FIX: Uso direto para lógica de negócio (prioridade)
+#include "comm/PayloadManager/PayloadManager.h"
 
 GroundNodeManager::GroundNodeManager() {
     memset(&_buffer, 0, sizeof(GroundNodeBuffer));
@@ -7,7 +12,6 @@ GroundNodeManager::GroundNodeManager() {
     _buffer.totalPacketsCollected = 0;
 }
 
-// FIX: Removemos dependência de CommunicationManager
 void GroundNodeManager::updateNode(const MissionData& data) {
     int existingIndex = -1;
 
@@ -30,7 +34,6 @@ void GroundNodeManager::updateNode(const MissionData& data) {
             existingNode.forwarded  = false;
             existingNode.retransmissionTime = 0; 
             
-            // FIX: Chamada estática direta
             existingNode.priority = PayloadManager::calculateNodePriority(data);
 
             _buffer.lastUpdate[existingIndex] = millis();
@@ -48,7 +51,6 @@ void GroundNodeManager::updateNode(const MissionData& data) {
             _buffer.nodes[newIndex].forwarded  = false;
             _buffer.nodes[newIndex].retransmissionTime = 0;
             
-            // FIX: Chamada estática direta
             _buffer.nodes[newIndex].priority = PayloadManager::calculateNodePriority(data);
 
             _buffer.lastUpdate[newIndex] = millis();
@@ -63,7 +65,6 @@ void GroundNodeManager::updateNode(const MissionData& data) {
     }
 }
 
-// FIX: Removemos dependência de CommunicationManager
 void GroundNodeManager::_replaceLowestPriorityNode(const MissionData& newData) {
     uint8_t replaceIndex   = 0;
     uint8_t lowestPriority = 255;
@@ -91,7 +92,6 @@ void GroundNodeManager::_replaceLowestPriorityNode(const MissionData& newData) {
     _buffer.nodes[replaceIndex].forwarded  = false;
     _buffer.nodes[replaceIndex].retransmissionTime = 0;
     
-    // FIX: Chamada estática direta
     _buffer.nodes[replaceIndex].priority = PayloadManager::calculateNodePriority(newData);
     _buffer.lastUpdate[replaceIndex]     = millis();
 }
@@ -103,8 +103,8 @@ void GroundNodeManager::cleanup(unsigned long now, unsigned long maxAgeMs) {
         unsigned long age = now - _buffer.lastUpdate[i];
 
         if (age > maxAgeMs) {
-            DEBUG_PRINTF("[GroundNodeManager] Removendo Node %u (inativo ha %lu min)\n",
-                         _buffer.nodes[i].nodeId, age / 60000);
+            DEBUG_PRINTF("[GroundNodeManager] Node %u removido (inativo)\n",
+                         _buffer.nodes[i].nodeId);
 
             for (uint8_t j = i; j < _buffer.activeNodes - 1; j++) {
                 _buffer.nodes[j]       = _buffer.nodes[j + 1];

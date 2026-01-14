@@ -1,20 +1,19 @@
 /**
  * @file StorageManager.cpp
- * @brief Gerenciador de Armazenamento (FIX: Reporte de Erros ao SystemHealth)
- * @version 3.2.0
+ * @brief Gerenciador de Armazenamento (FIX: Buffer local para thread-safety)
+ * @version 3.3.0
  */
 
 #include "StorageManager.h"
 #include "core/RTCManager/RTCManager.h"
-#include "core/SystemHealth/SystemHealth.h" // <--- NOVO: Include real
+#include "core/SystemHealth/SystemHealth.h"
 
 SPIClass spiSD(HSPI);
-static char fmtBuffer[512];
 
 StorageManager::StorageManager() : 
     _available(false), 
     _rtcManager(nullptr), 
-    _systemHealth(nullptr), // <--- NOVO
+    _systemHealth(nullptr),
     _lastInitAttempt(0),
     _crcErrors(0),
     _totalWrites(0) 
@@ -54,12 +53,10 @@ void StorageManager::setRTCManager(RTCManager* rtcManager) {
     _rtcManager = rtcManager; 
 }
 
-// === NOVO: Setter para SystemHealth ===
 void StorageManager::setSystemHealth(SystemHealth* systemHealth) {
     _systemHealth = systemHealth;
 }
 
-// === NOVO: Helper privado para reportar erros ===
 void StorageManager::_reportCRCError(uint8_t count) {
     _crcErrors += count;
     if (_systemHealth) {
@@ -100,11 +97,13 @@ bool StorageManager::saveTelemetry(const TelemetryData& data) {
         return false; 
     }
     
-    _formatTelemetryToCSV(data, fmtBuffer, sizeof(fmtBuffer));
+    // FIX: Buffer local para thread-safety
+    char localBuffer[512];
+    _formatTelemetryToCSV(data, localBuffer, sizeof(localBuffer));
     
-    uint16_t crc = _calculateCRC16((uint8_t*)fmtBuffer, strlen(fmtBuffer));
+    uint16_t crc = _calculateCRC16((uint8_t*)localBuffer, strlen(localBuffer));
     char lineWithCRC[600];
-    snprintf(lineWithCRC, sizeof(lineWithCRC), "%s,%04X", fmtBuffer, crc);
+    snprintf(lineWithCRC, sizeof(lineWithCRC), "%s,%04X", localBuffer, crc);
     
     file.println(lineWithCRC);
     file.close();
@@ -127,11 +126,13 @@ bool StorageManager::saveMissionData(const MissionData& data) {
         return false; 
     }
     
-    _formatMissionToCSV(data, fmtBuffer, sizeof(fmtBuffer));
+    // FIX: Buffer local para thread-safety
+    char localBuffer[512];
+    _formatMissionToCSV(data, localBuffer, sizeof(localBuffer));
     
-    uint16_t crc = _calculateCRC16((uint8_t*)fmtBuffer, strlen(fmtBuffer));
+    uint16_t crc = _calculateCRC16((uint8_t*)localBuffer, strlen(localBuffer));
     char lineWithCRC[400];
-    snprintf(lineWithCRC, sizeof(lineWithCRC), "%s,%04X", fmtBuffer, crc);
+    snprintf(lineWithCRC, sizeof(lineWithCRC), "%s,%04X", localBuffer, crc);
     
     file.println(lineWithCRC);
     file.close();
@@ -200,14 +201,14 @@ bool StorageManager::_writeTripleRedundant(const char* path, const uint8_t* data
     return true;
 }
 
-// === FIX: Método Atualizado com Sincronização de Erros ===
 bool StorageManager::_readWithRedundancy(const char* path, uint8_t* data, size_t len) {
     if (!_available) return false;
 
     File file = SD.open(path, FILE_READ);
     if (!file) return false;
     
-    static uint8_t copy1[256], copy2[256], copy3[256];
+    // FIX: Buffers locais para thread-safety
+    uint8_t copy1[256], copy2[256], copy3[256];
     uint16_t crc1, crc2, crc3;
     
     // Ler 3 cópias
@@ -220,15 +221,15 @@ bool StorageManager::_readWithRedundancy(const char* path, uint8_t* data, size_t
     bool valid2 = (_calculateCRC16(copy2, len) == crc2);
     bool valid3 = (_calculateCRC16(copy3, len) == crc3);
     
-    // Se 2 ou 3 cópias são válidas, recuperamos os dados (sem erro fatal)
+    // Se 2 ou 3 cópias são válidas, recuperamos os dados
     if (valid1 && valid2) { memcpy(data, copy1, len); return true; }
     if (valid1 && valid3) { memcpy(data, copy1, len); return true; }
     if (valid2 && valid3) { memcpy(data, copy2, len); return true; }
     
-    // Recuperação de falha parcial (apenas 1 cópia válida) -> Reporta Erro
+    // Recuperação de falha parcial (apenas 1 cópia válida)
     if (valid1) { 
         memcpy(data, copy1, len); 
-        _reportCRCError(1); // 2 cópias corrompidas
+        _reportCRCError(1);
         return true; 
     }
     if (valid2) { 
@@ -242,7 +243,7 @@ bool StorageManager::_readWithRedundancy(const char* path, uint8_t* data, size_t
         return true; 
     }
     
-    // Falha total -> Reporta 3 erros
+    // Falha total
     _reportCRCError(3);
     return false;
 }
@@ -278,11 +279,13 @@ bool StorageManager::saveLog(const String& message) {
     String ts = (_rtcManager && _rtcManager->isInitialized()) ? 
                 _rtcManager->getDateTime() : String(millis());
     
-    snprintf(fmtBuffer, sizeof(fmtBuffer), "[%s] %s", ts.c_str(), message.c_str());
+    // FIX: Buffer local para thread-safety
+    char localBuffer[512];
+    snprintf(localBuffer, sizeof(localBuffer), "[%s] %s", ts.c_str(), message.c_str());
     
-    uint16_t crc = _calculateCRC16((uint8_t*)fmtBuffer, strlen(fmtBuffer));
+    uint16_t crc = _calculateCRC16((uint8_t*)localBuffer, strlen(localBuffer));
     char lineWithCRC[600];
-    snprintf(lineWithCRC, sizeof(lineWithCRC), "%s,%04X", fmtBuffer, crc);
+    snprintf(lineWithCRC, sizeof(lineWithCRC), "%s,%04X", localBuffer, crc);
     
     file.println(lineWithCRC);
     file.close();
@@ -325,7 +328,7 @@ bool StorageManager::createLogFile() {
     File file = SD.open(SD_SYSTEM_LOG, FILE_WRITE);
     if (!file) return false;
     
-    file.println(F("=== AGROSAT-IOT SYSTEM LOG v3.2 ==="));
+    file.println(F("=== AGROSAT-IOT SYSTEM LOG v3.3 ==="));
     file.println(F("Timestamp,Message,CRC16"));
     file.close();
     return true;
@@ -357,41 +360,68 @@ bool StorageManager::_checkFileSize(const char* path) {
 }
 
 void StorageManager::_formatTelemetryToCSV(const TelemetryData& data, char* buffer, size_t len) {
-    auto safeF = [](float v) { return isnan(v) ? 0.0f : v; };
+    if (buffer == nullptr || len < 100) return;
+    buffer[0] = '\0';
     
-    String ts = (_rtcManager && _rtcManager->isInitialized()) ? 
-                _rtcManager->getDateTime() : String(millis());
+    // Helper para float seguro
+    auto sf = [](float v) -> float { 
+        return (isnan(v) || isinf(v)) ? 0.0f : v; 
+    };
     
-    snprintf(buffer, len,
-        "%s,%lu,%lu,%.2f,%.1f,%.2f,%.2f,%.2f,%.2f,%.1f,"
-        "%.6f,%.6f,%.1f,%d,%d,"
-        "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f,"
-        "%.1f,%.0f,%.0f,0x%02X,%d,%s,"
-        "%lu,%d,%lu,%.1f",
-        ts.c_str(), (unsigned long)data.timestamp, (unsigned long)data.missionTime,
-        data.batteryVoltage, data.batteryPercentage,
-        safeF(data.temperature), safeF(data.temperatureBMP), safeF(data.temperatureSI), 
-        safeF(data.pressure), safeF(data.altitude),
-        data.latitude, data.longitude, safeF(data.gpsAltitude), 
-        data.satellites, data.gpsFix,
-        safeF(data.gyroX), safeF(data.gyroY), safeF(data.gyroZ),
-        safeF(data.accelX), safeF(data.accelY), safeF(data.accelZ),
-        safeF(data.magX), safeF(data.magY), safeF(data.magZ),
-        safeF(data.humidity), safeF(data.co2), safeF(data.tvoc),
-        data.systemStatus, data.errorCount, data.payload,
-        data.uptime, data.resetCount, data.minFreeHeap, data.cpuTemp
-    );
+    // Construir CSV em partes menores para evitar stack overflow no snprintf
+    int pos = 0;
+    
+    // Parte 1: Timestamps e bateria
+    pos += snprintf(buffer + pos, len - pos, "%lu,%lu,%lu,%.2f,%.1f,",
+        data.timestamp, data.timestamp, data.missionTime,
+        sf(data.batteryVoltage), sf(data.batteryPercentage));
+    
+    if (pos >= (int)len) return;
+    
+    // Parte 2: Temperaturas e pressao
+    pos += snprintf(buffer + pos, len - pos, "%.2f,%.2f,%.2f,%.1f,",
+        sf(data.temperature), sf(data.temperatureBMP), sf(data.temperatureSI), 
+        sf(data.pressure));
+    
+    if (pos >= (int)len) return;
+    
+    // Parte 3: GPS
+    pos += snprintf(buffer + pos, len - pos, "%.6f,%.6f,%.1f,%d,%d,",
+        data.latitude, data.longitude, sf(data.gpsAltitude), 
+        data.satellites, data.gpsFix ? 1 : 0);
+    
+    if (pos >= (int)len) return;
+    
+    // Parte 4: IMU
+    pos += snprintf(buffer + pos, len - pos, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,",
+        sf(data.gyroX), sf(data.gyroY), sf(data.gyroZ),
+        sf(data.accelX), sf(data.accelY), sf(data.accelZ),
+        sf(data.magX), sf(data.magY), sf(data.magZ));
+    
+    if (pos >= (int)len) return;
+    
+    // Parte 5: Ambiente e status
+    pos += snprintf(buffer + pos, len - pos, "%.1f,%.0f,%.0f,0x%02X,%d,-,",
+        sf(data.humidity), sf(data.co2), sf(data.tvoc),
+        data.systemStatus, data.errorCount);
+    
+    if (pos >= (int)len) return;
+    
+    // Parte 6: Sistema
+    snprintf(buffer + pos, len - pos, "%lu,%d,%lu,%.1f",
+        data.uptime, data.resetCount, data.minFreeHeap, sf(data.cpuTemp));
 }
 
 void StorageManager::_formatMissionToCSV(const MissionData& data, char* buffer, size_t len) {
-    String ts = (_rtcManager && _rtcManager->isInitialized()) ? 
-                _rtcManager->getDateTime() : String(millis());
+    // FIX: Usar timestamp local para evitar race conditions
+    char ts[24];
+    unsigned long unixTime = data.collectionTime > 0 ? data.collectionTime : (unsigned long)(millis()/1000);
+    snprintf(ts, sizeof(ts), "%lu", unixTime);
     
     snprintf(buffer, len, 
-        "%s,%lu,%u,%.1f,%.1f,%.1f,%d,%d,%.2f,%u,%u,%lu,%u,%lu,%lu",
-        ts.c_str(), 
-        (_rtcManager && _rtcManager->isInitialized()) ? 
-            _rtcManager->getUnixTime() : (unsigned long)(millis()/1000),
+        "%s,%lu,%u,%.1f,%.1f,%.1f,%d,%d,%.2f,%u,%u,%lu,%lu",
+        ts, 
+        unixTime,
         data.nodeId, 
         data.soilMoisture, data.ambientTemp, data.humidity, 
         data.irrigationStatus,

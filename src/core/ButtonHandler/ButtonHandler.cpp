@@ -1,3 +1,8 @@
+/**
+ * @file ButtonHandler.cpp
+ * @brief Implementação do gerenciador de botão com debounce
+ */
+
 #include "ButtonHandler.h"
 
 ButtonHandler::ButtonHandler() 

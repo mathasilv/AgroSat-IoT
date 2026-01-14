@@ -1,10 +1,10 @@
 /**
  * @file RTCManager.cpp
- * @brief Implementação Robusta do RTCManager
+ * @brief Implementação do gerenciador RTC DS3231 com NTP
  */
 
 #include "RTCManager.h"
-#include "config.h" // ✅ Necessário para DEBUG_PRINTLN
+#include "config.h"
 #include <WiFi.h>
 #include "time.h"
 
@@ -14,7 +14,7 @@ bool RTCManager::begin(TwoWire* wire) {
     _wire = wire;
     
     if (!_detectRTC()) {
-        DEBUG_PRINTLN("[RTC] ERRO: DS3231 não detectado.");
+        DEBUG_PRINTLN("[RTC] ERRO: DS3231 nao detectado.");
         return false;
     }
     
@@ -27,7 +27,7 @@ bool RTCManager::begin(TwoWire* wire) {
     _lost_power = _rtc.lostPower();
 
     if (_lost_power) {
-        DEBUG_PRINTLN("[RTC] Bateria perdida! Ajustando tempo...");
+        DEBUG_PRINTLN("[RTC] Bateria perdida. Ajustando tempo...");
         _rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     }
     
@@ -47,15 +47,12 @@ bool RTCManager::syncWithNTP() {
 
     DEBUG_PRINTLN("[RTC] Sincronizando NTP...");
     
-    // Configura o servidor
     configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER_1, NTP_SERVER_2);
 
-    // Aguarda o STATUS do SNTP mudar para COMPLETED
-    // Isso garante que a hora veio realmente da internet, e não do cache
     uint32_t start = millis();
     bool success = false;
 
-    while (millis() - start < 8000) { // Aumentei timeout para 8s (NTP pode demorar)
+    while (millis() - start < 8000) {
         if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
             success = true;
             break;
@@ -67,21 +64,16 @@ bool RTCManager::syncWithNTP() {
         time_t now;
         time(&now);
         struct tm* tm_local = localtime(&now);
-        
-        // Atualiza o hardware DS3231 com a hora real da internet
         _rtc.adjust(DateTime(tm_local->tm_year + 1900, tm_local->tm_mon + 1, tm_local->tm_mday,
                              tm_local->tm_hour, tm_local->tm_min, tm_local->tm_sec));
-                             
         _lost_power = false;
-        DEBUG_PRINTF("[RTC] NTP OK (Status Confirmado): %s\n", getDateTime().c_str());
+        DEBUG_PRINTF("[RTC] NTP sincronizado: %s\n", getDateTime().c_str());
         return true;
     } 
     
-    DEBUG_PRINTLN("[RTC] NTP Timeout (Servidor não respondeu).");
+    DEBUG_PRINTLN("[RTC] NTP timeout.");
     return false;
 }
-
-// === Getters ===
 
 String RTCManager::getDateTime() {
     if (!_initialized) return "2000-01-01 00:00:00";
@@ -95,10 +87,8 @@ String RTCManager::getDateTime() {
 
 String RTCManager::getUTCDateTime() {
     if (!_initialized) return "2000-01-01 00:00:00";
-    // RTC está em UTC-3. Para ter UTC, somamos o offset inverso (+3h)
-    // Opcionalmente, pode-se usar unix time.
     uint32_t unix = _rtc.now().unixtime();
-    DateTime utc(unix - GMT_OFFSET_SEC); // Subtrai o offset negativo (soma)
+    DateTime utc(unix - GMT_OFFSET_SEC);
     
     char buf[25];
     snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
@@ -109,18 +99,15 @@ String RTCManager::getUTCDateTime() {
 
 uint32_t RTCManager::getUnixTime() {
     if (!_initialized) return 0;
-    // Retorna Unix Time UTC
     return _rtc.now().unixtime() - GMT_OFFSET_SEC;
 }
 
 DateTime RTCManager::getNow() {
-    if (!_initialized) return DateTime((uint32_t)0); // ✅ Cast explícito para resolver ambiguidade
+    if (!_initialized) return DateTime((uint32_t)0);
     return _rtc.now();
 }
 
 bool RTCManager::isInitialized() const { return _initialized; }
-
-// === Privados ===
 
 bool RTCManager::_detectRTC() {
     _wire->beginTransmission(DS3231_ADDR);

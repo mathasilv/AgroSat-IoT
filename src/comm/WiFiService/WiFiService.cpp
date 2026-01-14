@@ -1,6 +1,6 @@
 /**
  * @file WiFiService.cpp
- * @brief Implementação WiFi Robusta (FIX: Timeout correto)
+ * @brief Implementação WiFi (CLEANED)
  */
 
 #include "WiFiService.h"
@@ -15,26 +15,23 @@ bool WiFiService::begin() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(_ssid, _pass);
     
-    // CORRIGIDO: Usa o timeout definido na configuração global
     unsigned long start = millis();
     while (millis() - start < WIFI_TIMEOUT_MS) {
         if (WiFi.status() == WL_CONNECTED) {
             _connected = true;
-            DEBUG_PRINTF("[WiFi] Conectado! IP: %s (%d dBm)\n", 
-                         WiFi.localIP().toString().c_str(), WiFi.RSSI());
+            DEBUG_PRINTF("[WiFi] Conectado! IP: %s\n", WiFi.localIP().toString().c_str());
             return true;
         }
         delay(100);
     }
     
-    DEBUG_PRINTLN("[WiFi] Aviso: Não conectou no boot. Tentará em background.");
+    DEBUG_PRINTLN("[WiFi] Aviso: Nao conectou no boot. Tentara em background.");
     return false;
 }
 
 void WiFiService::update() {
     unsigned long now = millis();
 
-    // 1. Verificar status periodicamente
     if (now - _lastCheck >= CHECK_INTERVAL) {
         _lastCheck = now;
         bool currentStatus = (WiFi.status() == WL_CONNECTED);
@@ -45,21 +42,17 @@ void WiFiService::update() {
         } 
         else if (!currentStatus && _connected) {
             _connected = false;
-            DEBUG_PRINTLN("[WiFi] Caiu a conexão.");
+            DEBUG_PRINTLN("[WiFi] Caiu a conexao.");
         }
     }
 
-    // 2. Tentar reconectar se necessário (sem travar)
     if (!_connected && (now - _lastReconnectAttempt >= RECONNECT_INTERVAL)) {
         _lastReconnectAttempt = now;
-        DEBUG_PRINTLN("[WiFi] Tentando reconexão em background...");
-        WiFi.disconnect();
-        WiFi.reconnect();
+        DEBUG_PRINTLN("[WiFi] Tentando reconexao...");
+        WiFi.disconnect(true, false);
+        delay(100);
+        WiFi.begin(_ssid, _pass);
     }
 }
 
 bool WiFiService::isConnected() const { return _connected; }
-
-int8_t WiFiService::getRSSI() const { return WiFi.RSSI(); }
-
-String WiFiService::getIP() const { return WiFi.localIP().toString(); }

@@ -1,14 +1,11 @@
 /**
  * @file SensorManager.cpp
- * @brief Implementação corrigida do SensorManager
+ * @brief Implementação do orquestrador de sensores I2C
  */
 
 #include "SensorManager.h"
 #include <math.h>
 
-// ============================================================================
-// CONSTRUTOR
-// ============================================================================
 SensorManager::SensorManager()
     : _mpu9250(MPU9250_ADDRESS),
       _bmp280(),
@@ -24,9 +21,6 @@ SensorManager::SensorManager()
     _i2cMutex = xSemaphoreCreateMutex();
 }
 
-// ============================================================================
-// HELPERS DO MUTEX
-// ============================================================================
 bool SensorManager::_lockI2C() {
     if (_i2cMutex == NULL) return false;
     return (xSemaphoreTake(_i2cMutex, pdMS_TO_TICKS(50)) == pdTRUE);
@@ -38,18 +32,13 @@ void SensorManager::_unlockI2C() {
     }
 }
 
-// ============================================================================
-// INICIALIZAÇÃO
-// ============================================================================
 bool SensorManager::begin() {
     if (!_lockI2C()) {
         DEBUG_PRINTLN("[SensorManager] Erro: I2C ocupado ao iniciar!");
         return false;
     }
 
-    DEBUG_PRINTLN("[SensorManager] ========================================");
-    DEBUG_PRINTLN("[SensorManager] Inicializando sensores PION...");
-    DEBUG_PRINTLN("[SensorManager] ========================================");
+    DEBUG_PRINTLN("[SensorManager] Inicializando sensores...");
     
     _sensorCount = 0;
     
@@ -79,18 +68,12 @@ bool SensorManager::begin() {
 
     _unlockI2C(); 
 
-    // Restaura baseline se possível (delegação)
     restoreCCS811Baseline();
-    
     DEBUG_PRINTF("[SensorManager] %d/4 sensores detectados\n", _sensorCount);
-    DEBUG_PRINTLN("[SensorManager] ========================================");
     
     return (_sensorCount > 0);
 }
 
-// ============================================================================
-// ATUALIZAÇÕES (LOOPS)
-// ============================================================================
 void SensorManager::updateFast() {
     if (_lockI2C()) {
         _mpu9250.update();
@@ -102,14 +85,17 @@ void SensorManager::updateFast() {
 
 void SensorManager::updateSlow() {
     static uint32_t lastSlowUpdate = 0;
-    if (millis() - lastSlowUpdate < 2000) return; // 2s entre leituras
-    
+    if (millis() - lastSlowUpdate < 2000) return;
     lastSlowUpdate = millis();
 
     if (_lockI2C()) {
         _si7021.update();
-        // Pequeno delay para garantir estabilidade do I2C entre sensores lentos
-        delay(10); 
+        _unlockI2C();
+    }
+    
+    delay(10);
+    
+    if (_lockI2C()) {
         _ccs811.update();
         _autoApplyEnvironmentalCompensation();
         _unlockI2C();
@@ -138,12 +124,9 @@ void SensorManager::update() {
     updateHealth();
 }
 
-// ============================================================================
-// HEALTH CHECK & RESET
-// ============================================================================
 void SensorManager::_performHealthCheck() {
     if (_consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        DEBUG_PRINTLN("[SensorManager] Falha crítica global: Resetando todos os sensores...");
+        DEBUG_PRINTLN("[SensorManager] Falha critica global: Resetando todos os sensores...");
         resetAll(); 
         return;
     }
@@ -208,14 +191,10 @@ void SensorManager::resetAll() {
     _temperature = NAN;
 }
 
-// ============================================================================
-// CALIBRAÇÃO E CONFIGURAÇÃO
-// ============================================================================
-
 bool SensorManager::recalibrateMagnetometer() {
     if (!_mpu9250.isOnline() || !_mpu9250.isMagOnline()) return false;
     
-    DEBUG_PRINTLN("[SensorManager] INICIANDO RECALIBRAÇÃO... (3s)");
+    DEBUG_PRINTLN("[SensorManager] INICIANDO RECALIBRACAO... (3s)");
     delay(3000); // Tempo para o usuário se preparar
     
     bool success = false;
@@ -234,7 +213,7 @@ void SensorManager::clearMagnetometerCalibration() {
 }
 
 void SensorManager::printMagnetometerCalibration() const {
-    DEBUG_PRINTLN("[SensorManager] --- Calibração Magnetômetro ---");
+    DEBUG_PRINTLN("[SensorManager] --- Calibracao Magnetometro ---");
     float x, y, z;
     _mpu9250.getMagOffsets(x, y, z); 
     DEBUG_PRINTF("Offsets: %.2f, %.2f, %.2f\n", x, y, z);
@@ -244,19 +223,14 @@ void SensorManager::getMagnetometerOffsets(float& x, float& y, float& z) const {
     _mpu9250.getMagOffsets(x, y, z);
 }
 
-// ========================================
-// CCS811 - DELEGAÇÃO CORRIGIDA
-// ========================================
-
 bool SensorManager::applyCCS811EnvironmentalCompensation(float temperature, float humidity) {
     if (!_ccs811.isOnline()) return false;
 
     if (_lockI2C()) {
-        // Agora apenas chamamos o método void (sem esperar retorno, pois não há ack complexo)
         _ccs811.setEnvironmentalData(humidity, temperature);
         _unlockI2C();
     }
-    return true; // Assumimos sucesso se estava online
+    return true;
 }
 
 void SensorManager::_autoApplyEnvironmentalCompensation() {
@@ -266,18 +240,15 @@ void SensorManager::_autoApplyEnvironmentalCompensation() {
     
     if (!_ccs811.isOnline()) return;
     
-    // Tenta pegar temperatura de qualquer fonte disponível
     float temp = !isnan(_temperature) ? _temperature : 25.0f;
     float hum = _si7021.isOnline() ? _si7021.getHumidity() : 50.0f;
-    
-    applyCCS811EnvironmentalCompensation(temp, hum);
-    DEBUG_PRINTF("[SensorManager] Comp. Amb. Automática: T=%.1f H=%.1f\n", temp, hum);
+    _ccs811.setEnvironmentalData(hum, temp);
+    DEBUG_PRINTF("[SensorManager] Comp. Amb.: T=%.1f H=%.1f\n", temp, hum);
 }
 
 bool SensorManager::saveCCS811Baseline() {
     bool success = false;
     if (_lockI2C()) {
-        // Delega para o manager (ele sabe como usar Preferences)
         success = _ccs811.saveBaseline();
         _unlockI2C();
     }
@@ -287,16 +258,11 @@ bool SensorManager::saveCCS811Baseline() {
 bool SensorManager::restoreCCS811Baseline() {
     bool success = false;
     if (_lockI2C()) {
-        // Delega para o manager
         success = _ccs811.restoreBaseline();
         _unlockI2C();
     }
     return success;
 }
-
-// ============================================================================
-// UTILS E STATUS
-// ============================================================================
 
 void SensorManager::scanI2C() {
     DEBUG_PRINTLN("[SensorManager] Scanning I2C Bus...");
@@ -347,7 +313,6 @@ void SensorManager::printDetailedStatus() const {
     DEBUG_PRINTF("BMP280:  %s (T: %.1f C)\n", _bmp280.isOnline() ? "ONLINE" : "OFFLINE", _bmp280.getTemperature());
     DEBUG_PRINTF("SI7021:  %s (RH: %.1f %%)\n", _si7021.isOnline() ? "ONLINE" : "OFFLINE", _si7021.getHumidity());
     
-    // Status do CCS811 com detalhe de warmup
     bool ccsOnline = _ccs811.isOnline();
     bool ccsWarm = _ccs811.isWarmupComplete();
     DEBUG_PRINTF("CCS811:  %s (eCO2: %d) %s\n", 

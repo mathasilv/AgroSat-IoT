@@ -1,3 +1,8 @@
+/**
+ * @file HttpService.cpp
+ * @brief Implementação do serviço HTTP para envio de telemetria
+ */
+
 #include "comm/HttpService/HttpService.h"
 #include <HTTPClient.h>
 #include "config.h"

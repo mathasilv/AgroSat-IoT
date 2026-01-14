@@ -1,21 +1,12 @@
-// ARQUIVO: src/comm/PayloadManager/PayloadManager.cpp
-
 /**
  * @file PayloadManager.cpp
- * @brief Implementação Completa com QoS Priority (Correção de conflito de macros)
+ * @brief Implementação do PayloadManager (CLEANED)
  */
 
 #include "PayloadManager.h"
 
-PayloadManager::PayloadManager() :
-    _packetsReceived(0),
-    _packetsLost(0)
-{
+PayloadManager::PayloadManager() {
     memset(&_lastMissionData, 0, sizeof(MissionData));
-    for (int i = 0; i < MAX_GROUND_NODES; i++) {
-        _expectedSeqNum[i] = 0;
-        _seqNodeId[i] = 0;
-    }
 }
 
 void PayloadManager::update() {}
@@ -28,8 +19,8 @@ int PayloadManager::createSatellitePayload(const TelemetryData& data, uint8_t* b
     int offset = 0;
     
     // Header
-    buffer[offset++] = 0xAB;
-    buffer[offset++] = 0xCD;
+    buffer[offset++] = 0x4E;  // 'N'
+    buffer[offset++] = 0x50;  // 'P'
     buffer[offset++] = (TEAM_ID >> 8) & 0xFF;
     buffer[offset++] = TEAM_ID & 0xFF;
 
@@ -38,8 +29,6 @@ int PayloadManager::createSatellitePayload(const TelemetryData& data, uint8_t* b
     return offset;
 }
 
-// Método createRelayPayload otimizado
-
 int PayloadManager::createRelayPayload(const TelemetryData& data, 
                                        const GroundNodeBuffer& nodeBuffer,
                                        uint8_t* buffer,
@@ -47,8 +36,8 @@ int PayloadManager::createRelayPayload(const TelemetryData& data,
     int offset = 0;
     
     // Header
-    buffer[offset++] = 0xAB;
-    buffer[offset++] = 0xCD;
+    buffer[offset++] = 0x4E;  // 'N'
+    buffer[offset++] = 0x50;  // 'P'
     buffer[offset++] = (TEAM_ID >> 8) & 0xFF;
     buffer[offset++] = TEAM_ID & 0xFF;
 
@@ -63,19 +52,14 @@ int PayloadManager::createRelayPayload(const TelemetryData& data,
     MissionData sortedNodes[MAX_GROUND_NODES];
     memcpy(sortedNodes, nodeBuffer.nodes, sizeof(sortedNodes));
     
-    // === OTIMIZAÇÃO: REMOVIDO LOOP DE RECALCULO DE PRIORIDADE ===
-    // O GroundNodeManager já define a prioridade no momento do updateNode.
-    // Não precisamos gastar CPU recalculando aqui.
-    
     sortNodesByPriority(sortedNodes, nodeBuffer.activeNodes);
     
     // Adicionar nós ao payload (ordem de prioridade)
     uint8_t nodesAdded = 0;
     for (int i = 0; i < nodeBuffer.activeNodes; i++) {
-        // Envia apenas se não foi enviado e é válido
         if (!sortedNodes[i].forwarded && sortedNodes[i].nodeId > 0) {
             if (offset + 10 > 250) {
-                DEBUG_PRINTLN("[PayloadManager] Buffer cheio! Nós restantes não incluídos.");
+                DEBUG_PRINTLN("[PayloadManager] Buffer cheio!");
                 break;
             }
             
@@ -89,102 +73,60 @@ int PayloadManager::createRelayPayload(const TelemetryData& data,
 
     if (nodesAdded == 0) return 0;
     
-    DEBUG_PRINTF("[PayloadManager] Relay: %d nós incluídos, %d bytes\n", nodesAdded, offset);
+    DEBUG_PRINTF("[PayloadManager] Relay: %d nos, %d bytes\n", nodesAdded, offset);
     return offset;
 }
 
 // ============================================================================
-// NOVO 5.3: Cálculo de Prioridade QoS Inteligente
+// QoS - Cálculo de Prioridade
 // ============================================================================
 uint8_t PayloadManager::calculateNodePriority(const MissionData& node) {
-    uint8_t priority = static_cast<uint8_t>(PacketPriority::NORMAL);  // Padrão: NORMAL
+    uint8_t priority = static_cast<uint8_t>(PacketPriority::NORMAL);
     
-    // === REGRA 1: Alertas Críticos de Irrigação ===
-    // Umidade do solo fora da faixa ideal (20-80%)
-    if (node.soilMoisture < 20.0f) {
-        priority = static_cast<uint8_t>(PacketPriority::CRITICAL);
-        DEBUG_PRINTF("[QoS] Node %u: CRÍTICO - Solo seco (%.1f%%)\n", 
-                     node.nodeId, node.soilMoisture);
-        return priority;
+    // Alertas Críticos de Irrigação
+    if (node.soilMoisture < 20.0f || node.soilMoisture > 90.0f) {
+        return static_cast<uint8_t>(PacketPriority::CRITICAL);
     }
     
-    if (node.soilMoisture > 90.0f) {
-        priority = static_cast<uint8_t>(PacketPriority::CRITICAL);
-        DEBUG_PRINTF("[QoS] Node %u: CRÍTICO - Solo encharcado (%.1f%%)\n", 
-                     node.nodeId, node.soilMoisture);
-        return priority;
-    }
-    
-    // === REGRA 2: Temperatura Extrema ===
+    // Temperatura Extrema
     if (node.ambientTemp > 40.0f || node.ambientTemp < 5.0f) {
-        priority = static_cast<uint8_t>(PacketPriority::CRITICAL);
-        DEBUG_PRINTF("[QoS] Node %u: CRÍTICO - Temp extrema (%.1f°C)\n", 
-                     node.nodeId, node.ambientTemp);
-        return priority;
+        return static_cast<uint8_t>(PacketPriority::CRITICAL);
     }
     
-    // === REGRA 3: Link Degradado (Priorizar antes de perder) ===
+    // Link Degradado
     if (node.rssi < -110) {
-        priority = static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY);
-        DEBUG_PRINTF("[QoS] Node %u: HIGH - Link ruim (%d dBm)\n", 
-                     node.nodeId, node.rssi);
-        return priority;
+        return static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY);
     }
     
-    // === REGRA 4: Perda de Pacotes Excessiva ===
+    // Perda de Pacotes Excessiva
     if (node.packetsLost > 5) {
-        priority = static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY);
-        DEBUG_PRINTF("[QoS] Node %u: HIGH - Perdas (%d pacotes)\n", 
-                     node.nodeId, node.packetsLost);
-        return priority;
+        return static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY);
     }
     
-    // === REGRA 5: Irrigação Ativa ===
+    // Irrigação Ativa
     if (node.irrigationStatus == 1) {
-        priority = static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY);
-        DEBUG_PRINTF("[QoS] Node %u: HIGH - Irrigação ativa\n", node.nodeId);
-        return priority;
+        return static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY);
     }
     
-    // === REGRA 6: Dados Recentes têm Prioridade ===
+    // Dados Antigos
     unsigned long age = millis() - node.lastLoraRx;
-    if (age < 60000) {  // < 1 minuto
-        priority = static_cast<uint8_t>(PacketPriority::NORMAL);
-    } else if (age < 300000) {  // < 5 minutos
-        priority = static_cast<uint8_t>(PacketPriority::NORMAL);
-    } else {
-        priority = static_cast<uint8_t>(PacketPriority::LOW_PRIORITY);  // Dados antigos
-        DEBUG_PRINTF("[QoS] Node %u: LOW - Dados antigos (%.1f min)\n", 
-                     node.nodeId, age / 60000.0f);
-    }
-    
-    // === REGRA 7: Condições de Solo Moderadas ===
-    if (node.soilMoisture >= 30.0f && node.soilMoisture <= 70.0f) {
-        // Solo em condição ideal, baixar prioridade se já era NORMAL
-        if (priority == static_cast<uint8_t>(PacketPriority::NORMAL) && age > 120000) {
-            priority = static_cast<uint8_t>(PacketPriority::LOW_PRIORITY);
-        }
+    if (age > 300000) {
+        priority = static_cast<uint8_t>(PacketPriority::LOW_PRIORITY);
     }
     
     return priority;
 }
 
-// ============================================================================
-// NOVO 5.3: Ordenação por Prioridade (Bubble Sort)
-// ============================================================================
 void PayloadManager::sortNodesByPriority(MissionData* nodes, uint8_t count) {
     if (count <= 1) return;
     
-    // Bubble Sort (eficiente para poucos elementos)
     for (uint8_t i = 0; i < count - 1; i++) {
         for (uint8_t j = 0; j < count - i - 1; j++) {
-            // Ordenar por: 1) Prioridade, 2) RSSI (link pior primeiro)
             bool shouldSwap = false;
             
             if (nodes[j].priority > nodes[j + 1].priority) {
-                shouldSwap = true;  // Menor prioridade = mais importante
+                shouldSwap = true;
             } else if (nodes[j].priority == nodes[j + 1].priority) {
-                // Mesma prioridade: RSSI pior tem preferência
                 if (nodes[j].rssi > nodes[j + 1].rssi) {
                     shouldSwap = true;
                 }
@@ -199,9 +141,6 @@ void PayloadManager::sortNodesByPriority(MissionData* nodes, uint8_t count) {
     }
 }
 
-// ============================================================================
-// NOVO 5.3: Estatísticas de Priorização
-// ============================================================================
 void PayloadManager::getPriorityStats(const GroundNodeBuffer& buffer, 
                                       uint8_t& critical, uint8_t& high, 
                                       uint8_t& normal, uint8_t& low) {
@@ -209,26 +148,17 @@ void PayloadManager::getPriorityStats(const GroundNodeBuffer& buffer,
     
     for (int i = 0; i < buffer.activeNodes; i++) {
         switch (buffer.nodes[i].priority) {
-            case static_cast<uint8_t>(PacketPriority::CRITICAL): 
-                critical++; 
-                break;
-            case static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY):
-                high++;     
-                break;
-            case static_cast<uint8_t>(PacketPriority::NORMAL):   
-                normal++;   
-                break;
-            case static_cast<uint8_t>(PacketPriority::LOW_PRIORITY):
-                low++;      
-                break;
+            case static_cast<uint8_t>(PacketPriority::CRITICAL): critical++; break;
+            case static_cast<uint8_t>(PacketPriority::HIGH_PRIORITY): high++; break;
+            case static_cast<uint8_t>(PacketPriority::NORMAL): normal++; break;
+            case static_cast<uint8_t>(PacketPriority::LOW_PRIORITY): low++; break;
         }
     }
 }
 
 // ============================================================================
-// Continuação PayloadManager.cpp - Parte 2
+// JSON para HTTP
 // ============================================================================
-
 String PayloadManager::createTelemetryJSON(const TelemetryData& data, const GroundNodeBuffer& groundBuffer) {
     DynamicJsonDocument doc(2048); 
     auto fmt = [](float val) -> String { return isnan(val) ? "0.00" : String(val, 2); };
@@ -236,7 +166,7 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
     doc["equipe"] = TEAM_ID;
     doc["bateria"] = (int)data.batteryPercentage;
     doc["temperatura"] = fmt(data.temperature);
-    doc["pressao"]     = fmt(data.pressure);
+    doc["pressao"] = fmt(data.pressure);
     doc["giroscopio"] = fmt(data.gyroX) + "," + fmt(data.gyroY) + "," + fmt(data.gyroZ);
     doc["acelerometro"] = fmt(data.accelX) + "," + fmt(data.accelY) + "," + fmt(data.accelZ);
 
@@ -246,7 +176,6 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
     if (groundBuffer.activeNodes > 0) {
         JsonArray nodes = payload.createNestedArray("nodes");
         
-        // NOVO 5.3: Adicionar informação de prioridade
         uint8_t crit, high, norm, low;
         getPriorityStats(groundBuffer, crit, high, norm, low);
         
@@ -256,23 +185,18 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
             
             n["id"] = md.nodeId;
             n["sm"] = fmt(md.soilMoisture);
-            n["t"]  = fmt(md.ambientTemp);
-            n["h"]  = fmt(md.humidity);
+            n["t"] = fmt(md.ambientTemp);
+            n["h"] = fmt(md.humidity);
             n["rs"] = md.rssi;
             
-            // NOVO 5.3: Priority no JSON
             const char* priStr[] = {"CRIT", "HIGH", "NORM", "LOW"};
             n["pri"] = priStr[md.priority];
         }
         
         payload["total_nodes"] = groundBuffer.activeNodes;
-        payload["total_pkts"]  = groundBuffer.totalPacketsCollected;
-        
-        // NOVO 5.3: Estatísticas de QoS
+        payload["total_pkts"] = groundBuffer.totalPacketsCollected;
         payload["qos_crit"] = crit;
         payload["qos_high"] = high;
-        payload["qos_norm"] = norm;
-        payload["qos_low"]  = low;
     }
 
     String output;
@@ -281,14 +205,13 @@ String PayloadManager::createTelemetryJSON(const TelemetryData& data, const Grou
 }
 
 // ============================================================================
-// RECEPÇÃO (RX) - UPLINK DOS NÓS
+// RECEPÇÃO (RX)
 // ============================================================================
-
 bool PayloadManager::processLoRaPacket(const String& packet, MissionData& data) {
     memset(&data, 0, sizeof(MissionData));
 
-    // 1. Binário RAW (Novo Simulador)
-    if (packet.length() >= 12 && (uint8_t)packet[0] == 0xAB && (uint8_t)packet[1] == 0xCD) {
+    // 1. Binário RAW
+    if (packet.length() >= 12 && (uint8_t)packet[0] == 0x4E && (uint8_t)packet[1] == 0x50) {
         if (_decodeRawPacket(packet, data)) {
             _lastMissionData = data;
             return true;
@@ -296,22 +219,13 @@ bool PayloadManager::processLoRaPacket(const String& packet, MissionData& data) 
     }
 
     // 2. Hex String (Legado)
-    if (packet.startsWith("AB") && isxdigit(packet.charAt(2))) {
+    if (packet.startsWith("NP") && isxdigit(packet.charAt(2))) {
         if (_decodeHexStringPayload(packet, data)) {
             _lastMissionData = data;
             return true;
         }
     }
 
-    // 3. ASCII (Legado)
-    if (packet.startsWith("AGRO")) {
-        if (_validateAsciiChecksum(packet)) {
-            if (_decodeAsciiPayload(packet, data)) {
-                _lastMissionData = data;
-                return true;
-            }
-        }
-    }
     return false;
 }
 
@@ -319,7 +233,7 @@ bool PayloadManager::_decodeRawPacket(const String& rawData, MissionData& data) 
     const uint8_t* buffer = (const uint8_t*)rawData.c_str();
     size_t len = rawData.length();
     
-    int offset = 4; // Pula Header
+    int offset = 4;
 
     data.nodeId = (buffer[offset] << 8) | buffer[offset+1]; offset += 2;
     data.soilMoisture = (float)buffer[offset++];
@@ -331,14 +245,11 @@ bool PayloadManager::_decodeRawPacket(const String& rawData, MissionData& data) 
     data.irrigationStatus = buffer[offset++];
     data.rssi = (int16_t)buffer[offset++] - 128;
     
-    // Extrair timestamp do nó (se disponível)
-    if (len >= offset + 4) {
+    if (len >= (size_t)(offset + 4)) {
         data.nodeTimestamp  = (uint32_t)buffer[offset] << 24;
         data.nodeTimestamp |= (uint32_t)buffer[offset+1] << 16;
         data.nodeTimestamp |= (uint32_t)buffer[offset+2] << 8;
         data.nodeTimestamp |= (uint32_t)buffer[offset+3];
-    } else {
-        data.nodeTimestamp = 0;
     }
     
     return true;
@@ -354,7 +265,7 @@ bool PayloadManager::_decodeHexStringPayload(const String& hexPayload, MissionDa
         buffer[i] = (uint8_t)strtol(byteStr, NULL, 16);
     }
     
-    if (buffer[0] != 0xAB || buffer[1] != 0xCD) return false;
+    if (buffer[0] != 0x4E || buffer[1] != 0x50) return false;
     int offset = 4;
 
     data.nodeId = (buffer[offset] << 8) | buffer[offset+1]; offset += 2;
@@ -365,7 +276,7 @@ bool PayloadManager::_decodeHexStringPayload(const String& hexPayload, MissionDa
     data.irrigationStatus = buffer[offset++];
     data.rssi = (int16_t)buffer[offset++] - 128;
     
-    if (len >= offset + 4) {
+    if (len >= (size_t)(offset + 4)) {
         data.nodeTimestamp  = (uint32_t)buffer[offset] << 24;
         data.nodeTimestamp |= (uint32_t)buffer[offset+1] << 16;
         data.nodeTimestamp |= (uint32_t)buffer[offset+2] << 8;
@@ -378,7 +289,6 @@ bool PayloadManager::_decodeHexStringPayload(const String& hexPayload, MissionDa
 // ============================================================================
 // ENCODERS
 // ============================================================================
-
 void PayloadManager::_encodeSatelliteData(const TelemetryData& data, uint8_t* buffer, int& offset) {
     buffer[offset++] = (uint8_t)constrain(data.batteryPercentage, 0, 100);
     
@@ -428,7 +338,6 @@ void PayloadManager::_encodeSatelliteData(const TelemetryData& data, uint8_t* bu
 }
 
 void PayloadManager::_encodeNodeData(const MissionData& node, uint8_t* buffer, int& offset) {
-    // Dados de sensor SEM timestamp (economia de downlink)
     buffer[offset++] = (node.nodeId >> 8) & 0xFF;
     buffer[offset++] = node.nodeId & 0xFF;
     buffer[offset++] = (uint8_t)constrain(node.soilMoisture, 0, 100);
@@ -438,15 +347,6 @@ void PayloadManager::_encodeNodeData(const MissionData& node, uint8_t* buffer, i
     buffer[offset++] = (uint8_t)constrain(node.humidity, 0, 100);
     buffer[offset++] = node.irrigationStatus;
     buffer[offset++] = (uint8_t)(node.rssi + 128);
-}
-
-// Stubs legados
-bool PayloadManager::_decodeAsciiPayload(const String& packet, MissionData& data) { 
-    return false; 
-}
-
-bool PayloadManager::_validateAsciiChecksum(const String& packet) { 
-    return true; 
 }
 
 void PayloadManager::markNodesAsForwarded(GroundNodeBuffer& buffer, 
@@ -461,17 +361,4 @@ void PayloadManager::markNodesAsForwarded(GroundNodeBuffer& buffer,
             }
         }
     }
-}
-
-int PayloadManager::findNodeIndex(uint16_t nodeId) {
-    for (int i = 0; i < MAX_GROUND_NODES; i++) {
-        if (_seqNodeId[i] == nodeId) return i;
-    }
-    for (int i = 0; i < MAX_GROUND_NODES; i++) {
-        if (_seqNodeId[i] == 0) { 
-            _seqNodeId[i] = nodeId; 
-            return i; 
-        }
-    }
-    return 0;
 }

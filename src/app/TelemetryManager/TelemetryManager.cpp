@@ -1,14 +1,19 @@
 /**
  * @file TelemetryManager.cpp
- * @brief Gerenciador Central (Versão Limpa v11.0)
+ * @brief Gerenciador Central (FIX: Timeouts e logs de mutex)
+ * @version 11.1.0
  */
 
 #include "TelemetryManager.h"
 #include "config.h"
 #include "Globals.h" 
 
-bool currentSerialLogsEnabled = PREFLIGHT_CONFIG.serialLogsEnabled;
+// currentSerialLogsEnabled definido em Globals.cpp
 const ModeConfig* activeModeConfig = &PREFLIGHT_CONFIG;
+
+// Contadores de falhas de mutex para diagnóstico
+static uint16_t s_dataMutexTimeouts = 0;
+static uint16_t s_i2cMutexTimeouts = 0;
 
 TelemetryManager::TelemetryManager() :
     _sensors(), _gps(), _power(), _systemHealth(), _rtc(), 
@@ -18,7 +23,7 @@ TelemetryManager::TelemetryManager() :
     _commandHandler(_sensors),
     _mode(MODE_INIT), 
     _lastTelemetrySend(0), _lastStorageSave(0),
-    _lastSensorReset(0), _lastBeaconTime(0)
+    _lastBeaconTime(0)
 {
     memset(&_telemetryData, 0, sizeof(TelemetryData));
     _telemetryData.humidity = NAN; _telemetryData.co2 = NAN; _telemetryData.tvoc = NAN;
@@ -105,17 +110,31 @@ void TelemetryManager::feedWatchdog() {
 }
 
 // === Atualização Física (Task Sensores) ===
+// FIX: Timeout aumentado de 100ms para 200ms e logs de falha adicionados
 void TelemetryManager::updatePhySensors() {
-    if (xSemaphoreTake(xDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        if (xSemaphoreTake(xI2CMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (xSemaphoreTake(xDataMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        if (xSemaphoreTake(xI2CMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
             _sensors.update(); 
             _rtc.update();
             xSemaphoreGive(xI2CMutex);
+        } else {
+            // FIX: Log de falha e contagem
+            s_i2cMutexTimeouts++;
+            if (s_i2cMutexTimeouts % 10 == 1) { // Log a cada 10 falhas
+                DEBUG_PRINTF("[TM] AVISO: I2C mutex timeout (#%u)\n", s_i2cMutexTimeouts);
+            }
+            _systemHealth.incrementI2CError();
         }
         _gps.update();
         _power.update();
         _power.adjustCpuFrequency();
         xSemaphoreGive(xDataMutex);
+    } else {
+        // FIX: Log de falha
+        s_dataMutexTimeouts++;
+        if (s_dataMutexTimeouts % 10 == 1) {
+            DEBUG_PRINTF("[TM] AVISO: Data mutex timeout (#%u)\n", s_dataMutexTimeouts);
+        }
     }
 }
 
@@ -127,13 +146,13 @@ void TelemetryManager::loop() {
     switch (heapStatus) {
         case SystemHealth::HeapStatus::HEAP_CRITICAL:
             if (_mode != MODE_SAFE) {
-                DEBUG_PRINTLN("[TelemetryManager] MEMÓRIA CRÍTICA! Entrando em SAFE MODE.");
+                DEBUG_PRINTLN("[TelemetryManager] MEMORIA CRITICA! Entrando em SAFE MODE.");
                 applyModeConfig(MODE_SAFE);
                 _mode = MODE_SAFE;
             }
             break;
         case SystemHealth::HeapStatus::HEAP_FATAL:
-            DEBUG_PRINTLN("[TelemetryManager] MEMÓRIA FATAL. Reiniciando...");
+            DEBUG_PRINTLN("[TelemetryManager] MEMORIA FATAL. Reiniciando...");
             delay(1000);
             ESP.restart();
             break;
@@ -148,7 +167,8 @@ void TelemetryManager::loop() {
     _handleIncomingRadio();
     _maintainGroundNetwork();
 
-    if (xSemaphoreTake(xDataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+    // FIX: Timeout aumentado de 50ms para 100ms
+    if (xSemaphoreTake(xDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _telemetryCollector.collect(_telemetryData);
         xSemaphoreGive(xDataMutex);
     }
@@ -190,8 +210,9 @@ void TelemetryManager::_checkOperationalConditions() {
     if (sensorFail) {
         static unsigned long lastSensorReset = 0;
         if (millis() - lastSensorReset > 10000) {
-            DEBUG_PRINTLN("[TM] Sensores instáveis. Tentando reset...");
-            if (xSemaphoreTake(xI2CMutex, 100)) {
+            DEBUG_PRINTLN("[TM] Sensores instaveis. Tentando reset...");
+            // FIX: Timeout aumentado e convertido para ms
+            if (xSemaphoreTake(xI2CMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
                 _sensors.resetAll();
                 xSemaphoreGive(xI2CMutex);
             }
@@ -274,7 +295,7 @@ void TelemetryManager::applyModeConfig(uint8_t modeIndex) {
 void TelemetryManager::startMission() {
     if (_mode == MODE_FLIGHT) return;
     if (_mission.start()) {
-        DEBUG_PRINTLN("[TelemetryManager] Transição para MODE_FLIGHT confirmada.");
+        DEBUG_PRINTLN("[TelemetryManager] Transicao para MODE_FLIGHT confirmada.");
         _mode = MODE_FLIGHT;
         applyModeConfig(MODE_FLIGHT);
     }
@@ -283,14 +304,14 @@ void TelemetryManager::startMission() {
 void TelemetryManager::stopMission() {
     if (!_mission.isActive()) return;
     if (_mission.stop()) {
-        DEBUG_PRINTLN("[TelemetryManager] Missão finalizada. Retornando para PREFLIGHT.");
+        DEBUG_PRINTLN("[TelemetryManager] Missao finalizada. Retornando para PREFLIGHT.");
         _mode = MODE_PREFLIGHT;
         applyModeConfig(MODE_PREFLIGHT);
     }
 }
 
 void TelemetryManager::_sendTelemetry() {
-    const GroundNodeBuffer& buf = _groundNodes.buffer();
+    GroundNodeBuffer& buf = _groundNodes.buffer();
     
     if (activeModeConfig->serialLogsEnabled) {
         String ts = _rtc.getUTCDateTime(); 
@@ -304,24 +325,59 @@ void TelemetryManager::_sendTelemetry() {
     _comm.sendTelemetry(_telemetryData, buf);
 }
 
+// Buffer estatico para dados de storage (evita copia na fila)
+static TelemetryData s_storageData;
+static GroundNodeBuffer s_storageNodes;
+static SemaphoreHandle_t s_storageMutex = NULL;
+
 void TelemetryManager::_saveToStorage() {
-    if (xStorageQueue != NULL) {
-        StorageQueueMessage msg;
-        msg.data = _telemetryData;
-        msg.nodes = _groundNodes.buffer();
-        if (xQueueSend(xStorageQueue, &msg, 0) == pdTRUE) { } 
-        else { DEBUG_PRINTLN("[TM] AVISO: Fila SD cheia. Dados perdidos."); }
+    // Criar mutex na primeira chamada
+    if (s_storageMutex == NULL) {
+        s_storageMutex = xSemaphoreCreateMutex();
+    }
+    
+    if (xStorageQueue != NULL && s_storageMutex != NULL) {
+        // Copiar dados para buffer estatico (protegido por mutex proprio)
+        if (xSemaphoreTake(s_storageMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            memcpy(&s_storageData, &_telemetryData, sizeof(TelemetryData));
+            s_storageNodes = _groundNodes.buffer();
+            xSemaphoreGive(s_storageMutex);
+            
+            // Envia sinal para a task processar
+            uint8_t signal = 1;
+            if (xQueueSend(xStorageQueue, &signal, 0) != pdTRUE) {
+                DEBUG_PRINTLN("[TM] AVISO: Fila SD cheia.");
+            }
+        }
     }
 }
 
 void TelemetryManager::processStoragePacket(const StorageQueueMessage& msg) {
-    bool saved = _storage.saveTelemetry(msg.data);
-    if (saved) {
-        for(int i=0; i<msg.nodes.activeNodes; i++) {
-            _storage.saveMissionData(msg.nodes.nodes[i]);
-        }
+    (void)msg;
+    
+    if (s_storageMutex == NULL) return;
+    
+    TelemetryData localData;
+    GroundNodeBuffer localNodes;
+    
+    if (xSemaphoreTake(s_storageMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+        memcpy(&localData, &s_storageData, sizeof(TelemetryData));
+        localNodes = s_storageNodes;
+        xSemaphoreGive(s_storageMutex);
     } else {
-        DEBUG_PRINTLN("[TM] Falha ao salvar no SD.");
+        return;
+    }
+    
+    // Verificar se dados sao validos (timestamp ou bateria devem ter valor)
+    if (localData.timestamp == 0 && localData.batteryVoltage < 0.1f) {
+        return; // Dados ainda nao coletados
+    }
+    
+    bool saved = _storage.saveTelemetry(localData);
+    if (saved) {
+        for(int i=0; i<localNodes.activeNodes; i++) {
+            _storage.saveMissionData(localNodes.nodes[i]);
+        }
     }
 }
 
@@ -369,7 +425,7 @@ void TelemetryManager::_sendSafeBeacon() {
     beacon[offset++] = (freeHeap >> 24) & 0xFF; beacon[offset++] = (freeHeap >> 16) & 0xFF;
     beacon[offset++] = (freeHeap >> 8) & 0xFF; beacon[offset++] = freeHeap & 0xFF;
     
-    HealthTelemetry health = _systemHealth.getHealthTelemetry();
+    HealthTelemetryExtended health = _systemHealth.getHealthTelemetry();
     beacon[offset++] = (health.resetCount >> 8) & 0xFF; beacon[offset++] = health.resetCount & 0xFF;
     beacon[offset++] = health.resetReason;
     beacon[offset++] = _gps.hasFix() ? 1 : 0;
@@ -385,7 +441,7 @@ bool TelemetryManager::handleCommand(const String& cmd) {
     cmdUpper.toUpperCase();
     cmdUpper.trim();
 
-    // Proteção contra buffer overflow
+    // Protecao contra buffer overflow
     if (cmdUpper.length() > 32) return false;
     
     if (cmdUpper == "START_MISSION") { startMission(); return true; }
@@ -394,9 +450,17 @@ bool TelemetryManager::handleCommand(const String& cmd) {
     if (cmdUpper == "DUTY_CYCLE") {
         auto& dc = _comm.getDutyCycleTracker();
         DEBUG_PRINTLN("=== DUTY CYCLE ===");
-        DEBUG_PRINTF("Usado: %lu ms / %lu ms\n", dc.getAccumulatedTxTime(), 360000);
+        DEBUG_PRINTF("Usado: %lu ms / %lu ms\n", dc.getAccumulatedTxTime(), 360000UL);
         DEBUG_PRINTF("Percentual: %.1f%%\n", dc.getDutyCyclePercent());
         DEBUG_PRINTLN("==================");
+        return true;
+    }
+    // FIX: Comando para ver estatísticas de mutex
+    if (cmdUpper == "MUTEX_STATS") {
+        DEBUG_PRINTLN("=== MUTEX STATS ===");
+        DEBUG_PRINTF("Data Mutex Timeouts: %u\n", s_dataMutexTimeouts);
+        DEBUG_PRINTF("I2C Mutex Timeouts: %u\n", s_i2cMutexTimeouts);
+        DEBUG_PRINTLN("===================");
         return true;
     }
     return _commandHandler.handle(cmdUpper);

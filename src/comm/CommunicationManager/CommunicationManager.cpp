@@ -1,6 +1,7 @@
 /**
  * @file CommunicationManager.cpp
- * @brief Implementação Limpa (Versão Final v11.0)
+ * @brief Implementação (FIX: Removido const_cast perigoso)
+ * @version 11.1.0
  */
 
 #include "CommunicationManager.h"
@@ -20,7 +21,7 @@ bool CommunicationManager::begin() {
     if (_httpEnabled) {
         _wifi.begin();
     } else {
-        DEBUG_PRINTLN("[CommManager] HTTP desabilitado por configuração.");
+        DEBUG_PRINTLN("[CommManager] HTTP desabilitado por configuracao.");
     }
     return ok;
 }
@@ -38,12 +39,8 @@ void CommunicationManager::connectWiFi() {
     _wifi.begin(); 
 }
 
-// REMOVIDO: sendLoRa(String)
-// Apenas envio binário é permitido agora.
-
 bool CommunicationManager::sendLoRa(const uint8_t* data, size_t len) {
     if (!_loraEnabled) return false;
-    // Usa envio síncrono por padrão (falso no terceiro parametro)
     return _lora.send(data, len, false);
 }
 
@@ -56,8 +53,9 @@ bool CommunicationManager::processLoRaPacket(const String& packet, MissionData& 
     return _payload.processLoRaPacket(packet, data);
 }
 
+// FIX: Agora recebe referência não-const, eliminando const_cast
 bool CommunicationManager::sendTelemetry(const TelemetryData& tData, 
-                                         const GroundNodeBuffer& gBuffer) {
+                                         GroundNodeBuffer& gBuffer) {
     bool success = false;
     uint8_t txBuffer[256]; 
 
@@ -72,12 +70,9 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& tData,
         // Payload Satélite
         int satLen = _payload.createSatellitePayload(tData, txBuffer);
         if (satLen > 0) {
-            // Nota: canTransmitNow agora usa tempo de ar, não bytes
             if (_lora.canTransmitNow(satLen)) {
                 if (_lora.send(txBuffer, satLen, false)) {
                     success = true;
-                    // Debug simplificado para economizar serial
-                    // DEBUG_PRINTF("[Comm] TX Sat: %d B\n", satLen);
                 }
             } else {
                 DEBUG_PRINTLN("[Comm] Duty Cycle cheio. TX adiado.");
@@ -93,11 +88,8 @@ bool CommunicationManager::sendTelemetry(const TelemetryData& tData,
             
             if (_lora.canTransmitNow(relayLen)) {
                 if (_lora.send(txBuffer, relayLen, false)) {
-                    _payload.markNodesAsForwarded(
-                        const_cast<GroundNodeBuffer&>(gBuffer), 
-                        relayedNodes, 
-                        tData.timestamp
-                    );
+                    // FIX: Agora gBuffer é não-const, sem necessidade de const_cast
+                    _payload.markNodesAsForwarded(gBuffer, relayedNodes, tData.timestamp);
                     DEBUG_PRINTF("[Comm] Relay: %d nodes\n", relayedNodes.size());
                 }
             }

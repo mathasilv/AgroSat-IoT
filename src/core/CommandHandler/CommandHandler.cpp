@@ -1,5 +1,10 @@
+/**
+ * @file CommandHandler.cpp
+ * @brief Implementação do processador de comandos Serial
+ */
+
 #include "CommandHandler.h"
-#include "config.h" // Importante para as macros de Debug
+#include "config.h"
 
 CommandHandler::CommandHandler(SensorManager& sensors) : _sensors(sensors) {}
 
@@ -19,13 +24,12 @@ bool CommandHandler::handle(String cmd) {
         return true;
     }
 
-    // Comandos de Calibração
     if (cmd == "CALIB_MAG") {
-        DEBUG_PRINTLN("[CMD] Iniciando calibração Magnetômetro...");
+        DEBUG_PRINTLN("[CMD] Iniciando calibracao do magnetometro...");
         if (_sensors.recalibrateMagnetometer()) {
-            DEBUG_PRINTLN("[CMD] Calibração MAG SUCESSO!");
+            DEBUG_PRINTLN("[CMD] Calibracao MAG concluida.");
         } else {
-            DEBUG_PRINTLN("[CMD] Calibração MAG FALHOU.");
+            DEBUG_PRINTLN("[CMD] Calibracao MAG falhou.");
         }
         return true;
     }
@@ -36,7 +40,6 @@ bool CommandHandler::handle(String cmd) {
     }
 
     if (cmd == "SAVE_BASELINE") {
-        // Correção de sintaxe: uso obrigatório de chaves com macros
         if (_sensors.saveCCS811Baseline()) {
             DEBUG_PRINTLN("[CMD] Baseline salvo.");
         } else {
@@ -50,10 +53,10 @@ bool CommandHandler::handle(String cmd) {
 }
 
 void CommandHandler::_printHelp() {
-    DEBUG_PRINTLN("--- COMANDOS DISPONÍVEIS ---");
-    DEBUG_PRINTLN("  STATUS          : Mostra status detalhado dos sensores");
-    DEBUG_PRINTLN("  CALIB_MAG       : Recalibra magnetômetro (gire em 8)");
-    DEBUG_PRINTLN("  CLEAR_MAG       : Apaga calibração do magnetômetro");
-    DEBUG_PRINTLN("  SAVE_BASELINE   : Salva baseline do CCS811 (Ar Limpo)");
+    DEBUG_PRINTLN("--- COMANDOS DISPONIVEIS ---");
+    DEBUG_PRINTLN("  STATUS          : Status detalhado dos sensores");
+    DEBUG_PRINTLN("  CALIB_MAG       : Calibra magnetometro (gire em 8)");
+    DEBUG_PRINTLN("  CLEAR_MAG       : Apaga calibracao do magnetometro");
+    DEBUG_PRINTLN("  SAVE_BASELINE   : Salva baseline do CCS811");
     DEBUG_PRINTLN("----------------------------");
 }

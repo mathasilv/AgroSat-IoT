@@ -1,3 +1,8 @@
+/**
+ * @file LoRaTransmitter.cpp
+ * @brief Implementação do transmissor LoRa com retry e backoff
+ */
+
 #include "LoRaTransmitter.h"
 
 LoRaTransmitter::LoRaTransmitter() : _currentSF(LORA_SPREADING_FACTOR) {}

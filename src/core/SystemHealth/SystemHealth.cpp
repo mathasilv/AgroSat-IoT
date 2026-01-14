@@ -148,8 +148,8 @@ uint32_t SystemHealth::getFreeHeap() {
     return ESP.getFreeHeap();
 }
 
-HealthTelemetry SystemHealth::getHealthTelemetry() {
-    HealthTelemetry health;
+HealthTelemetryExtended SystemHealth::getHealthTelemetry() {
+    HealthTelemetryExtended health;
     health.uptime = getUptime();
     health.resetCount = _resetCount;
     health.resetReason = _resetReason;

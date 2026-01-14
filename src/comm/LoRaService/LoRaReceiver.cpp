@@ -1,3 +1,8 @@
+/**
+ * @file LoRaReceiver.cpp
+ * @brief Implementação do receptor LoRa
+ */
+
 #include "LoRaReceiver.h"
 
 LoRaReceiver::LoRaReceiver() : _lastRSSI(0), _lastSNR(0.0) {}
