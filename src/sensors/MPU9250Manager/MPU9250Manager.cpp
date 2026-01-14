@@ -253,14 +253,6 @@ void MPU9250Manager::getMagOffsets(float& x, float& y, float& z) const {
     x = _magOffX; y = _magOffY; z = _magOffZ;
 }
 
-void MPU9250Manager::getSoftIronMatrix(float matrix[3][3]) const {
-    for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) {
-            matrix[i][j] = _softIronMatrix[i][j];
-        }
-    }
-}
-
 void MPU9250Manager::clearOffsetsFromMemory() {
     _prefs.begin(PREFS_NAME, false);
     _prefs.clear();

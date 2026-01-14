@@ -141,11 +141,6 @@ public:
      */
     bool restoreBaseline();
 
-    /**
-     * @brief Imprime status detalhado no Serial
-     */
-    void printStatus() const;
-
 private:
     //=========================================================================
     // HARDWARE

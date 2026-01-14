@@ -134,9 +134,6 @@ public:
     /** @brief Retorna heap livre atual em bytes */
     uint32_t getFreeHeap();
     
-    /** @brief Retorna menor heap livre registrado */
-    uint32_t getMinFreeHeap() const { return _minFreeHeap; }
-    
     /** @brief Retorna uptime em milissegundos */
     unsigned long getUptime();
     

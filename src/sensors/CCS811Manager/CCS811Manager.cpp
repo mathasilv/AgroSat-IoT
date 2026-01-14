@@ -119,12 +119,3 @@ bool CCS811Manager::restoreBaseline() {
     }
     return false;
 }
-
-void CCS811Manager::printStatus() const {
-    if (_online) {
-        DEBUG_PRINTF(" CCS811: ONLINE (eCO2=%d, TVOC=%d) %s\n", 
-                     _eco2, _tvoc, isWarmupComplete() ? "" : "[Warm-up]");
-    } else {
-        DEBUG_PRINTLN(" CCS811: OFFLINE");
-    }
-}

@@ -18,7 +18,6 @@
  * ## Macros Disponíveis
  * | Macro           | Uso                              |
  * |-----------------|----------------------------------|
- * | DEBUG_PRINT(x)  | Imprime sem newline              |
  * | DEBUG_PRINTLN(x)| Imprime com newline              |
  * | DEBUG_PRINTF(.) | Printf formatado                 |
  * 
@@ -57,22 +56,6 @@ extern bool currentSerialLogsEnabled;   ///< Flag global de habilitação de log
 //=============================================================================
 
 /**
- * @brief Imprime valor na Serial com proteção de mutex
- * @tparam T Tipo do valor (int, float, String, etc.)
- * @param val Valor a ser impresso
- * @note Timeout de 100ms - descarta se mutex ocupado
- */
-template <typename T>
-inline void _debugPrintSafe(T val) {
-    if (xSerialMutex != NULL) {
-        if (xSemaphoreTake(xSerialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            Serial.print(val);
-            xSemaphoreGive(xSerialMutex);
-        }
-    }
-}
-
-/**
  * @brief Imprime valor na Serial com newline e proteção de mutex
  * @tparam T Tipo do valor (int, float, String, etc.)
  * @param val Valor a ser impresso
@@ -100,14 +83,6 @@ void safePrintf(const char* format, ...);
 //=============================================================================
 // MACROS DE DEBUG
 //=============================================================================
-
-/**
- * @def DEBUG_PRINT(x)
- * @brief Imprime valor sem newline (se logs habilitados)
- * @param x Valor a imprimir
- */
-#define DEBUG_PRINT(x) \
-    do { if(currentSerialLogsEnabled) { _debugPrintSafe(x); } } while(0)
 
 /**
  * @def DEBUG_PRINTLN(x)

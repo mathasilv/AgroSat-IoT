@@ -127,30 +127,9 @@ public:
      */
     void clearMagnetometerCalibration();
     
-    /**
-     * @brief Imprime offsets de calibração no Serial
-     */
-    void printMagnetometerCalibration() const;
-    
-    /**
-     * @brief Obtém offsets de Hard Iron
-     * @param[out] x Offset eixo X
-     * @param[out] y Offset eixo Y  
-     * @param[out] z Offset eixo Z
-     */
-    void getMagnetometerOffsets(float& x, float& y, float& z) const;
-    
     //=========================================================================
     // CONFIGURAÇÃO CCS811
     //=========================================================================
-    
-    /**
-     * @brief Aplica compensação ambiental ao CCS811
-     * @param temperature Temperatura atual em °C
-     * @param humidity Umidade relativa em %
-     * @return true se aplicado com sucesso
-     */
-    bool applyCCS811EnvironmentalCompensation(float temperature, float humidity);
     
     /**
      * @brief Salva baseline do CCS811 na NVS
@@ -169,11 +148,7 @@ public:
     // STATUS E DIAGNÓSTICO
     //=========================================================================
     
-    /** @brief Retorna número total de sensores configurados */
-    uint8_t getSensorCount() const { return _sensorCount; }
-    
-    /** @brief Retorna número de sensores online */
-    uint8_t getOnlineSensors() const;
+
     
     /** @name Status Individuais dos Sensores */
     ///@{
@@ -183,17 +158,7 @@ public:
     bool isCCS811Online() const { return _ccs811.isOnline(); }    ///< Sensor CO2 online?
     ///@}
 
-    /** @name Status Avançados */
-    ///@{
-    bool isMagnetometerCalibrated() const { return _mpu9250.isCalibrated(); }  ///< Mag calibrado?
-    bool isCCS811WarmupComplete() const { return _ccs811.isWarmupComplete(); } ///< Warmup OK?
-    bool isCCS811DataReliable() const { return _ccs811.isDataReliable(); }     ///< Dados confiáveis?
-    ///@}
-    
-    void printStatus() const;
     void printDetailedStatus() const;
-    void printSensorStatus() const;
-    void scanI2C();
     
     //=========================================================================
     // GETTERS DE DADOS
@@ -223,7 +188,6 @@ public:
     /** @name Dados do SI7021 (Higrômetro) */
     ///@{
     float getHumidity() const { return _si7021.getHumidity(); }
-    float getTempSI7021() const { return _si7021.getTemperature(); }
     float getTemperatureSI7021() const { return _si7021.getTemperature(); }  ///< Temp SI7021 (°C)
     ///@}
     
@@ -242,17 +206,8 @@ public:
      * @param[out] ax,ay,az Acelerômetro (g)
      * @param[out] mx,my,mz Magnetômetro (µT)
      */
-    void getRawData(float& gx, float& gy, float& gz, 
                     float& ax, float& ay, float& az,
                     float& mx, float& my, float& mz) const;
-    ///@}
-    
-    /** @name Acesso Direto aos Managers */
-    ///@{
-    MPU9250Manager& getMPU9250() { return _mpu9250; }  ///< Acesso ao manager MPU9250
-    BMP280Manager& getBMP280() { return _bmp280; }    ///< Acesso ao manager BMP280
-    SI7021Manager& getSI7021() { return _si7021; }    ///< Acesso ao manager SI7021
-    CCS811Manager& getCCS811() { return _ccs811; }    ///< Acesso ao manager CCS811
     ///@}
     
 private:

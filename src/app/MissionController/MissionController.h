@@ -99,9 +99,6 @@ public:
      */
     uint32_t getDuration() const;
     
-    /** @brief Retorna timestamp UTC de início da missão */
-    uint32_t getStartTimestamp() const { return _startTimestampUTC; }
-    
 private:
     //=========================================================================
     // DEPENDÊNCIAS

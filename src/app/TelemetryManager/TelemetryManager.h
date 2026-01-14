@@ -116,12 +116,6 @@ public:
     void stopMission();
     
     /**
-     * @brief Retorna modo de operação atual
-     * @return OperationMode enum (PREFLIGHT, FLIGHT, SAFE)
-     */
-    OperationMode getMode() { return _mode; }
-    
-    /**
      * @brief Aplica configurações específicas de um modo
      * @param modeIndex Índice do modo (0=PREFLIGHT, 1=FLIGHT, 2=SAFE)
      */

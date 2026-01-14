@@ -110,15 +110,6 @@ public:
      */
     uint32_t getUnixTime();
     
-    /**
-     * @brief Retorna objeto DateTime do RTClib
-     * @return DateTime com data/hora atual
-     */
-    DateTime getNow();
-
-    /** @brief Alias para getDateTime() (compatibilidade) */
-    String getLocalDateTime() { return getDateTime(); } 
-
 private:
     //=========================================================================
     // HARDWARE

@@ -102,11 +102,6 @@ uint32_t RTCManager::getUnixTime() {
     return _rtc.now().unixtime() - GMT_OFFSET_SEC;
 }
 
-DateTime RTCManager::getNow() {
-    if (!_initialized) return DateTime((uint32_t)0);
-    return _rtc.now();
-}
-
 bool RTCManager::isInitialized() const { return _initialized; }
 
 bool RTCManager::_detectRTC() {

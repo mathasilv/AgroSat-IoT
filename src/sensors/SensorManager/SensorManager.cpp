@@ -212,27 +212,6 @@ void SensorManager::clearMagnetometerCalibration() {
     }
 }
 
-void SensorManager::printMagnetometerCalibration() const {
-    DEBUG_PRINTLN("[SensorManager] --- Calibracao Magnetometro ---");
-    float x, y, z;
-    _mpu9250.getMagOffsets(x, y, z); 
-    DEBUG_PRINTF("Offsets: %.2f, %.2f, %.2f\n", x, y, z);
-}
-
-void SensorManager::getMagnetometerOffsets(float& x, float& y, float& z) const {
-    _mpu9250.getMagOffsets(x, y, z);
-}
-
-bool SensorManager::applyCCS811EnvironmentalCompensation(float temperature, float humidity) {
-    if (!_ccs811.isOnline()) return false;
-
-    if (_lockI2C()) {
-        _ccs811.setEnvironmentalData(humidity, temperature);
-        _unlockI2C();
-    }
-    return true;
-}
-
 void SensorManager::_autoApplyEnvironmentalCompensation() {
     uint32_t now = millis();
     if (now - _lastEnvCompensation < ENV_COMPENSATION_INTERVAL) return;
@@ -264,21 +243,6 @@ bool SensorManager::restoreCCS811Baseline() {
     return success;
 }
 
-void SensorManager::scanI2C() {
-    DEBUG_PRINTLN("[SensorManager] Scanning I2C Bus...");
-    if (_lockI2C()) {
-        uint8_t count = 0;
-        for (uint8_t i = 1; i < 127; i++) {
-            Wire.beginTransmission(i);
-            if (Wire.endTransmission() == 0) {
-                DEBUG_PRINTF("  Device found at: 0x%02X\n", i);
-                count++;
-            }
-        }
-        _unlockI2C();
-    }
-}
-
 void SensorManager::getRawData(float& gx, float& gy, float& gz,
                                float& ax, float& ay, float& az,
                                float& mx, float& my, float& mz) const {
@@ -294,18 +258,6 @@ void SensorManager::_updateTemperatureRedundancy() {
         _temperature = NAN;
     }
 }
-
-uint8_t SensorManager::getOnlineSensors() const {
-    uint8_t count = 0;
-    if (_mpu9250.isOnline()) count++;
-    if (_bmp280.isOnline()) count++;
-    if (_si7021.isOnline()) count++;
-    if (_ccs811.isOnline()) count++;
-    return count;
-}
-
-void SensorManager::printStatus() const { printDetailedStatus(); }
-void SensorManager::printSensorStatus() const { printDetailedStatus(); }
 
 void SensorManager::printDetailedStatus() const {
     DEBUG_PRINTLN("--- STATUS DETALHADO (SensorManager) ---");

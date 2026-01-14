@@ -152,14 +152,6 @@ void BMP280Manager::forceReinit() {
     begin();
 }
 
-void BMP280Manager::printStatus() const {
-    if (_online) {
-        DEBUG_PRINTF(" BMP280: ONLINE (T=%.2f C, P=%.1f hPa, A=%.0f m)\n", _temperature, _pressure, _altitude);
-    } else {
-        DEBUG_PRINTLN(" BMP280: OFFLINE");
-    }
-}
-
 bool BMP280Manager::_readRaw(float& temp, float& press, float& alt) {
     temp = _bmp280.readTemperature();
     press = _bmp280.readPressure() / 100.0f; // Pa -> hPa

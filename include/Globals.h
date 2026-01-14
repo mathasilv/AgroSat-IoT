@@ -57,19 +57,6 @@ public:
     QueueHandle_t getHttpQueue() const { return _httpQueue; }
     QueueHandle_t getStorageQueue() const { return _storageQueue; }
     
-    // Helpers para lock/unlock
-    bool lockI2C(uint32_t timeoutMs = 100);
-    void unlockI2C();
-    
-    bool lockSPI(uint32_t timeoutMs = 100);
-    void unlockSPI();
-    
-    bool lockData(uint32_t timeoutMs = 100);
-    void unlockData();
-    
-    bool lockSerial(uint32_t timeoutMs = 100);
-    void unlockSerial();
-    
     // Status
     bool isInitialized() const { return _initialized; }
     
@@ -100,7 +87,7 @@ private:
 // ========== SCOPED LOCK HELPER ==========
 class ScopedMutex {
 public:
-    ScopedMutex(SemaphoreHandle_t mutex, uint32_t timeoutMs = portMAX_DELAY) 
+    explicit ScopedMutex(SemaphoreHandle_t mutex, uint32_t timeoutMs = portMAX_DELAY) 
         : _mutex(mutex), _locked(false) {
         if (_mutex != NULL) {
             _locked = (xSemaphoreTake(_mutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE);
@@ -113,7 +100,6 @@ public:
         }
     }
     
-    bool isLocked() const { return _locked; }
     operator bool() const { return _locked; }
     
 private:

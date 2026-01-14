@@ -92,9 +92,6 @@ public:
     
     /** @brief Última leitura de temperatura válida? */
     bool isTempValid() const { return _online && !isnan(_lastTemp); }
-    
-    /** @brief Última leitura de umidade válida? */
-    bool isHumValid() const { return _online && !isnan(_lastHum); }
 
 private:
     //=========================================================================

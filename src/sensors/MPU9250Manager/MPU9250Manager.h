@@ -63,7 +63,7 @@ public:
      * @brief Construtor
      * @param addr Endereço I2C (0x68 ou 0x69)
      */
-    MPU9250Manager(uint8_t addr = 0x69);
+    explicit MPU9250Manager(uint8_t addr = 0x69);
 
     //=========================================================================
     // CICLO DE VIDA
@@ -157,12 +157,6 @@ public:
      * @param[out] x,y,z Offsets em µT
      */
     void getMagOffsets(float& x, float& y, float& z) const;
-    
-    /**
-     * @brief Obtém matriz de correção Soft Iron
-     * @param[out] matrix Matriz 3x3 de correção
-     */
-    void getSoftIronMatrix(float matrix[3][3]) const;
     
     /**
      * @brief Apaga calibração salva na NVS

@@ -1,7 +1,7 @@
 /**
  * @file StorageManager.cpp
  * @brief Gerenciador de Armazenamento (FIX: Buffer local para thread-safety)
- * @version 3.3.0
+ * @version 3.4.0
  */
 
 #include "StorageManager.h"
@@ -55,13 +55,6 @@ void StorageManager::setRTCManager(RTCManager* rtcManager) {
 
 void StorageManager::setSystemHealth(SystemHealth* systemHealth) {
     _systemHealth = systemHealth;
-}
-
-void StorageManager::_reportCRCError(uint8_t count) {
-    _crcErrors += count;
-    if (_systemHealth) {
-        for(uint8_t i=0; i<count; i++) _systemHealth->incrementCRCError();
-    }
 }
 
 void StorageManager::_attemptRecovery() {
@@ -141,113 +134,6 @@ bool StorageManager::saveMissionData(const MissionData& data) {
     return true;
 }
 
-bool StorageManager::saveTelemetryRedundant(const TelemetryData& data) {
-    if (!_available) { 
-        _attemptRecovery(); 
-        if (!_available) return false; 
-    }
-    
-    uint8_t buffer[256];
-    int offset = 0;
-    
-    memcpy(buffer + offset, &data.timestamp, sizeof(data.timestamp)); 
-    offset += sizeof(data.timestamp);
-    memcpy(buffer + offset, &data.batteryVoltage, sizeof(data.batteryVoltage)); 
-    offset += sizeof(data.batteryVoltage);
-    memcpy(buffer + offset, &data.temperature, sizeof(data.temperature)); 
-    offset += sizeof(data.temperature);
-    memcpy(buffer + offset, &data.systemStatus, sizeof(data.systemStatus)); 
-    offset += sizeof(data.systemStatus);
-    
-    return _writeTripleRedundant("/telemetry_critical.bin", buffer, offset);
-}
-
-bool StorageManager::saveMissionDataRedundant(const MissionData& data) {
-    if (!_available) { 
-        _attemptRecovery(); 
-        if (!_available) return false; 
-    }
-    
-    uint8_t buffer[128];
-    int offset = 0;
-    
-    memcpy(buffer + offset, &data.nodeId, sizeof(data.nodeId)); 
-    offset += sizeof(data.nodeId);
-    memcpy(buffer + offset, &data.soilMoisture, sizeof(data.soilMoisture)); 
-    offset += sizeof(data.soilMoisture);
-    memcpy(buffer + offset, &data.rssi, sizeof(data.rssi)); 
-    offset += sizeof(data.rssi);
-    
-    return _writeTripleRedundant("/mission_critical.bin", buffer, offset);
-}
-
-bool StorageManager::_writeTripleRedundant(const char* path, const uint8_t* data, size_t len) {
-    File file = SD.open(path, FILE_APPEND);
-    if (!file) {
-        _available = false;
-        return false;
-    }
-    
-    uint16_t crc = _calculateCRC16(data, len);
-    
-    for (int i = 0; i < 3; i++) {
-        file.write(data, len);
-        file.write((uint8_t*)&crc, sizeof(crc));
-    }
-    
-    file.close();
-    _totalWrites++;
-    
-    return true;
-}
-
-bool StorageManager::_readWithRedundancy(const char* path, uint8_t* data, size_t len) {
-    if (!_available) return false;
-
-    File file = SD.open(path, FILE_READ);
-    if (!file) return false;
-    
-    // FIX: Buffers locais para thread-safety
-    uint8_t copy1[256], copy2[256], copy3[256];
-    uint16_t crc1, crc2, crc3;
-    
-    // Ler 3 cópias
-    file.read(copy1, len); file.read((uint8_t*)&crc1, sizeof(crc1));
-    file.read(copy2, len); file.read((uint8_t*)&crc2, sizeof(crc2));
-    file.read(copy3, len); file.read((uint8_t*)&crc3, sizeof(crc3));
-    file.close();
-    
-    bool valid1 = (_calculateCRC16(copy1, len) == crc1);
-    bool valid2 = (_calculateCRC16(copy2, len) == crc2);
-    bool valid3 = (_calculateCRC16(copy3, len) == crc3);
-    
-    // Se 2 ou 3 cópias são válidas, recuperamos os dados
-    if (valid1 && valid2) { memcpy(data, copy1, len); return true; }
-    if (valid1 && valid3) { memcpy(data, copy1, len); return true; }
-    if (valid2 && valid3) { memcpy(data, copy2, len); return true; }
-    
-    // Recuperação de falha parcial (apenas 1 cópia válida)
-    if (valid1) { 
-        memcpy(data, copy1, len); 
-        _reportCRCError(1);
-        return true; 
-    }
-    if (valid2) { 
-        memcpy(data, copy2, len); 
-        _reportCRCError(1); 
-        return true; 
-    }
-    if (valid3) { 
-        memcpy(data, copy3, len); 
-        _reportCRCError(1); 
-        return true; 
-    }
-    
-    // Falha total
-    _reportCRCError(3);
-    return false;
-}
-
 uint16_t StorageManager::_calculateCRC16(const uint8_t* data, size_t length) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < length; i++) {
@@ -292,10 +178,6 @@ bool StorageManager::saveLog(const String& message) {
     return true;
 }
 
-bool StorageManager::logError(const String& errorMsg) { 
-    return saveLog("[ERROR] " + errorMsg); 
-}
-
 bool StorageManager::createTelemetryFile() {
     if (SD.exists(SD_LOG_FILE)) return true;
     File file = SD.open(SD_LOG_FILE, FILE_WRITE);
@@ -328,7 +210,7 @@ bool StorageManager::createLogFile() {
     File file = SD.open(SD_SYSTEM_LOG, FILE_WRITE);
     if (!file) return false;
     
-    file.println(F("=== AGROSAT-IOT SYSTEM LOG v3.3 ==="));
+    file.println(F("=== AGROSAT-IOT SYSTEM LOG v3.4 ==="));
     file.println(F("Timestamp,Message,CRC16"));
     file.close();
     return true;
@@ -393,7 +275,7 @@ void StorageManager::_formatTelemetryToCSV(const TelemetryData& data, char* buff
     if (pos >= (int)len) return;
     
     // Parte 4: IMU
-    pos += snprintf(buffer + pos, len - pos, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,",
+    pos += snprintf(buffer + pos, len - pos, "%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,",
         sf(data.gyroX), sf(data.gyroY), sf(data.gyroZ),
         sf(data.accelX), sf(data.accelY), sf(data.accelZ),
         sf(data.magX), sf(data.magY), sf(data.magZ));
@@ -401,7 +283,7 @@ void StorageManager::_formatTelemetryToCSV(const TelemetryData& data, char* buff
     if (pos >= (int)len) return;
     
     // Parte 5: Ambiente e status
-    pos += snprintf(buffer + pos, len - pos, "%.1f,%.0f,%.0f,0x%02X,%d,-,",
+    pos += snprintf(buffer + pos, len - pos, "%.1f,%.0f,0x%02X,%d,-,",
         sf(data.humidity), sf(data.co2), sf(data.tvoc),
         data.systemStatus, data.errorCount);
     
@@ -431,30 +313,4 @@ void StorageManager::_formatMissionToCSV(const MissionData& data, char* buffer, 
         data.collectionTime,      
         data.retransmissionTime   
     );
-}
-
-void StorageManager::listFiles() {
-    if (!_available) {
-        Serial.println("[StorageManager] SD Card não disponível.");
-        return;
-    }
-    
-    Serial.println("[StorageManager] === Arquivos no SD Card ===");
-    File root = SD.open("/");
-    File file = root.openNextFile();
-    
-    while (file) {
-        Serial.printf("  %s - %d bytes\n", file.name(), file.size());
-        file = root.openNextFile();
-    }
-    
-    Serial.println("========================================");
-}
-
-uint64_t StorageManager::getFreeSpace() { 
-    return _available ? SD.totalBytes() - SD.usedBytes() : 0; 
-}
-
-uint64_t StorageManager::getUsedSpace() { 
-    return _available ? SD.usedBytes() : 0; 
 }

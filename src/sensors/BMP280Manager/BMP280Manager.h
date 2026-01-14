@@ -109,11 +109,6 @@ public:
     /** @brief Contador de falhas consecutivas */
     uint8_t getFailCount() const { return _failCount; }
     
-    /**
-     * @brief Imprime status detalhado no Serial
-     */
-    void printStatus() const;
-    
 private:
     //=========================================================================
     // HARDWARE

@@ -11,7 +11,7 @@
  * 
  * @author AgroSat Team
  * @date 2024
- * @version 1.1.0
+ * @version 1.2.0
  * 
  * @copyright Copyright (c) 2024 AgroSat Project
  * @license MIT License
@@ -26,6 +26,7 @@
  * 
  * @note Estruturas otimizadas para minimizar uso de RAM
  * @note payload[] reduzido de 250 para 64 bytes
+ * @note HealthTelemetry removido - usar HealthTelemetryExtended de SystemHealth.h
  */
 
 #ifndef TELEMETRY_TYPES_H
@@ -166,6 +167,17 @@ struct MissionData {
     bool forwarded;               ///< Já foi encaminhado?
     char originalPayloadHex[20];  ///< Payload original (hex)
     uint8_t payloadLength;        ///< Tamanho do payload
+    
+    /** @brief Construtor padrão com inicialização segura */
+    MissionData() :
+        nodeId(0), sequenceNumber(0),
+        soilMoisture(0.0f), ambientTemp(0.0f), humidity(0.0f), irrigationStatus(0),
+        rssi(0), snr(0.0f), packetsReceived(0), packetsLost(0), lastLoraRx(0),
+        nodeTimestamp(0), collectionTime(0), retransmissionTime(0),
+        priority(0), forwarded(false), payloadLength(0)
+    {
+        originalPayloadHex[0] = '\0';
+    }
 };
 
 //=============================================================================
@@ -208,25 +220,6 @@ struct HttpQueueMessage {
 struct StorageQueueMessage {
     TelemetryData data;       ///< Dados de telemetria
     GroundNodeBuffer nodes;   ///< Buffer de ground nodes
-};
-
-//=============================================================================
-// TELEMETRIA DE SAÚDE DO SISTEMA
-//=============================================================================
-
-/**
- * @struct HealthTelemetry
- * @brief Dados básicos de saúde do sistema
- */
-struct HealthTelemetry {
-    uint32_t uptime;          ///< Uptime em ms
-    uint32_t freeHeap;        ///< Heap livre atual (bytes)
-    uint32_t minFreeHeap;     ///< Menor heap livre registrado
-    uint16_t resetCount;      ///< Contagem de resets
-    uint8_t resetReason;      ///< Razão do último reset
-    float cpuTemp;            ///< Temperatura da CPU (°C)
-    uint8_t systemStatus;     ///< Flags de status
-    uint16_t errorCount;      ///< Contador de erros
 };
 
 #endif // TELEMETRY_TYPES_H

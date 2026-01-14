@@ -7,9 +7,14 @@
 #include "comm/PayloadManager/PayloadManager.h"
 
 GroundNodeManager::GroundNodeManager() {
-    memset(&_buffer, 0, sizeof(GroundNodeBuffer));
+    // Inicialização segura sem memset (evita problemas com floats)
     _buffer.activeNodes = 0;
     _buffer.totalPacketsCollected = 0;
+    
+    for (uint8_t i = 0; i < MAX_GROUND_NODES; i++) {
+        _buffer.nodes[i] = MissionData();  // Inicialização padrão
+        _buffer.lastUpdate[i] = 0;
+    }
 }
 
 void GroundNodeManager::updateNode(const MissionData& data) {

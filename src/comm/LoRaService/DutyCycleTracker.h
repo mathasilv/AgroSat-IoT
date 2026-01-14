@@ -88,19 +88,8 @@ public:
     /** @brief Retorna tempo de TX acumulado na janela atual (ms) */
     uint32_t getAccumulatedTxTime() const { return _accumulatedTxTime; }
     
-    /** @brief Retorna tempo de TX ainda disponível na janela (ms) */
-    uint32_t getRemainingTime() const;
-    
     /** @brief Retorna percentual de duty cycle usado (0.0 - 100.0) */
     float getDutyCyclePercent() const;
-    
-    /**
-     * @brief Calcula tempo de espera até poder transmitir
-     * @param transmissionTimeMs Tempo de TX desejado
-     * @return 0 se pode transmitir agora
-     * @return >0 milissegundos até disponibilidade
-     */
-    uint32_t getTimeUntilAvailable(uint32_t transmissionTimeMs) const;
     
 private:
     //=========================================================================

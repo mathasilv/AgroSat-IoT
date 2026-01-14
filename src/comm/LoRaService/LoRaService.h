@@ -107,19 +107,6 @@ public:
      */
     void setSpreadingFactor(int sf);
     
-    //=========================================================================
-    // GETTERS DE STATUS
-    //=========================================================================
-    
-    /** @brief Retorna SF atual configurado */
-    int getCurrentSF() const { return _currentSF; }
-    
-    /** @brief Retorna RSSI do último pacote recebido (dBm) */
-    int getLastRSSI() const { return _lastRSSI; }
-    
-    /** @brief Retorna SNR do último pacote recebido (dB) */
-    float getLastSNR() const { return _lastSNR; }
-    
     /**
      * @brief Acesso ao tracker de duty cycle
      * @return Referência ao DutyCycleTracker interno

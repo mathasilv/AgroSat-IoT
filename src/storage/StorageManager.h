@@ -5,30 +5,26 @@
  * @details Sistema de armazenamento robusto com suporte a:
  *          - Logging de telemetria em formato CSV
  *          - Verificação de integridade via CRC-16 CCITT
- *          - Escrita com redundância tripla para dados críticos
  *          - Rotação automática de arquivos por tamanho
  *          - Recuperação automática de falhas do SD
  *          - Integração com RTC para timestamps precisos
  * 
  * @author AgroSat Team
  * @date 2024
- * @version 3.3.0
+ * @version 3.4.0
  * 
  * @copyright Copyright (c) 2024 AgroSat Project
  * @license MIT License
  * 
  * ## Arquivos Gerados
  * | Arquivo          | Conteúdo                    | Formato |
- * |------------------|-----------------------------|---------|
+ * |------------------|-----------------------------|--------|
  * | telemetry.csv    | Dados de sensores           | CSV+CRC |
  * | mission.csv      | Dados de ground nodes       | CSV+CRC |
  * | system.log       | Logs do sistema             | TXT+CRC |
- * | errors.log       | Registro de erros           | TXT     |
  * 
  * ## Integridade de Dados
  * - **CRC-16 CCITT**: Cada linha tem checksum anexado
- * - **Redundância Tripla**: Dados críticos escritos 3x
- * - **Votação por Maioria**: Recuperação de 1 cópia corrompida
  * 
  * ## Pinagem SD Card (HSPI)
  * | Pino ESP32 | Função SD |
@@ -55,18 +51,8 @@ class RTCManager;
 class SystemHealth;
 
 /**
- * @struct RedundantData
- * @brief Estrutura para armazenamento redundante com CRC
- */
-struct RedundantData {
-    uint32_t timestamp;  ///< Timestamp Unix
-    float value;         ///< Valor do dado
-    uint16_t crc;        ///< CRC-16 para validação
-} __attribute__((packed));
-
-/**
  * @class StorageManager
- * @brief Gerenciador de SD Card com CRC e redundância
+ * @brief Gerenciador de SD Card com CRC
  */
 class StorageManager {
 public:
@@ -123,31 +109,6 @@ public:
      */
     bool saveMissionData(const MissionData& data);
     
-    /**
-     * @brief Registra mensagem de erro no log de erros
-     * @param errorMsg Descrição do erro
-     * @return true se salvo com sucesso
-     */
-    bool logError(const String& errorMsg);
-    
-    //=========================================================================
-    // SALVAMENTO COM REDUNDÂNCIA TRIPLA
-    //=========================================================================
-    
-    /**
-     * @brief Salva telemetria com 3 cópias redundantes
-     * @param data Dados de telemetria
-     * @return true se pelo menos 2 cópias salvas
-     */
-    bool saveTelemetryRedundant(const TelemetryData& data);
-    
-    /**
-     * @brief Salva dados de missão com 3 cópias redundantes
-     * @param data Dados do ground node
-     * @return true se pelo menos 2 cópias salvas
-     */
-    bool saveMissionDataRedundant(const MissionData& data);
-      
     //=========================================================================
     // GERENCIAMENTO DE ARQUIVOS
     //=========================================================================
@@ -161,31 +122,12 @@ public:
     /** @brief Cria arquivo de log do sistema */
     bool createLogFile();
     
-    /** @brief Lista arquivos no SD Card via Serial */
-    void listFiles();
-    
     //=========================================================================
     // STATUS
     //=========================================================================
     
     /** @brief SD Card disponível e montado? */
     bool isAvailable() const { return _available; }
-    
-    /** @brief Retorna espaço livre em bytes */
-    uint64_t getFreeSpace();
-    
-    /** @brief Retorna espaço usado em bytes */
-    uint64_t getUsedSpace();
-    
-    //=========================================================================
-    // ESTATÍSTICAS DE INTEGRIDADE
-    //=========================================================================
-    
-    /** @brief Retorna contagem de erros de CRC detectados */
-    uint16_t getCRCErrors() const { return _crcErrors; }
-    
-    /** @brief Retorna total de escritas realizadas */
-    uint16_t getTotalWrites() const { return _totalWrites; }
     
 private:
     //=========================================================================
@@ -230,15 +172,6 @@ private:
      * @return CRC-16 calculado
      */
     uint16_t _calculateCRC16(const uint8_t* data, size_t length);
-    
-    /** @brief Escreve dados com 3 cópias redundantes */
-    bool _writeTripleRedundant(const char* path, const uint8_t* data, size_t len);
-    
-    /** @brief Lê dados com votação por maioria */
-    bool _readWithRedundancy(const char* path, uint8_t* data, size_t len);
-    
-    /** @brief Reporta erro de CRC ao SystemHealth */
-    void _reportCRCError(uint8_t count = 1);
 };
 
 #endif

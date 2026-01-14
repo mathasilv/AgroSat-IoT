@@ -105,14 +105,6 @@ void PowerManager::enablePowerSave() {
     DEBUG_PRINTLN("[PowerManager] Modo Economia ATIVADO (80MHz)");
 }
 
-void PowerManager::disablePowerSave() {
-    if (!_powerSaveEnabled) return;
-    _powerSaveEnabled = false;
-    
-    setCpuFrequencyMhz(240);
-    DEBUG_PRINTLN("[PowerManager] Modo Performance ATIVADO (240MHz)");
-}
-
 void PowerManager::adjustCpuFrequency() {
     if (_percentage > 60.0f) {
         if (getCpuFrequencyMhz() != 240) {

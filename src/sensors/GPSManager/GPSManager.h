@@ -84,17 +84,8 @@ public:
     /** @brief Retorna altitude GPS em metros (acima do nível do mar) */
     float getAltitude() const { return _altitude; }
     
-    /** @brief Retorna altitude filtrada (suavizada) em metros */
-    float getFilteredAltitude() const { return _filteredAltitude; }
-    
     /** @brief Retorna número de satélites usados no fix */
     uint8_t getSatellites() const { return _satellites; }
-    
-    /** @brief Retorna HDOP (Horizontal Dilution of Precision) */
-    float getHDOP() const { return _hdop; }
-    
-    /** @brief Retorna velocidade calculada em km/h */
-    float getSpeed() const { return _speed; }
     
     //=========================================================================
     // STATUS
@@ -107,19 +98,6 @@ public:
      */
     bool hasFix() const { return _hasFix; }
     
-    /**
-     * @brief Verifica se o fix é de alta qualidade
-     * @return true se HDOP < 2.0 e satélites >= 6
-     */
-    bool hasGoodFix() const { return _hasFix && _hdop < 2.0f && _satellites >= 6; }
-    
-    /**
-     * @brief Retorna idade do último fix em milissegundos
-     * @return Tempo desde última sentença NMEA válida
-     * @note Valores > 5000ms indicam possível perda de sinal
-     */
-    uint32_t getLastFixAge() const;
-
 private:
     //=========================================================================
     // HARDWARE

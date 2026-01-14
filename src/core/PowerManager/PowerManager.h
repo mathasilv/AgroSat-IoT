@@ -88,9 +88,6 @@ public:
     /** @brief Bateria em nível crítico? (< 3.3V) */
     bool isCritical() const { return _isCritical; }
     
-    /** @brief Bateria em nível baixo? (< 3.7V) */
-    bool isLow() const { return _isLow; }
-
     //=========================================================================
     // CONTROLE DE ENERGIA
     //=========================================================================
@@ -100,12 +97,6 @@ public:
      * @details Reduz CPU para 80MHz
      */
     void enablePowerSave();
-    
-    /**
-     * @brief Desativa modo de economia de energia
-     * @details Restaura CPU para 240MHz
-     */
-    void disablePowerSave();
     
     /**
      * @brief Ajusta frequência da CPU baseado no nível de bateria

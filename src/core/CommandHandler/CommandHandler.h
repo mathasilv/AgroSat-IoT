@@ -6,12 +6,10 @@
  *          e diagnóstico do sistema via terminal Serial:
  *          - Comandos de status e diagnóstico
  *          - Controle de sensores e calibração
- *          - Informações de link budget LoRa
- *          - Comandos de debug e teste
  * 
  * @author AgroSat Team
  * @date 2024
- * @version 1.1.0
+ * @version 1.2.0
  * 
  * @copyright Copyright (c) 2024 AgroSat Project
  * @license MIT License
@@ -20,11 +18,10 @@
  * | Comando         | Descrição                      |
  * |-----------------|--------------------------------|
  * | HELP            | Lista comandos disponíveis     |
- * | STATUS          | Status geral do sistema        |
- * | SENSORS         | Status detalhado dos sensores  |
- * | CALIBRATE_MAG   | Inicia calibração magnetômetro |
- * | LINK_BUDGET     | Mostra link budget LoRa        |
- * | SCAN_I2C        | Escaneia barramento I2C        |
+ * | STATUS          | Status detalhado dos sensores  |
+ * | CALIB_MAG       | Inicia calibração magnetômetro |
+ * | CLEAR_MAG       | Apaga calibração magnetômetro  |
+ * | SAVE_BASELINE   | Salva baseline do CCS811       |
  * 
  * @note Comandos são case-insensitive
  * @see TelemetryManager::handleCommand() para comandos de missão
@@ -61,12 +58,6 @@ private:
     
     /** @brief Imprime lista de comandos disponíveis */
     void _printHelp();
-    
-    /** @brief Processa comandos relacionados a sensores */
-    void _handleSensorCmd(const String& cmd);
-    
-    /** @brief Imprime informações de link budget LoRa */
-    void _printLinkBudget();
 };
 
 #endif // COMMAND_HANDLER_H

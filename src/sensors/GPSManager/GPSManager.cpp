@@ -192,7 +192,3 @@ bool GPSManager::_isAnomalousJump(double newLat, double newLng, uint32_t dtMs) {
 float GPSManager::_exponentialFilter(float current, float newValue, float alpha) const {
     return current + alpha * (newValue - current);
 }
-
-uint32_t GPSManager::getLastFixAge() const {
-    return millis() - _lastEncoded;
-}
