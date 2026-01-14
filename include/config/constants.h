@@ -95,12 +95,6 @@
 #define HTTP_ENDPOINT "/teste_post/envio.php" ///< Endpoint da API
 
 //=============================================================================
-// CRIPTOGRAFIA
-//=============================================================================
-#define AES_KEY_SIZE 16                 ///< Tamanho da chave AES (bytes)
-#define AES_ENABLED true                ///< Habilitar criptografia                
-
-//=============================================================================
 // BUFFERS E LIMITES
 //=============================================================================
 #define JSON_MAX_SIZE 2048              ///< Tamanho máximo JSON (bytes)
