@@ -243,11 +243,6 @@ bool SensorManager::restoreCCS811Baseline() {
     return success;
 }
 
-void SensorManager::getRawData(float& gx, float& gy, float& gz,
-                               float& ax, float& ay, float& az,
-                               float& mx, float& my, float& mz) const {
-    _mpu9250.getRawData(gx, gy, gz, ax, ay, az, mx, my, mz);
-}
 
 void SensorManager::_updateTemperatureRedundancy() {
     if (_si7021.isOnline() && _si7021.isTempValid()) {

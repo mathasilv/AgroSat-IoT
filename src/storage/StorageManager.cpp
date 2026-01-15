@@ -15,7 +15,6 @@ StorageManager::StorageManager() :
     _rtcManager(nullptr), 
     _systemHealth(nullptr),
     _lastInitAttempt(0),
-    _crcErrors(0),
     _totalWrites(0) 
 {}
 

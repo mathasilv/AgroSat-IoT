@@ -241,18 +241,6 @@ float MPU9250Manager::_applyFilter(float val, float* buf) {
     return sum / FILTER_SIZE;
 }
 
-void MPU9250Manager::getRawData(float& gx, float& gy, float& gz, 
-                                float& ax, float& ay, float& az,
-                                float& mx, float& my, float& mz) const {
-    gx=_gyroX; gy=_gyroY; gz=_gyroZ;
-    ax=_accelX; ay=_accelY; az=_accelZ;
-    mx=_magX; my=_magY; mz=_magZ;
-}
-
-void MPU9250Manager::getMagOffsets(float& x, float& y, float& z) const {
-    x = _magOffX; y = _magOffY; z = _magOffZ;
-}
-
 void MPU9250Manager::clearOffsetsFromMemory() {
     _prefs.begin(PREFS_NAME, false);
     _prefs.clear();

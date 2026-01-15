@@ -198,18 +198,6 @@ public:
     uint16_t getTVOC() const { return _ccs811.getTVOC(); }  ///< TVOC (ppb)
     ///@}
     
-    /** @name Dados RAW do MPU9250 */
-    ///@{
-    /**
-     * @brief Obtém todos os dados raw do IMU de uma vez
-     * @param[out] gx,gy,gz Giroscópio (°/s)
-     * @param[out] ax,ay,az Acelerômetro (g)
-     * @param[out] mx,my,mz Magnetômetro (µT)
-     */
-                    float& ax, float& ay, float& az,
-                    float& mx, float& my, float& mz) const;
-    ///@}
-    
 private:
     //=========================================================================
     // MANAGERS DE SENSORES

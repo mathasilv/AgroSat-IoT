@@ -31,7 +31,6 @@ extern bool currentSerialLogsEnabled;
 
 // ========== FUNÇÕES GLOBAIS ==========
 void initGlobalResources();
-void safePrintf(const char* format, ...);
 
 // ========== CLASSE RESOURCE MANAGER (SINGLETON) ==========
 class ResourceManager {

@@ -85,7 +85,6 @@
 #define WIFI_SSID "MATHEUS "            ///< SSID da rede WiFi
 #define WIFI_PASSWORD "12213490"        ///< Senha da rede WiFi
 #define HTTP_SERVER "obsat.org.br"      ///< Servidor HTTP
-#define HTTP_PORT 443                   ///< Porta (443 = HTTPS)
 #define HTTP_ENDPOINT "/teste_post/envio.php" ///< Endpoint da API
 
 //=============================================================================

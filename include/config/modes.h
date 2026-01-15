@@ -10,7 +10,7 @@
  * 
  * @author AgroSat Team
  * @date 2024
- * @version 1.1.0
+ * @version 1.2.0
  * 
  * @copyright Copyright (c) 2024 AgroSat Project
  * @license MIT License
@@ -63,9 +63,7 @@ enum OperationMode : uint8_t {
     MODE_INIT = 0,       ///< Inicialização (transitório)
     MODE_PREFLIGHT = 1,  ///< Pré-voo: testes e configuração
     MODE_FLIGHT = 2,     ///< Voo: coleta ativa de dados
-    MODE_POSTFLIGHT = 3, ///< Pós-voo: análise (não implementado)
-    MODE_SAFE = 4,       ///< Seguro: emergência/economia
-    MODE_ERROR = 5       ///< Erro: falha crítica
+    MODE_SAFE = 3        ///< Seguro: emergência/economia
 };
 
 //=============================================================================
@@ -77,7 +75,6 @@ enum OperationMode : uint8_t {
  * @brief Configurações específicas para cada modo de operação
  */
 struct ModeConfig {
-    bool displayEnabled;           ///< Habilitar display (se houver)
     bool serialLogsEnabled;        ///< Habilitar logs na Serial
     bool sdLogsVerbose;            ///< Logs detalhados no SD
     bool loraEnabled;              ///< Habilitar transmissão LoRa
@@ -97,7 +94,6 @@ struct ModeConfig {
  *          para diagnóstico e verificação do sistema.
  */
 const ModeConfig PREFLIGHT_CONFIG = {
-    .displayEnabled = true,
     .serialLogsEnabled = true,        // Logs completos para debug
     .sdLogsVerbose = true,
     .loraEnabled = true,
@@ -113,7 +109,6 @@ const ModeConfig PREFLIGHT_CONFIG = {
  *          para economizar energia e banda.
  */
 const ModeConfig FLIGHT_CONFIG = {
-    .displayEnabled = false,
     .serialLogsEnabled = false,       // Logs desabilitados
     .sdLogsVerbose = false,
     .loraEnabled = true,
@@ -129,7 +124,6 @@ const ModeConfig FLIGHT_CONFIG = {
  *          Envia beacons periódicos para localização.
  */
 const ModeConfig SAFE_CONFIG = {
-    .displayEnabled = false,
     .serialLogsEnabled = true,        // Logs para diagnóstico
     .sdLogsVerbose = true,
     .loraEnabled = true,

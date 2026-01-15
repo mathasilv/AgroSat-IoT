@@ -112,16 +112,6 @@ public:
     float getMagZ() const { return _magZ; }      ///< Campo magnético Z
     ///@}
 
-    /**
-     * @brief Obtém todos os dados de uma vez
-     * @param[out] gx,gy,gz Giroscópio (°/s)
-     * @param[out] ax,ay,az Acelerômetro (g)
-     * @param[out] mx,my,mz Magnetômetro (µT)
-     */
-    void getRawData(float& gx, float& gy, float& gz, 
-                    float& ax, float& ay, float& az,
-                    float& mx, float& my, float& mz) const;
-
     //=========================================================================
     // STATUS
     //=========================================================================
@@ -152,11 +142,6 @@ public:
      */
     bool calibrateMagnetometer();
     
-    /**
-     * @brief Obtém offsets de Hard Iron
-     * @param[out] x,y,z Offsets em µT
-     */
-    void getMagOffsets(float& x, float& y, float& z) const;
     
     /**
      * @brief Apaga calibração salva na NVS

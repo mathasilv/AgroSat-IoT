@@ -1,19 +1,42 @@
 # Diretório `app/`
 
-Este diretório concentra a lógica de aplicação do projeto AgroSat-IoT, separada dos drivers de hardware e dos gerenciadores de serviços de baixo nível.[memory:208]
+Este diretório concentra a lógica de aplicação do projeto AgroSat-IoT, separada dos drivers de hardware e dos gerenciadores de serviços de baixo nível.
 
 ## Objetivo
 
-Os arquivos em `app/` implementam o comportamento específico da missão, como regras de telemetria, gerenciamento de nós terrestres e tratamento de comandos, usando as interfaces já expostas por módulos como `SensorManager`, `CommunicationManager` e `StorageManager`.[memory:208]
+Os arquivos em `app/` implementam o comportamento específico da missão, como regras de telemetria, gerenciamento de nós terrestres e controle de missão, usando as interfaces já expostas por módulos como `SensorManager`, `CommunicationManager` e `StorageManager`.
 
-## Componentes principais
+## Componentes
 
-- `GroundNodeManager`: gerencia o buffer de nós terrestres recebidos via LoRa, incluindo atualização de dados, cálculo de prioridade, limpeza de nós antigos e controle da flag de retransmissão.
-- (Futuro) `TelemetryService` ou módulo equivalente: responsável por montar estruturas de telemetria a partir dos sensores e do estado do sistema, enviar pelos links disponíveis e salvar em armazenamento local.
-- (Futuro) Módulo de comandos: centraliza o processamento de comandos de depuração e calibração, integrando com os gerenciadores de sensores e telemetria.
+### TelemetryManager
+Gerenciador central do sistema que orquestra todos os subsistemas:
+- Inicialização e configuração de modos de operação
+- Loop principal de telemetria e comunicação
+- Processamento de comandos
+- Gerenciamento de estados (PREFLIGHT, FLIGHT, SAFE)
+
+### TelemetryCollector
+Responsável por coletar dados de todos os sensores e montar a estrutura `TelemetryData`:
+- Coleta de timestamps e dados de energia
+- Leitura de sensores (IMU, barômetro, GPS, qualidade do ar)
+- Validação e fusão de dados de temperatura
+- Geração de resumo de nós terrestres
+
+### MissionController
+Controla o ciclo de vida da missão com persistência em NVS:
+- Início e término de missão
+- Recuperação de estado após reinicialização
+- Estatísticas de link e duração
+
+### GroundNodeManager
+Gerencia o buffer de nós terrestres recebidos via LoRa:
+- Atualização de dados de nós
+- Cálculo de prioridade (QoS)
+- Limpeza de nós antigos (TTL)
+- Controle de flags de retransmissão
 
 ## Boas práticas neste diretório
 
-- Manter aqui apenas lógica de “negócio” da missão (regras de voo, política de retransmissão, formato de telemetria), evitando acesso direto a registradores ou detalhes de hardware.
-- Utilizar os serviços já existentes (sensores, comunicação, energia, armazenamento, RTC) em vez de duplicar código de baixo nível.
-- Priorizar classes e funções pequenas, focadas em uma responsabilidade clara, para facilitar testes e manutenção.
+- Manter aqui apenas lógica de "negócio" da missão (regras de voo, política de retransmissão, formato de telemetria)
+- Utilizar os serviços já existentes (sensores, comunicação, energia, armazenamento, RTC)
+- Priorizar classes e funções pequenas, focadas em uma responsabilidade clara
