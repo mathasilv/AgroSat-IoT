@@ -54,9 +54,6 @@
 //=============================================================================
 // LORA SX1276 (VSPI)
 //=============================================================================
-#define LORA_SCK 5              ///< SPI Clock
-#define LORA_MISO 19            ///< SPI Master In Slave Out
-#define LORA_MOSI 27            ///< SPI Master Out Slave In
 #define LORA_CS 18              ///< Chip Select (NSS)
 #define LORA_RST 23             ///< Reset (ativo baixo)
 #define LORA_DIO0 26            ///< Interrupção RX/TX Done 
@@ -92,9 +89,5 @@
 // ENDEREÇOS I2C DOS SENSORES
 //=============================================================================
 #define MPU9250_ADDRESS 0x69    ///< IMU (AD0=HIGH)
-#define BMP280_ADDR_1 0x76      ///< Barômetro (SDO=GND)
-#define SI7021_ADDRESS 0x40     ///< Higrômetro (fixo)
-#define CCS811_ADDR_1 0x5A      ///< Sensor CO2 (ADDR=LOW)
-#define DS3231_ADDRESS 0x68     ///< RTC (fixo)
 
 #endif // PINS_H

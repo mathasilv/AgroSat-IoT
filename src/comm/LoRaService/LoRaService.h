@@ -105,7 +105,6 @@ public:
      * @param sf Valor de SF (7-12)
      * @note SF maior = maior alcance, menor taxa de dados
      */
-    void setSpreadingFactor(int sf);
     
     /**
      * @brief Acesso ao tracker de duty cycle

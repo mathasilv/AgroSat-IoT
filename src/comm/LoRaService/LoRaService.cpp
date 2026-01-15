@@ -153,10 +153,6 @@ bool LoRaService::send(const uint8_t* data, size_t len, bool isAsync) {
 //=============================================================================
 
 void LoRaService::setTxPower(int level) { LoRa.setTxPower(level); }
-void LoRaService::setSpreadingFactor(int sf) {
-    _currentSF = sf;
-    LoRa.setSpreadingFactor(sf);
-}
 
 //=============================================================================
 // CONTROLE DE DUTY CYCLE

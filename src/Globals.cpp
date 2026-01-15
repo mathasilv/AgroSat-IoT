@@ -1,7 +1,7 @@
 /**
  * @file Globals.cpp
  * @brief Implementação do gerenciador de recursos globais
- * @version 2.0.0
+ * @version 2.1.0
  */
 
 #include "Globals.h"
@@ -11,7 +11,6 @@
 // ========== VARIÁVEIS GLOBAIS (compatibilidade) ==========
 SemaphoreHandle_t xSerialMutex = NULL;
 SemaphoreHandle_t xI2CMutex = NULL;
-SemaphoreHandle_t xSPIMutex = NULL;
 SemaphoreHandle_t xDataMutex = NULL;
 SemaphoreHandle_t xLoRaRxSemaphore = NULL;
 QueueHandle_t xHttpQueue = NULL;
@@ -26,7 +25,6 @@ void initGlobalResources() {
     // Copiar referências para variáveis globais (compatibilidade)
     xSerialMutex = ResourceManager::instance().getSerialMutex();
     xI2CMutex = ResourceManager::instance().getI2CMutex();
-    xSPIMutex = ResourceManager::instance().getSPIMutex();
     xDataMutex = ResourceManager::instance().getDataMutex();
     xLoRaRxSemaphore = ResourceManager::instance().getLoRaRxSemaphore();
     xHttpQueue = ResourceManager::instance().getHttpQueue();
@@ -57,7 +55,6 @@ bool ResourceManager::begin() {
     // Criar mutexes
     _serialMutex = xSemaphoreCreateMutex();
     _i2cMutex = xSemaphoreCreateMutex();
-    _spiMutex = xSemaphoreCreateMutex();
     _dataMutex = xSemaphoreCreateMutex();
     
     // Criar semáforo binário para LoRa RX
@@ -68,7 +65,7 @@ bool ResourceManager::begin() {
     _storageQueue = xQueueCreate(10, sizeof(uint8_t));  // Apenas sinal
     
     // Verificar se todos foram criados
-    if (_serialMutex == NULL || _i2cMutex == NULL || _spiMutex == NULL ||
+    if (_serialMutex == NULL || _i2cMutex == NULL ||
         _dataMutex == NULL || _loraRxSemaphore == NULL ||
         _httpQueue == NULL || _storageQueue == NULL) {
         
@@ -81,4 +78,3 @@ bool ResourceManager::begin() {
     _initialized = true;
     return true;
 }
-
