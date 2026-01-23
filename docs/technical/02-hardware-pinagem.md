@@ -122,7 +122,7 @@ graph TB
 
 | Sensor | Endereço | Alternativo | Descrição |
 |--------|----------|-------------|-----------|
-| MPU9250 | 0x69 | 0x68 | IMU 9-DOF (AD0=HIGH) |
+| MPU9250 | 0x68 | 0x69 | IMU 9-DOF (AD0 configurável) |
 | BMP280 | 0x76 | 0x77 | Barômetro (SDO=GND) |
 | SI7021 | 0x40 | - | Higrômetro (fixo) |
 | CCS811 | 0x5A | 0x5B | Sensor CO2 (ADDR=LOW) |

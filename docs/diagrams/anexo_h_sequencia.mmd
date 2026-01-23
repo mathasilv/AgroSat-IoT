@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+    participant GN as GroundNode
+    participant LS as LoRaService
+    participant GNM as GroundNodeManager
+    participant PM as PayloadManager
+    participant SM as StorageManager
+    participant CM as CommunicationManager
+    participant HTTP as HttpService
+
+    Note over GN,LS: Fase 1 - Recepção
+    GN->>LS: Transmissão LoRa 915MHz
+    LS->>LS: Validar CRC
+    LS->>GNM: Pacote Válido + RSSI + SNR
+
+    Note over GNM,PM: Fase 2 - Classificação QoS
+    GNM->>PM: Avaliar Prioridade
+    PM->>PM: Verificar Limiares Críticos
+    PM-->>GNM: Prioridade (CRITICAL/HIGH/NORMAL/LOW)
+
+    Note over GNM,SM: Fase 3 - Armazenamento
+    GNM->>GNM: Adicionar ao Buffer (máx 3 nós)
+    GNM->>SM: Persistir em mission.csv
+    SM->>SM: Calcular CRC-16
+    SM-->>GNM: Confirmação
+
+    Note over CM,HTTP: Fase 4 - Transmissão
+    CM->>PM: Ordenar por Prioridade
+    PM-->>CM: Lista Ordenada
+    CM->>LS: Enviar Pacote Binário (34B)
+    LS-->>CM: TX Completo
+
+    alt WiFi Conectado
+        CM->>PM: Criar JSON (Formato OBSAT)
+        PM-->>CM: Payload JSON
+        CM->>HTTP: POST obsat.org.br
+        HTTP-->>CM: Response 200 OK
+    end
+
+    CM->>GNM: Marcar forwarded=true

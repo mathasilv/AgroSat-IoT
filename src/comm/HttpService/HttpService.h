@@ -9,10 +9,10 @@
  *          - Compatível com API REST padrão
  * 
  * @author AgroSat Team
- * @date 2024
+ * @date 2025
  * @version 1.0.0
  * 
- * @copyright Copyright (c) 2024 AgroSat Project
+ * @copyright Copyright (c) 2025 AgroSat Project
  * @license MIT License
  * 
  * ## Configuração

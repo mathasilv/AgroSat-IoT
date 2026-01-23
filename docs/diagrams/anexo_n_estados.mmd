@@ -1,0 +1,62 @@
+stateDiagram-v2
+    direction TB
+    
+    [*] --> MODE_INIT: Power On
+
+    MODE_INIT --> MODE_PREFLIGHT: Init OK
+    MODE_INIT --> MODE_FLIGHT: NVS Flag Ativa
+
+    MODE_PREFLIGHT --> MODE_FLIGHT: START_MISSION
+    MODE_PREFLIGHT --> MODE_SAFE: SAFE_MODE
+
+    MODE_FLIGHT --> MODE_PREFLIGHT: STOP_MISSION
+    MODE_FLIGHT --> MODE_SAFE: Heap/Bateria Críticos
+
+    MODE_SAFE --> MODE_FLIGHT: START_MISSION
+    MODE_SAFE --> MODE_PREFLIGHT: STOP_MISSION
+
+    state MODE_INIT {
+        [*] --> Init
+        Init --> NTP
+        NTP --> NVS
+        NVS --> [*]
+    }
+
+    state MODE_PREFLIGHT {
+        [*] --> Diagnostics
+        Diagnostics --> Calibration
+    }
+
+    state MODE_FLIGHT {
+        [*] --> Collect
+        Collect --> Listen
+        Listen --> Transmit
+        Transmit --> Collect
+    }
+
+    state MODE_SAFE {
+        [*] --> Minimal
+        Minimal --> Beacon
+        Beacon --> Minimal
+    }
+
+    note right of MODE_PREFLIGHT
+        Serial: ON
+        Telemetria: 20s
+        Storage: 1s
+        WDT: 60s
+    end note
+
+    note right of MODE_FLIGHT
+        Serial: OFF
+        Telemetria: 60s
+        Storage: 10s
+        WDT: 90s
+    end note
+
+    note right of MODE_SAFE
+        Serial: ON
+        Telemetria: 120s
+        Beacon: 180s
+        CPU: 80MHz
+    end note

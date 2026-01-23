@@ -10,65 +10,70 @@ Esta seção documenta as interfaces públicas de todas as classes principais do
 
 **Localização:** `src/app/TelemetryManager/`
 
-Classe principal que orquestra todo o sistema.
+Classe principal que orquestra todo o sistema. Cria e gerencia internamente todos os subsistemas.
 
 ```cpp
 class TelemetryManager {
 public:
-    // Construtor
-    TelemetryManager(
-        CommunicationManager& comm,
-        StorageManager& storage,
-        SensorManager& sensors,
-        GPSManager& gps,
-        PowerManager& power,
-        RTCManager& rtc,
-        SystemHealth& health,
-        ButtonHandler& button
-    );
+    // Construtor padrão (cria subsistemas internamente)
+    TelemetryManager();
     
-    // Inicialização
+    // Inicialização de todos os subsistemas
     bool begin();
     
-    // Loop principal (chamar em loop())
-    void update();
+    // Loop principal - gerencia comunicação rádio
+    void loop();
+    
+    // Atualização de sensores (chamado pela SensorsTask)
+    void updatePhySensors();
     
     // Controle de missão
     void startMission();
     void stopMission();
+    void applyModeConfig(uint8_t modeIndex);
     
     // Processamento de comandos
     bool handleCommand(const String& cmd);
     
-    // Getters
-    uint8_t getMode() const;
-    const TelemetryData& getCurrentData() const;
-    const GroundNodeBuffer& getGroundNodes() const;
-    unsigned long getMissionTime() const;
-    bool isMissionActive() const;
+    // Alimentação do watchdog
+    void feedWatchdog();
+    
+    // Processamento de filas (chamado pelas tasks)
+    void processHttpPacket(const HttpQueueMessage& msg);
+    void processStoragePacket(const StorageQueueMessage& msg);
 };
 ```
 
 #### Exemplo de Uso
 
 ```cpp
-// Inicialização
-TelemetryManager telemetry(comm, storage, sensors, gps, power, rtc, health, button);
+TelemetryManager telemetry;
 
 void setup() {
+    initGlobalResources();
+    Serial.begin(115200);
+    Wire.begin(SENSOR_I2C_SDA, SENSOR_I2C_SCL);
+    
     if (!telemetry.begin()) {
-        Serial.println("TelemetryManager init failed!");
-        while(1);
+        Serial.println("ERRO CRITICO!");
     }
+    
+    // Criar tasks FreeRTOS...
 }
 
 void loop() {
-    telemetry.update();
-    
-    // Processar comandos serial
-    if (Serial.available()) {
-        String cmd = Serial.readStringUntil('\n');
-        telemetry.handleCommand(cmd);
+    telemetry.feedWatchdog();
+    processSerialCommands();
+    telemetry.loop();
+    delay(10);
+}
+
+// Task de sensores (Core 1)
+void vTaskSensors(void *pvParameters) {
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    for (;;) {
+        telemetry.updatePhySensors();
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(100));
     }
 }
 ```
@@ -84,31 +89,34 @@ Gerencia comunicação LoRa, WiFi e HTTP.
 ```cpp
 class CommunicationManager {
 public:
-    // Construtor
-    CommunicationManager(LoRaService& lora, WiFiService& wifi, HttpService& http);
+    CommunicationManager();
     
-    // Inicialização
     bool begin();
+    void update();
+    
+    // WiFi & HTTP
+    bool isWiFiConnected();
+    void connectWiFi();
     
     // LoRa
-    bool sendLoRa(const String& payload);
     bool sendLoRa(const uint8_t* data, size_t len);
-    bool receiveLoRa(String& payload, int& rssi, float& snr);
-    bool isLoRaAvailable();
+    bool receiveLoRaPacket(String& packet, int& rssi, float& snr);
     
-    // WiFi
-    bool connectWiFi();
-    bool isWiFiConnected();
-    void disconnectWiFi();
+    // Missão
+    bool processLoRaPacket(const String& packet, MissionData& data);
     
-    // HTTP
-    bool sendHTTP(const String& payload);
-    bool sendHTTPAsync(const TelemetryData& data, const GroundNodeBuffer& nodes);
+    // Telemetria
+    bool sendTelemetry(const TelemetryData& tData, GroundNodeBuffer& gBuffer);
+    
+    // Processa pacote da fila HTTP
+    void processHttpQueuePacket(const HttpQueueMessage& packet);
+    
+    // Controle
+    void enableLoRa(bool enable);
+    void enableHTTP(bool enable);
     
     // Duty Cycle
     DutyCycleTracker& getDutyCycleTracker();
-    bool canTransmit(uint32_t payloadSize);
-    float getDutyCyclePercent();
 };
 ```
 

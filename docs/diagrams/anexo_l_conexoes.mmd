@@ -1,0 +1,65 @@
+flowchart LR
+    subgraph MCU[ESP32-PICO-D4 - LilyGo LoRa32 V2.1]
+        direction TB
+        
+        subgraph VSPI[VSPI - LoRa SX1276]
+            LORA_CS[CS: GPIO18]
+            LORA_RST[RST: GPIO23]
+            LORA_DIO0[DIO0: GPIO26]
+        end
+
+        subgraph HSPI[HSPI - SD Card]
+            SD_CS[CS: GPIO13]
+            SD_CLK[CLK: GPIO14]
+            SD_MOSI[MOSI: GPIO15]
+            SD_MISO[MISO: GPIO2]
+        end
+
+        subgraph I2C[I2C Bus]
+            I2C_SDA[SDA: GPIO21]
+            I2C_SCL[SCL: GPIO22]
+        end
+
+        subgraph UART[UART2 - GPS]
+            GPS_RX[RX: GPIO34]
+            GPS_TX[TX: GPIO12]
+        end
+
+        subgraph OTHER[Outros]
+            VBAT[VBAT: GPIO35]
+            LED[LED: GPIO25]
+            BTN[BTN: GPIO4]
+        end
+    end
+
+    subgraph SENSORS[Sensores I2C - Placa PION]
+        direction TB
+        MPU[MPU9250 - 0x69<br/>IMU 9-DOF]
+        BMP[BMP280 - 0x76<br/>Pressão/Temp]
+        SI[SI7021 - 0x40<br/>Umidade/Temp]
+        CCS[CCS811 - 0x5A<br/>CO2/TVOC]
+        RTC[DS3231 - 0x68<br/>RTC]
+    end
+
+    subgraph EXT[Módulos Externos]
+        direction TB
+        GPS[NEO-M8N<br/>GPS/GLONASS]
+        SD[MicroSD 16GB]
+        BAT[18650 Li-Ion<br/>3.7V 3000mAh]
+        ANT[Antena LoRa<br/>915MHz]
+    end
+
+    I2C_SDA --- MPU
+    I2C_SDA --- BMP
+    I2C_SDA --- SI
+    I2C_SDA --- CCS
+    I2C_SDA --- RTC
+
+    GPS_RX --- GPS
+    GPS_TX --- GPS
+
+    SD_CS --- SD
+
+    VBAT --- BAT
+
+    LORA_CS --- ANT

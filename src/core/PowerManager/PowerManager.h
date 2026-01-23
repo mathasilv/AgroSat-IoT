@@ -10,10 +10,10 @@
  *          - Modo de economia de energia
  * 
  * @author AgroSat Team
- * @date 2024
+ * @date 2025
  * @version 2.1.0
  * 
- * @copyright Copyright (c) 2024 AgroSat Project
+ * @copyright Copyright (c) 2025 AgroSat Project
  * @license MIT License
  * 
  * ## Curva de Descarga Li-ion 18650

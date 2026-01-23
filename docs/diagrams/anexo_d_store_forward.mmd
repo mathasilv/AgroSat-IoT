@@ -1,0 +1,47 @@
+flowchart TB
+    subgraph GROUND[Nós Terrestres]
+        GN([GroundNode ESP32-C3 + LoRa])
+    end
+
+    subgraph SAT[CubeSat AgroSat-IoT]
+        UPLINK[LoRaService<br/>Recepção 915 MHz]
+        
+        VALIDATE{Checksum OK?}
+        DECODE[Decodificar Pacote]
+        DISCARD[Descartar]
+
+        subgraph QOS[Classificação QoS]
+            CRITICAL[CRITICAL]
+            HIGH[HIGH]
+            NORMAL[NORMAL]
+            LOW[LOW]
+        end
+
+        BUFFER[(Buffer RAM<br/>Máx 3 Nós)]
+        STORAGE[(SD Card + CRC-16)]
+
+        subgraph TX[Transmissão]
+            LORA_TX[LoRa TX 34B]
+            HTTP_TX[HTTP POST JSON]
+        end
+    end
+
+    subgraph GCS[Estação Terrestre]
+        RTLSDR([RTL-SDR])
+        SERVER([obsat.org.br])
+    end
+
+    GN -->|Uplink LoRa| UPLINK
+    UPLINK --> VALIDATE
+    VALIDATE -->|Inválido| DISCARD
+    VALIDATE -->|Válido| DECODE
+    DECODE --> QOS
+    CRITICAL --> BUFFER
+    HIGH --> BUFFER
+    NORMAL --> BUFFER
+    LOW --> BUFFER
+    BUFFER --> STORAGE
+    BUFFER -->|Janela TX| LORA_TX
+    BUFFER -->|WiFi OK| HTTP_TX
+    LORA_TX -->|Downlink| RTLSDR
+    HTTP_TX --> SERVER

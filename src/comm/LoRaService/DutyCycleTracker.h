@@ -4,22 +4,27 @@
  * 
  * @details Implementa controle de duty cycle para banda ISM 915MHz:
  *          - Janela deslizante de 1 hora
- *          - Limite de 10% de tempo de transmissão (ANATEL)
+ *          - Limite conservador de 10% de tempo de transmissão
  *          - Cálculo de time-on-air por pacote
- *          - Previsão de disponibilidade para próxima TX
+ *          - Verificação de dwell time (máx 400ms por TX)
  * 
  * @author AgroSat Team
- * @date 2024
- * @version 1.1.0
+ * @date 2025
+ * @version 1.2.0
  * 
- * @copyright Copyright (c) 2024 AgroSat Project
+ * @copyright Copyright (c) 2025 AgroSat Project
  * @license MIT License
  * 
- * ## Regulamentação (ANATEL - Brasil)
- * | Faixa         | Duty Cycle | Potência Máx |
- * |---------------|------------|-------------|
- * | 902-907.5 MHz | 10%        | 30 dBm      |
- * | 915-928 MHz   | 10%        | 30 dBm      |
+ * ## Regulamentação (ANATEL - Brasil, Ato 14448/2017)
+ * | Parâmetro     | Limite ANATEL | Este Projeto |
+ * |---------------|---------------|--------------|
+ * | Duty Cycle    | Sem limite*   | 10% (conservador) |
+ * | Dwell Time    | 400 ms/TX     | ~100ms (OK)  |
+ * | Potência EIRP | 30 dBm        | 20 dBm       |
+ * 
+ * *Para LoRa (modulação digital de sequência direta), a ANATEL não
+ *  impõe limite de duty cycle na faixa 915-928 MHz (plano AU915).
+ *  O limite de 10% é uma escolha conservadora de projeto.
  * 
  * ## Cálculo de Duty Cycle
  * ```

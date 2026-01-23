@@ -7,10 +7,10 @@
  *          de dados para monitoramento de culturas e condições climáticas.
  * 
  * @author AgroSat Team
- * @date 2024
+ * @date 2025
  * @version 10.9.0
  * 
- * @copyright Copyright (c) 2024 AgroSat Project
+ * @copyright Copyright (c) 2025 AgroSat Project
  * @license MIT License
  * 
  * @note Requer ESP32 com FreeRTOS habilitado
