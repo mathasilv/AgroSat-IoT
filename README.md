@@ -25,54 +25,54 @@ Sistema embarcado para CubeSat 1U desenvolvido para monitoramento remoto de cult
 
 ## Sobre o Projeto
 
-O AgroSat-IoT e um sistema de telemetria orbital projetado para operar em um CubeSat no formato 1U (cubo de 10x10x10 cm). Seu objetivo principal e servir como um ponto de retransmissao (relay) entre sensores instalados em propriedades rurais e estacoes de controle em terra.
+O AgroSat-IoT é um sistema de telemetria orbital projetado para operar em um CubeSat no formato 1U (cubo de 10x10x10 cm). Seu objetivo principal é servir como um ponto de retransmissão (relay) entre sensores instalados em propriedades rurais e estações de controle em terra.
 
-O projeto foi desenvolvido para participar de competicoes de CubeSats educacionais e demonstrar a viabilidade de solucoes de baixo custo para agricultura de precisao em areas remotas.
+O projeto foi desenvolvido para participar de competições de CubeSats educacionais e demonstrar a viabilidade de soluções de baixo custo para agricultura de precisão em áreas remotas.
 
 ---
 
-## Problema e Solucao
+## Problema e Solução
 
 ### O Problema
 
-Grandes areas agricolas no Brasil, especialmente em regioes do Centro-Oeste e Norte, nao possuem cobertura de internet ou sinal de celular. Isso impede que produtores rurais utilizem tecnologias modernas de monitoramento de suas lavouras, como sensores de umidade do solo, temperatura e sistemas de irrigacao inteligente.
+Grandes áreas agrícolas no Brasil, especialmente em regiões do Centro-Oeste e Norte, não possuem cobertura de internet ou sinal de celular. Isso impede que produtores rurais utilizem tecnologias modernas de monitoramento de suas lavouras, como sensores de umidade do solo, temperatura e sistemas de irrigação inteligente.
 
-### A Solucao
+### A Solução
 
-O AgroSat-IoT resolve esse problema utilizando comunicacao via radio LoRa, que possui longo alcance e baixo consumo de energia. O sistema funciona da seguinte forma:
+O AgroSat-IoT resolve esse problema utilizando comunicação via rádio LoRa, que possui longo alcance e baixo consumo de energia. O sistema funciona da seguinte forma:
 
-1. Sensores instalados nas propriedades rurais (nos terrestres) coletam dados sobre as condicoes do solo e ambiente
-2. Esses dados sao transmitidos via radio para o satelite quando ele passa sobre a regiao
-3. O satelite armazena os dados recebidos (modelo Store-and-Forward)
-4. Quando o satelite passa sobre uma estacao base com internet, os dados sao retransmitidos
-5. Os dados ficam disponiveis para consulta pelo produtor rural
+1. Sensores instalados nas propriedades rurais (nós terrestres) coletam dados sobre as condições do solo e ambiente
+2. Esses dados são transmitidos via rádio para o satélite quando ele passa sobre a região
+3. O satélite armazena os dados recebidos (modelo Store-and-Forward)
+4. Quando o satélite passa sobre uma estação base com internet, os dados são retransmitidos
+5. Os dados ficam disponíveis para consulta pelo produtor rural
 
 ---
 
 ## Como Funciona
 
-O sistema opera em um ciclo continuo de coleta, armazenamento e retransmissao de dados:
+O sistema opera em um ciclo contínuo de coleta, armazenamento e retransmissão de dados:
 
-### Coleta de Dados Proprios
+### Coleta de Dados Próprios
 
-O satelite possui sensores embarcados que monitoram constantemente:
-- Sua propria posicao via GPS
-- Condicoes internas (temperatura, pressao, umidade)
-- Orientacao espacial (acelerometro, giroscopio, magnetometro)
+O satélite possui sensores embarcados que monitoram constantemente:
+- Sua própria posição via GPS
+- Condições internas (temperatura, pressão, umidade)
+- Orientação espacial (acelerômetro, giroscópio, magnetômetro)
 - Qualidade do ar interno
-- Nivel de bateria e saude do sistema
+- Nível de bateria e saúde do sistema
 
-### Recepcao de Dados Terrestres
+### Recepção de Dados Terrestres
 
-Quando o satelite passa sobre uma area monitorada, ele recebe automaticamente os dados transmitidos pelos sensores terrestres. Cada pacote recebido contem:
-- Identificacao do sensor de origem
+Quando o satélite passa sobre uma área monitorada, ele recebe automaticamente os dados transmitidos pelos sensores terrestres. Cada pacote recebido contém:
+- Identificação do sensor de origem
 - Umidade do solo
 - Temperatura ambiente
-- Status do sistema de irrigacao
+- Status do sistema de irrigação
 
 ### Armazenamento Seguro
 
-Todos os dados sao armazenados em cartao SD com verificacao de integridade (CRC-16 CCITT). O sistema gera os seguintes arquivos:
+Todos os dados são armazenados em cartão SD com verificação de integridade (CRC-16 CCITT). O sistema gera os seguintes arquivos:
 
 | Arquivo          | Conteúdo                    | Formato |
 |------------------|-----------------------------|---------|
@@ -80,11 +80,11 @@ Todos os dados sao armazenados em cartao SD com verificacao de integridade (CRC-
 | mission.csv      | Dados de ground nodes       | CSV+CRC |
 | system.log       | Logs do sistema             | TXT+CRC |
 
-### Retransmissao
+### Retransmissão
 
-Os dados coletados sao retransmitidos de duas formas:
-- Via radio LoRa para estacoes terrestres
-- Via WiFi/HTTP quando disponivel (em testes de solo)
+Os dados coletados são retransmitidos de duas formas:
+- Via rádio LoRa para estações terrestres
+- Via WiFi/HTTP quando disponível (em testes de solo)
 
 ---
 
@@ -162,115 +162,115 @@ O sistema utiliza FreeRTOS com múltiplas tasks para operação em tempo real:
 
 ### Relay Store-and-Forward
 
-O satelite atua como um intermediario entre sensores remotos e estacoes base. Ele armazena os dados recebidos e os retransmite quando possivel, permitindo comunicacao assincrona mesmo quando nao ha linha de visada direta.
+O satélite atua como um intermediário entre sensores remotos e estações base. Ele armazena os dados recebidos e os retransmite quando possível, permitindo comunicação assíncrona mesmo quando não há linha de visada direta.
 
-### Gerenciamento de Multiplos Nos
+### Gerenciamento de Múltiplos Nós
 
-O sistema pode gerenciar simultaneamente ate 3 nos terrestres ativos, priorizando automaticamente os dados mais criticos para retransmissao. A priorizacao considera:
-- Criticidade dos dados (alertas de irrigacao tem prioridade)
-- Tempo desde a ultima transmissao bem-sucedida
-- Qualidade do sinal de cada no
+O sistema pode gerenciar simultaneamente até 3 nós terrestres ativos, priorizando automaticamente os dados mais críticos para retransmissão. A priorização considera:
+- Criticidade dos dados (alertas de irrigação têm prioridade)
+- Tempo desde a última transmissão bem-sucedida
+- Qualidade do sinal de cada nó
 
-### Controle Automatico de Energia
+### Controle Automático de Energia
 
-O sistema monitora constantemente o nivel da bateria e ajusta automaticamente seu comportamento:
-- Em condicoes normais: todas as funcoes ativas
-- Bateria baixa (< 3.7V): reduz frequencia de transmissoes
-- Bateria critica (< 3.3V): entra em modo de sobrevivencia, mantendo apenas funcoes essenciais
+O sistema monitora constantemente o nível da bateria e ajusta automaticamente seu comportamento:
+- Em condições normais: todas as funções ativas
+- Bateria baixa (< 3.7V): reduz frequência de transmissões
+- Bateria crítica (< 3.3V): entra em modo de sobrevivência, mantendo apenas funções essenciais
 
-### Monitoramento de Saude
+### Monitoramento de Saúde
 
-O sistema realiza autodiagnostico continuo, verificando:
+O sistema realiza autodiagnóstico contínuo, verificando:
 - Funcionamento de todos os sensores
-- Espaco disponivel no armazenamento
-- Memoria disponivel (heap)
+- Espaço disponível no armazenamento
+- Memória disponível (heap)
 - Temperatura interna
-- Erros de comunicacao
+- Erros de comunicação
 - Timeouts de mutex
 
-### Sincronizacao de Tempo
+### Sincronização de Tempo
 
-O relogio interno e sincronizado via NTP quando ha conexao WiFi disponivel, garantindo que todos os dados tenham registro temporal preciso. Um relogio de tempo real (RTC DS3231) com bateria propria mantem a hora mesmo durante reinicializacoes.
+O relógio interno é sincronizado via NTP quando há conexão WiFi disponível, garantindo que todos os dados tenham registro temporal preciso. Um relógio de tempo real (RTC DS3231) com bateria própria mantém a hora mesmo durante reinicializações.
 
 ---
 
-## Sensores e Medicoes
+## Sensores e Medições
 
-### Sensores de Navegacao e Orientacao
+### Sensores de Navegação e Orientação
 
 **GPS (NEO-M8N)**
 - Latitude e longitude
 - Altitude
-- Numero de satelites visiveis
+- Número de satélites visíveis
 - Status de posicionamento
 
-**Unidade de Medicao Inercial - IMU (MPU9250)**
-- Acelerometro 3 eixos: mede aceleracao linear
-- Giroscopio 3 eixos: mede velocidade de rotacao
-- Magnetometro 3 eixos: funciona como bussola digital
+**Unidade de Medição Inercial - IMU (MPU9250)**
+- Acelerômetro 3 eixos: mede aceleração linear
+- Giroscópio 3 eixos: mede velocidade de rotação
+- Magnetômetro 3 eixos: funciona como bússola digital
 
 ### Sensores Ambientais
 
-**Pressao e Temperatura (BMP280)**
-- Pressao atmosferica
+**Pressão e Temperatura (BMP280)**
+- Pressão atmosférica
 - Temperatura
-- Altitude barometrica calculada
+- Altitude barométrica calculada
 
 **Umidade e Temperatura (SI7021)**
 - Umidade relativa do ar
-- Temperatura (redundancia)
+- Temperatura (redundância)
 
 **Qualidade do Ar (CCS811)**
-- Concentracao de CO2 equivalente (eCO2)
-- Compostos Organicos Volateis Totais (TVOC)
+- Concentração de CO2 equivalente (eCO2)
+- Compostos Orgânicos Voláteis Totais (TVOC)
 
 ### Monitoramento de Energia
 
-- Tensao da bateria
+- Tensão da bateria
 - Percentual de carga estimado
-- Deteccao de niveis criticos
+- Detecção de níveis críticos
 
 ---
 
-## Modos de Operacao
+## Modos de Operação
 
-O sistema possui diferentes modos de operacao que se adaptam as condicoes da missao:
+O sistema possui diferentes modos de operação que se adaptam às condições da missão:
 
-### Modo Pre-Voo (PREFLIGHT)
+### Modo Pré-Voo (PREFLIGHT)
 
-Utilizado durante testes em solo antes do lancamento:
+Utilizado durante testes em solo antes do lançamento:
 - Todas as funcionalidades ativas
-- Comunicacao WiFi habilitada para testes
-- Logs detalhados para depuracao
-- Display ativo (quando disponivel)
+- Comunicação WiFi habilitada para testes
+- Logs detalhados para depuração
+- Display ativo (quando disponível)
 - Intervalo de telemetria: 20 segundos
 - Intervalo de storage: 1 segundo
 
 ### Modo Voo (FLIGHT)
 
-Modo principal de operacao orbital:
-- Foco em coleta e retransmissao de dados
+Modo principal de operação orbital:
+- Foco em coleta e retransmissão de dados
 - Logs seriais desabilitados para economia de energia
-- Comunicacao LoRa e HTTP ativas
+- Comunicação LoRa e HTTP ativas
 - Intervalo de telemetria: 60 segundos
 - Intervalo de storage: 10 segundos
 
 ### Modo Seguro (SAFE)
 
-Ativado automaticamente em situacoes criticas:
-- Bateria abaixo do nivel critico
+Ativado automaticamente em situações críticas:
+- Bateria abaixo do nível crítico
 - Temperatura fora dos limites seguros
 - Falhas graves de sistema
-- Memoria heap critica
+- Memória heap crítica
 
 Neste modo:
-- Apenas funcoes essenciais permanecem ativas
-- Transmite beacon periodico para localizacao (a cada 3 minutos)
+- Apenas funções essenciais permanecem ativas
+- Transmite beacon periódico para localização (a cada 3 minutos)
 - HTTP desabilitado para economia
 - Intervalo de telemetria: 120 segundos
 - Intervalo de storage: 300 segundos
 
-### Comparacao de Modos
+### Comparação de Modos
 
 | Parâmetro          | PREFLIGHT | FLIGHT  | SAFE     |
 |--------------------|-----------|---------|----------|
@@ -284,51 +284,51 @@ Neste modo:
 
 ---
 
-## Comunicacao
+## Comunicação
 
-### Radio LoRa
+### Rádio LoRa
 
-Principal meio de comunicacao do satelite:
-- Frequencia: 915 MHz (banda ISM Brasil)
+Principal meio de comunicação do satélite:
+- Frequência: 915 MHz (banda ISM Brasil)
 - Spreading Factor: 7 (modo normal)
 - Largura de banda: 125 kHz
-- Potencia TX: 20 dBm
-- Alcance: dezenas de quilometros em linha de visada
+- Potência TX: 20 dBm
+- Alcance: dezenas de quilômetros em linha de visada
 - Baixo consumo de energia
-- Resistente a interferencias
+- Resistente a interferências
 
-O sistema implementa controle de ciclo de trabalho (duty cycle) de 10% para cumprir regulamentacoes ANATEL e evitar sobrecarga do canal de radio.
+O sistema implementa controle de ciclo de trabalho (duty cycle) de 10% para cumprir regulamentações ANATEL e evitar sobrecarga do canal de rádio.
 
 ### WiFi e HTTP
 
 Utilizado principalmente em testes de solo:
-- Conexao com redes WiFi convencionais
+- Conexão com redes WiFi convencionais
 - Envio de dados para servidor via HTTPS (porta 443)
-- Sincronizacao de relogio via NTP
-- Timeout de conexao: 10 segundos
+- Sincronização de relógio via NTP
+- Timeout de conexão: 10 segundos
 
 ### Protocolo de Dados
 
-Os dados sao transmitidos em formato binario compacto para maximizar a eficiencia do canal de radio. O sistema suporta:
-- Pacotes de telemetria do satelite
-- Pacotes de dados dos nos terrestres
+Os dados são transmitidos em formato binário compacto para maximizar a eficiência do canal de rádio. O sistema suporta:
+- Pacotes de telemetria do satélite
+- Pacotes de dados dos nós terrestres
 - Pacotes de relay (dados combinados)
-- Beacons de localizacao (modo SAFE)
+- Beacons de localização (modo SAFE)
 
 ---
 
-## Seguranca e Confiabilidade
+## Segurança e Confiabilidade
 
 ### Integridade de Dados
 
-- Verificacao CRC-16 CCITT em todas as transmissoes e arquivos
-- Deteccao e recuperacao automatica de erros
-- Rotacao automatica de arquivos por tamanho (max 5MB)
+- Verificação CRC-16 CCITT em todas as transmissões e arquivos
+- Detecção e recuperação automática de erros
+- Rotação automática de arquivos por tamanho (max 5MB)
 - Redundância tripla para dados críticos com votação por maioria
 
 ### Watchdog
 
-Um temporizador de seguranca (watchdog) reinicia automaticamente o sistema caso ele trave, garantindo operacao continua mesmo em caso de falhas de software.
+Um temporizador de segurança (watchdog) reinicia automaticamente o sistema caso ele trave, garantindo operação contínua mesmo em caso de falhas de software.
 
 | Modo       | Timeout WDT |
 |------------|-------------|
@@ -336,9 +336,9 @@ Um temporizador de seguranca (watchdog) reinicia automaticamente o sistema caso 
 | FLIGHT     | 90 segundos |
 | SAFE       | 180 segundos|
 
-### Protecao de Recursos
+### Proteção de Recursos
 
-O sistema utiliza mecanismos de sincronizacao (mutexes) para garantir que multiplas tarefas nao corrompam dados ao acessar recursos compartilhados simultaneamente:
+O sistema utiliza mecanismos de sincronização (mutexes) para garantir que múltiplas tarefas não corrompam dados ao acessar recursos compartilhados simultaneamente:
 
 - **xSerialMutex**: Protege acesso à porta serial
 - **xI2CMutex**: Protege barramento I2C (sensores)
@@ -364,29 +364,29 @@ O sistema monitora continuamente o heap disponível:
 
 **TTGO LoRa32 V2.1 (LilyGo T3 V1.6.1)**
 - Microcontrolador ESP32 dual-core
-- Radio LoRa SX1276 integrado
+- Rádio LoRa SX1276 integrado
 - Display OLED (opcional)
 - Conector para bateria Li-ion
 
 ### Sensores
 
-| Componente | Funcao |
+| Componente | Função |
 |------------|--------|
 | NEO-M8N | GPS |
-| MPU9250 | Acelerometro, Giroscopio, Magnetometro |
-| BMP280 | Pressao e Temperatura |
+| MPU9250 | Acelerômetro, Giroscópio, Magnetômetro |
+| BMP280 | Pressão e Temperatura |
 | SI7021 | Umidade e Temperatura |
 | CCS811 | Qualidade do Ar (CO2, TVOC) |
-| DS3231 | Relogio de Tempo Real |
+| DS3231 | Relógio de Tempo Real |
 
 ### Armazenamento
 
-- Cartao microSD para registro de dados (HSPI)
+- Cartão microSD para registro de dados (HSPI)
 
-### Alimentacao
+### Alimentação
 
 - Bateria Li-ion 18650
-- Monitoramento de tensao integrado
+- Monitoramento de tensão integrado
 
 ---
 
@@ -420,21 +420,21 @@ O modelo 3D do AgroSat-IoT foi desenvolvido no FreeCAD, permitindo visualizar a 
 
 ---
 
-## Instalacao
+## Instalação
 
 ### Requisitos
 
 - Visual Studio Code
-- Extensao PlatformIO
-- Cabo USB para programacao
+- Extensão PlatformIO
+- Cabo USB para programação
 
-### Compilacao e Upload
+### Compilação e Upload
 
 ```bash
-# Clonar o repositorio
+# Clonar o repositório
 git clone https://github.com/mathasilv/AgroSat-IoT.git
 
-# Entrar no diretorio
+# Entrar no diretório
 cd AgroSat-IoT
 
 # Compilar o projeto
@@ -449,33 +449,33 @@ pio device monitor
 
 ---
 
-## Comandos Disponiveis
+## Comandos Disponíveis
 
 O sistema aceita comandos via porta serial (115200 baud):
 
 ### Comandos de Missão
 
-| Comando | Descricao |
+| Comando | Descrição |
 |---------|-----------|
 | START_MISSION | Inicia modo de voo (FLIGHT) |
-| STOP_MISSION | Retorna ao modo pre-voo (PREFLIGHT) |
-| SAFE_MODE | Forca entrada no modo seguro |
+| STOP_MISSION | Retorna ao modo pré-voo (PREFLIGHT) |
+| SAFE_MODE | Força entrada no modo seguro |
 
 ### Comandos de Diagnóstico
 
-| Comando | Descricao |
+| Comando | Descrição |
 |---------|-----------|
 | STATUS | Exibe estado detalhado dos sensores |
-| DUTY_CYCLE | Exibe estatisticas de duty cycle LoRa |
-| MUTEX_STATS | Exibe estatisticas de uso de mutexes |
-| HELP | Lista comandos disponiveis |
+| DUTY_CYCLE | Exibe estatísticas de duty cycle LoRa |
+| MUTEX_STATS | Exibe estatísticas de uso de mutexes |
+| HELP | Lista comandos disponíveis |
 
 ### Comandos de Calibração
 
-| Comando | Descricao |
+| Comando | Descrição |
 |---------|-----------|
-| CALIB_MAG | Inicia calibracao do magnetometro (gire o dispositivo em formato de 8) |
-| CLEAR_MAG | Apaga calibracao do magnetometro da NVS |
+| CALIB_MAG | Inicia calibração do magnetômetro (gire o dispositivo em formato de 8) |
+| CLEAR_MAG | Apaga calibração do magnetômetro da NVS |
 | SAVE_BASELINE | Salva baseline do sensor CCS811 |
 
 ### Interação via Botão
@@ -491,10 +491,10 @@ Além dos comandos serial, o sistema responde ao botão físico:
 
 ## Equipe
 
-**Equipe Orbitalis - Universidade Federal de Goias (UFG)**
+**Equipe Orbitalis - Universidade Federal de Goiás (UFG)**
 
 ---
 
-## Licenca
+## Licença
 
-Este projeto esta licenciado sob a licenca MIT.
+Este projeto está licenciado sob a licença MIT.
