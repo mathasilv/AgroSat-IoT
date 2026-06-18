@@ -342,7 +342,6 @@ O sistema utiliza mecanismos de sincronização (mutexes) para garantir que múl
 
 - **xSerialMutex**: Protege acesso à porta serial
 - **xI2CMutex**: Protege barramento I2C (sensores)
-- **xSPIMutex**: Protege barramento SPI (SD Card, LoRa)
 - **xDataMutex**: Protege estruturas de dados compartilhadas
 
 ### Monitoramento de Memória
