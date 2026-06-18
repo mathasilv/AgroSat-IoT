@@ -156,6 +156,7 @@ public:
     bool isBMP280Online() const { return _bmp280.isOnline(); }    ///< Barômetro online?
     bool isSI7021Online() const { return _si7021.isOnline(); }    ///< Higrômetro online?
     bool isCCS811Online() const { return _ccs811.isOnline(); }    ///< Sensor CO2 online?
+    bool isCCS811DataValid() const { return _ccs811.isDataValid(); } ///< CO2 data valid (online + warmup)?
     ///@}
 
     void printDetailedStatus() const;

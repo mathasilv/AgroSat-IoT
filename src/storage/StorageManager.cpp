@@ -267,13 +267,23 @@ void StorageManager::_formatTelemetryToCSV(const TelemetryData &data,
   // Helper para float seguro
   auto sf = [](float v) -> float { return (isnan(v) || isinf(v)) ? 0.0f : v; };
 
+  // Formatar ISO8601 a partir do RTC, se disponível
+  char iso8601[24];
+  if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
+    String dt = _rtcManager->getDateTime();
+    dt.replace(' ', 'T');
+    snprintf(iso8601, sizeof(iso8601), "%s", dt.c_str());
+  } else {
+    snprintf(iso8601, sizeof(iso8601), "%lu", data.timestamp);
+  }
+
   // Construir CSV em partes menores para evitar stack overflow no snprintf
   int pos = 0;
 
   // Parte 1: Timestamps e bateria
   // (ISO8601,UnixTimestamp,MissionTime,BatVoltage,BatPercent)
-  pos += snprintf(buffer + pos, len - pos, "%lu,%lu,%lu,%.2f,%.1f,",
-                  data.timestamp, data.timestamp, data.missionTime,
+  pos += snprintf(buffer + pos, len - pos, "%s,%lu,%lu,%.2f,%.1f,",
+                  iso8601, data.timestamp, data.missionTime,
                   sf(data.batteryVoltage), sf(data.batteryPercentage));
 
   if (pos >= (int)len)
@@ -321,19 +331,27 @@ void StorageManager::_formatTelemetryToCSV(const TelemetryData &data,
 
 void StorageManager::_formatMissionToCSV(const MissionData &data, char *buffer,
                                          size_t len) {
-  // FIX: Usar timestamp local para evitar race conditions
-  char ts[24];
+  // Timestamp Unix para campos numéricos
   unsigned long unixTime = data.collectionTime > 0
                                ? data.collectionTime
                                : (unsigned long)(millis() / 1000);
-  snprintf(ts, sizeof(ts), "%lu", unixTime);
+
+  // Formatar ISO8601 a partir do RTC, se disponível
+  char iso8601[24];
+  if (_rtcManager != nullptr && _rtcManager->isInitialized()) {
+    String dt = _rtcManager->getDateTime();
+    dt.replace(' ', 'T');
+    snprintf(iso8601, sizeof(iso8601), "%s", dt.c_str());
+  } else {
+    snprintf(iso8601, sizeof(iso8601), "%lu", unixTime);
+  }
 
   // Cabeçalho: ISO8601,UnixTimestamp,NodeID,SoilMoisture,AmbTemp,Humidity,
   //            Irrigation,RSSI,SNR,PktsRx,PktsLost,LastRx,
   //            NodeOriginTS,SatArrivalTS,SatTxTS
   snprintf(buffer, len,
            "%s,%lu,%u,%.1f,%.1f,%.1f,%d,%d,%.2f,%u,%u,%lu,%lu,%lu,%lu",
-           ts,                     // ISO8601 (usando timestamp numerico)
+           iso8601,                // ISO8601
            unixTime,               // UnixTimestamp
            data.nodeId,            // NodeID
            data.soilMoisture,      // SoilMoisture

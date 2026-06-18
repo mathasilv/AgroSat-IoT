@@ -245,7 +245,8 @@ bool PayloadManager::_decodeRawPacket(const String& rawData, MissionData& data) 
     data.irrigationStatus = buffer[offset++];
     data.rssi = (int16_t)buffer[offset++] - 128;
     
-    if (len >= (size_t)(offset + 4)) {
+    if (len >= (size_t)(offset + 6)) {
+        data.sequenceNumber = (buffer[offset] << 8) | buffer[offset+1]; offset += 2;
         data.nodeTimestamp  = (uint32_t)buffer[offset] << 24;
         data.nodeTimestamp |= (uint32_t)buffer[offset+1] << 16;
         data.nodeTimestamp |= (uint32_t)buffer[offset+2] << 8;
@@ -276,7 +277,8 @@ bool PayloadManager::_decodeHexStringPayload(const String& hexPayload, MissionDa
     data.irrigationStatus = buffer[offset++];
     data.rssi = (int16_t)buffer[offset++] - 128;
     
-    if (len >= (size_t)(offset + 4)) {
+    if (len >= (size_t)(offset + 6)) {
+        data.sequenceNumber = (buffer[offset] << 8) | buffer[offset+1]; offset += 2;
         data.nodeTimestamp  = (uint32_t)buffer[offset] << 24;
         data.nodeTimestamp |= (uint32_t)buffer[offset+1] << 16;
         data.nodeTimestamp |= (uint32_t)buffer[offset+2] << 8;

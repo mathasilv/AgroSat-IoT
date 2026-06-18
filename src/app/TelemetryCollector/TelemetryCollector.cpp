@@ -105,7 +105,7 @@ void TelemetryCollector::_collectAndValidateSI7021(TelemetryData& data) {
 }
 
 void TelemetryCollector::_collectAndValidateCCS811(TelemetryData& data) {
-    if (!_sensors.isCCS811Online()) return;
+    if (!_sensors.isCCS811DataValid()) return;
     
     float co2 = _sensors.getCO2();
     if (!isnan(co2) && co2 >= CO2_MIN_VALID && co2 <= CO2_MAX_VALID) {
