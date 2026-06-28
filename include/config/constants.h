@@ -85,7 +85,7 @@
 #define WIFI_SSID "MATHEUS "            ///< SSID da rede WiFi
 #define WIFI_PASSWORD "12213490"        ///< Senha da rede WiFi
 #define HTTP_SERVER "obsat.org.br"      ///< Servidor HTTP
-#define HTTP_ENDPOINT "/servidor_teste/envio.php" ///< Endpoint da API
+#define HTTP_ENDPOINT "/servidor_testes/envio.php" ///< Endpoint da API
 
 //=============================================================================
 // BUFFERS E LIMITES
